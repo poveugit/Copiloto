@@ -1,0 +1,6 @@
+{
+  "name": "CopilotRider Android Native",
+  "description": "Painel do Entregador de Moto 100% nativo Android (Kotlin + Jetpack Compose, Room DB, WorkManager Sync, MVVM, Modo Escuro/Claro e Cards de Manutenção 100% Editáveis).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Efeito visual de destaque: Brilho e borda pulsante para manutenções vencidas (>= 100%) */
+@keyframes danger-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.85), 0 0 28px rgba(244, 63, 94, 0.55), inset 0 0 16px rgba(244, 63, 94, 0.2);
+    border-color: rgba(244, 63, 94, 0.95);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4), 0 0 12px rgba(239, 68, 68, 0.25), inset 0 0 6px rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.55);
+  }
+}
+
+@keyframes danger-badge-glow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.98);
+  }
+}
+
+.maint-card-danger-glow {
+  animation: danger-glow-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  position: relative;
+}
+
+.maint-card-danger-glow-subtle {
+  animation: danger-glow-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Efeito visual de alerta preventivo configurável (ex: avisar aos 90% do intervalo) */
+@keyframes warn-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.8), 0 0 22px rgba(245, 158, 11, 0.45), inset 0 0 14px rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35), 0 0 10px rgba(245, 158, 11, 0.2), inset 0 0 6px rgba(245, 158, 11, 0.05);
+    border-color: rgba(245, 158, 11, 0.55);
+  }
+}
+
+.maint-card-warn-glow {
+  animation: warn-glow-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  position: relative;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
