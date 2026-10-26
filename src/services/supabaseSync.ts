@@ -264,6 +264,111 @@ export function saveActiveSessionUser(user: UserProfile | null): void {
   }
 }
 
+export function isLegacyDemoEntry(e: { id: number | string; km?: number; revenue?: number }): boolean {
+  const idNum = Number(e.id);
+  if (idNum === 101 && Number(e.km) === 68 && Number(e.revenue) === 142) return true;
+  if (idNum === 102 && Number(e.km) === 94 && Number(e.revenue) === 186) return true;
+  if (idNum === 103 && Number(e.km) === 82 && Number(e.revenue) === 158) return true;
+  return false;
+}
+
+export function isLegacyDemoExpense(e: { id: number | string; category?: string; amount?: number }): boolean {
+  const idNum = Number(e.id);
+  if (idNum === 201 && e.category === 'combustivel' && Number(e.amount) === 42) return true;
+  if (idNum === 202 && e.category === 'manutencao' && Number(e.amount) === 45) return true;
+  return false;
+}
+
+export async function fetchRemoteCloudData(
+  userEmail?: string | null
+): Promise<Partial<LocalRoomDatabaseState> | null> {
+  if (!userEmail) return null;
+  const client = getSupabaseClient();
+  if (!client || (typeof navigator !== 'undefined' && !navigator.onLine)) return null;
+
+  try {
+    const deviceId = getUserDeviceId(userEmail);
+    const [settingsRes, entriesRes, expensesRes] = await Promise.all([
+      client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
+      client.from('moto_entries').select('*').eq('device_id', deviceId),
+      client.from('moto_expenses').select('*').eq('device_id', deviceId),
+    ]);
+
+    const settings = settingsRes.data;
+    const rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
+    const rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
+
+    // Filter out any legacy demo rows that might have been synced earlier
+    const demoEntryIdsToDelete: string[] = [];
+    const entries: RideEntry[] = [];
+    for (const row of rawEntries) {
+      const mapped: RideEntry = {
+        id: Number(row.id) || Date.now(),
+        date: row.entry_date,
+        app: row.app,
+        shift: row.shift || 'almoco',
+        km: Number(row.km || 0),
+        revenue: Number(row.revenue || 0),
+        hours: Number(row.hours || 0),
+      };
+      if (isLegacyDemoEntry(mapped)) {
+        demoEntryIdsToDelete.push(String(row.id));
+      } else {
+        entries.push(mapped);
+      }
+    }
+
+    const demoExpenseIdsToDelete: string[] = [];
+    const expenses: ExpenseEntry[] = [];
+    for (const row of rawExpenses) {
+      const mapped: ExpenseEntry = {
+        id: Number(row.id) || Date.now(),
+        date: row.expense_date,
+        category: row.category,
+        amount: Number(row.amount || 0),
+      };
+      if (isLegacyDemoExpense(mapped)) {
+        demoExpenseIdsToDelete.push(String(row.id));
+      } else {
+        expenses.push(mapped);
+      }
+    }
+
+    if (demoEntryIdsToDelete.length > 0) {
+      client.from('moto_entries').delete().eq('device_id', deviceId).in('id', demoEntryIdsToDelete).then(() => {});
+    }
+    if (demoExpenseIdsToDelete.length > 0) {
+      client.from('moto_expenses').delete().eq('device_id', deviceId).in('id', demoExpenseIdsToDelete).then(() => {});
+    }
+
+    if (!settings && entries.length === 0 && expenses.length === 0) {
+      return null;
+    }
+
+    const m = settings?.maintenance || {};
+    return {
+      entries,
+      expenses,
+      dailyGoal: Number(settings?.daily_goal) || 150,
+      maintenanceItems: Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
+        ? settings.custom_maints
+        : undefined,
+      fuelConfig: {
+        kmPerLiter: Number(m.kmPerLiter) || 35,
+        fuelPrice: Number(m.fuelPrice) || 5.8,
+        tankCapacityLiters: Number(m.tankCapacityLiters) || 16.1,
+        bikeModelName: m.bikeModelName || 'Minha Moto',
+        odometerBaseKm: Number(m.odometerBaseKm) || 0,
+      },
+      customApps: Array.isArray(settings?.custom_apps) ? settings.custom_apps : [],
+      customCategories: Array.isArray(settings?.custom_categories) ? settings.custom_categories : [],
+      appOverrides: settings?.app_overrides || {},
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function registerPilotAccount(params: {
   name: string;
   email: string;
@@ -273,7 +378,7 @@ export async function registerPilotAccount(params: {
 }): Promise<{ ok: boolean; user?: UserProfile; error?: string }> {
   const emailClean = params.email.trim().toLowerCase();
   const nameClean = params.name.trim();
-  const bikeClean = (params.bikeModel || '').trim() || 'Honda CG 160 Titan';
+  const bikeClean = (params.bikeModel || '').trim() || 'Minha Moto';
   const phoneClean = (params.phone || '').trim();
 
   if (!nameClean) {

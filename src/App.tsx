@@ -41,6 +41,7 @@ import {
   ArrowRight,
   UserPlus,
   LogIn,
+  Search,
 } from 'lucide-react';
 import {
   RideEntry,
@@ -59,6 +60,9 @@ import {
   resetPilotPassword,
   runWorkManagerCloudSync,
   clearRemoteCloudData,
+  fetchRemoteCloudData,
+  isLegacyDemoEntry,
+  isLegacyDemoExpense,
 } from './services/supabaseSync';
 import {
   evaluateShiftWorthiness,
@@ -113,7 +117,6 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     costEstimate: 45,
     notes: 'Óleo 10W30 Semissintético',
     isDefault: true,
-    updatedAt: 1729400004000,
     alertThresholdPct: 85,
   },
   {
@@ -125,7 +128,6 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     costEstimate: 520,
     notes: 'Calibrar semanalmente (29/33 PSI)',
     isDefault: true,
-    updatedAt: 1729400003000,
     alertThresholdPct: 90,
   },
   {
@@ -137,7 +139,6 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     costEstimate: 210,
     notes: 'Lubrificar corrente a cada 500 km',
     isDefault: true,
-    updatedAt: 1729400002000,
     alertThresholdPct: 80,
   },
   {
@@ -149,7 +150,6 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     costEstimate: 75,
     notes: 'Conferir fluído DOT 4 e disco',
     isDefault: true,
-    updatedAt: 1729400001000,
     alertThresholdPct: 85,
   },
 ];
@@ -158,9 +158,86 @@ const DEFAULT_FUEL_CONFIG: FuelDiagnosticsConfig = {
   kmPerLiter: 35,
   fuelPrice: 5.8,
   tankCapacityLiters: 16.1,
-  bikeModelName: 'Honda CG 160 Titan',
+  bikeModelName: 'Minha Moto',
   odometerBaseKm: 0,
 };
+
+function getStorageKeyForUser(user: UserProfile | null): string {
+  if (user && !user.isGuest && user.email) {
+    return 'copilotrider_room_user_v3_' + user.email.trim().toLowerCase();
+  }
+  return 'copilotrider_room_guest_v3';
+}
+
+function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseState {
+  const cleanBike = (bikeModelName || '').trim() || DEFAULT_FUEL_CONFIG.bikeModelName;
+  return {
+    entries: [],
+    expenses: [],
+    dailyGoal: 150,
+    maintenanceItems: DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item })),
+    fuelConfig: {
+      ...DEFAULT_FUEL_CONFIG,
+      bikeModelName: cleanBike,
+    },
+    customApps: [],
+    customCategories: [],
+    appOverrides: {},
+    customShifts: [],
+    shiftOverrides: {},
+    deletedShiftIds: [],
+    deletedAppIds: [],
+  };
+}
+
+function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
+  try {
+    // Purge legacy shared demo keys so hardcoded demo records never leak
+    localStorage.removeItem('moto-room-native-db-v2');
+    localStorage.removeItem('moto-dash-data_guest');
+    localStorage.removeItem('moto-dash-data');
+
+    const storageKey = getStorageKeyForUser(user);
+    const raw = localStorage.getItem(storageKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const maintItems: MaintenanceItem[] =
+        Array.isArray(parsed.maintenanceItems) && parsed.maintenanceItems.length > 0
+          ? parsed.maintenanceItems
+          : DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item }));
+
+      const fuelCfg: FuelDiagnosticsConfig = parsed.fuelConfig || {
+        ...DEFAULT_FUEL_CONFIG,
+        bikeModelName: user?.bikeModel || DEFAULT_FUEL_CONFIG.bikeModelName,
+      };
+
+      const cleanEntries = Array.isArray(parsed.entries)
+        ? parsed.entries.filter((e: any) => !isLegacyDemoEntry(e))
+        : [];
+      const cleanExpenses = Array.isArray(parsed.expenses)
+        ? parsed.expenses.filter((e: any) => !isLegacyDemoExpense(e))
+        : [];
+
+      return {
+        entries: cleanEntries,
+        expenses: cleanExpenses,
+        dailyGoal: Number(parsed.dailyGoal) || 150,
+        maintenanceItems: maintItems,
+        fuelConfig: fuelCfg,
+        customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
+        customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
+        appOverrides: parsed.appOverrides || {},
+        customShifts: Array.isArray(parsed.customShifts) ? parsed.customShifts : [],
+        shiftOverrides: parsed.shiftOverrides || {},
+        deletedShiftIds: Array.isArray(parsed.deletedShiftIds) ? parsed.deletedShiftIds : [],
+        deletedAppIds: Array.isArray(parsed.deletedAppIds) ? parsed.deletedAppIds : [],
+      };
+    }
+  } catch {
+    // Ignore parse errors and return clean state
+  }
+  return createCleanDatabaseState(user?.bikeModel);
+}
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -201,7 +278,7 @@ export default function App() {
   const [authName, setAuthName] = useState<string>('');
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPhone, setAuthPhone] = useState<string>('');
-  const [authBikeModel, setAuthBikeModel] = useState<string>('Honda CG 160 Titan');
+  const [authBikeModel, setAuthBikeModel] = useState<string>('');
   const [authPassword, setAuthPassword] = useState<string>('');
   const [authConfirmPassword, setAuthConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -218,132 +295,18 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
-  // Local Room DB State (persisted 100% offline in localStorage)
-  const [dbState, setDbState] = useState<LocalRoomDatabaseState>(() => {
-    const raw = localStorage.getItem('moto-room-native-db-v2') || localStorage.getItem('moto-dash-data_guest') || localStorage.getItem('moto-dash-data');
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        let maintItems: MaintenanceItem[] = [];
-        if (Array.isArray(parsed.maintenanceItems) && parsed.maintenanceItems.length > 0) {
-          maintItems = parsed.maintenanceItems;
-        } else {
-          const m = parsed.maintenance || {};
-          maintItems = [
-            {
-              id: 'oil',
-              name: 'Troca de Óleo',
-              icon: '🛢️',
-              lastChangeKm: Number(m.lastOilChangeKm) || 0,
-              intervalKm: Number(m.oilIntervalKm) || 1000,
-              costEstimate: 45,
-              notes: 'Óleo 10W30 Semissintético',
-              isDefault: true,
-            },
-            {
-              id: 'tire',
-              name: 'Pneus Dianteiro/Traseiro',
-              icon: '🛞',
-              lastChangeKm: Number(m.lastTireChangeKm) || 0,
-              intervalKm: Number(m.tireIntervalKm) || 10000,
-              costEstimate: 520,
-              notes: 'Calibrar semanalmente (29/33 PSI)',
-              isDefault: true,
-            },
-            {
-              id: 'chain',
-              name: 'Kit Relação',
-              icon: '⚙️',
-              lastChangeKm: Number(m.lastChainChangeKm) || 0,
-              intervalKm: Number(m.chainIntervalKm) || 8000,
-              costEstimate: 210,
-              notes: 'Lubrificar corrente a cada 500 km',
-              isDefault: true,
-            },
-            {
-              id: 'brake',
-              name: 'Pastilhas de Freio',
-              icon: '🛑',
-              lastChangeKm: Number(m.lastBrakeChangeKm) || 0,
-              intervalKm: Number(m.brakeIntervalKm) || 5000,
-              costEstimate: 75,
-              notes: 'Conferir fluído DOT 4 e disco',
-              isDefault: true,
-            },
-            ...(Array.isArray(parsed.customMaints)
-              ? parsed.customMaints.map((cm: any) => ({
-                  id: cm.id || 'maint_' + Date.now(),
-                  name: cm.name || 'Item Personalizado',
-                  icon: cm.icon || '🔧',
-                  lastChangeKm: Number(cm.lastChangeKm) || 0,
-                  intervalKm: Number(cm.intervalKm) || 5000,
-                  costEstimate: Number(cm.costEstimate) || 80,
-                  notes: cm.notes || 'Manutenção preventiva',
-                  isDefault: false,
-                }))
-              : []),
-          ];
-        }
-
-        const fuelCfg: FuelDiagnosticsConfig = parsed.fuelConfig || {
-          kmPerLiter: Number(parsed.maintenance?.kmPerLiter) || 35,
-          fuelPrice: Number(parsed.maintenance?.fuelPrice) || 5.8,
-          tankCapacityLiters: 16.1,
-          bikeModelName: 'Honda CG 160 Titan',
-          odometerBaseKm: 0,
-        };
-
-        return {
-          entries: Array.isArray(parsed.entries) ? parsed.entries : [],
-          expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
-          dailyGoal: Number(parsed.dailyGoal) || 150,
-          maintenanceItems: maintItems,
-          fuelConfig: fuelCfg,
-          customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
-          customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
-          appOverrides: parsed.appOverrides || {},
-          customShifts: Array.isArray(parsed.customShifts) ? parsed.customShifts : [],
-          shiftOverrides: parsed.shiftOverrides || {},
-          deletedShiftIds: Array.isArray(parsed.deletedShiftIds) ? parsed.deletedShiftIds : [],
-          deletedAppIds: Array.isArray(parsed.deletedAppIds) ? parsed.deletedAppIds : [],
-        };
-      } catch {
-        // Fallback to seed data
-      }
-    }
-
-    // Seed initial realistic motorcycle courier entries so the dashboard & Moto cards are immediately rich and testable
-    const today = todayStr();
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const twoDaysAgo = new Date(Date.now() - 172800000).toISOString().slice(0, 10);
-    return {
-      entries: [
-        { id: 101, date: today, app: 'ifood', shift: 'almoco', km: 68, revenue: 142, hours: 4.5 },
-        { id: 102, date: yesterday, app: 'uber', shift: 'jantar', km: 94, revenue: 186, hours: 5.5 },
-        { id: 103, date: twoDaysAgo, app: '99', shift: 'almoco', km: 82, revenue: 158, hours: 5.0 },
-      ],
-      expenses: [
-        { id: 201, date: today, category: 'combustivel', amount: 42 },
-        { id: 202, date: twoDaysAgo, category: 'manutencao', amount: 45 },
-      ],
-      dailyGoal: 180,
-      maintenanceItems: DEFAULT_MAINTENANCE_ITEMS,
-      fuelConfig: DEFAULT_FUEL_CONFIG,
-      customApps: [],
-      customCategories: [],
-      appOverrides: {},
-      customShifts: [],
-      shiftOverrides: {},
-      deletedShiftIds: [],
-      deletedAppIds: [],
-    };
-  });
+  // Local Room DB State (isolated per user account, starting 100% clean with zero demo data)
+  const [dbState, setDbState] = useState<LocalRoomDatabaseState>(() =>
+    loadDatabaseForUser(getActiveSessionUser())
+  );
 
   // Trigger Room Persistence + WorkManager Sync
   const persistAndEnqueueWorkManager = useCallback(
-    async (nextState: LocalRoomDatabaseState) => {
+    async (nextState: LocalRoomDatabaseState, overrideUser?: UserProfile | null) => {
+      const targetUser = overrideUser !== undefined ? overrideUser : currentUser;
       setDbState(nextState);
-      localStorage.setItem('moto-room-native-db-v2', JSON.stringify(nextState));
+      const storageKey = getStorageKeyForUser(targetUser);
+      localStorage.setItem(storageKey, JSON.stringify(nextState));
 
       if (simulateOffline) {
         setPendingSyncCount(prev => prev + 1);
@@ -352,7 +315,7 @@ export default function App() {
       }
 
       setIsSyncing(true);
-      const res = await runWorkManagerCloudSync(nextState, currentUser?.email ?? null, simulateOffline);
+      const res = await runWorkManagerCloudSync(nextState, targetUser?.email ?? null, simulateOffline);
       setIsSyncing(false);
       setLastSyncTime(res.timestamp);
       setWorkManagerStatus(res.status);
@@ -363,10 +326,39 @@ export default function App() {
     [simulateOffline, currentUser]
   );
 
+  // Hydrate from remote cloud on initial mount if user is logged in and local DB is empty
+  useEffect(() => {
+    let active = true;
+    if (currentUser && !currentUser.isGuest && currentUser.email) {
+      fetchRemoteCloudData(currentUser.email).then(remote => {
+        if (!active || !remote) return;
+        setDbState(prev => {
+          if (prev.entries.length > 0 || prev.expenses.length > 0) return prev;
+          const merged: LocalRoomDatabaseState = {
+            ...prev,
+            entries: remote.entries ?? prev.entries,
+            expenses: remote.expenses ?? prev.expenses,
+            dailyGoal: remote.dailyGoal ?? prev.dailyGoal,
+            maintenanceItems: remote.maintenanceItems ?? prev.maintenanceItems,
+            fuelConfig: remote.fuelConfig ?? prev.fuelConfig,
+            customApps: remote.customApps ?? prev.customApps,
+            customCategories: remote.customCategories ?? prev.customCategories,
+            appOverrides: remote.appOverrides ?? prev.appOverrides,
+          };
+          localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(merged));
+          return merged;
+        });
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
+
   // Automatic periodic WorkManager tick every 30s when online
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (!simulateOffline) {
+      if (!simulateOffline && currentUser) {
         setIsSyncing(true);
         const res = await runWorkManagerCloudSync(dbState, currentUser?.email ?? null, false);
         setIsSyncing(false);
@@ -390,25 +382,36 @@ export default function App() {
         email: authEmail,
         password: authPassword,
       });
-      setIsAuthLoading(false);
       if (!res.ok || !res.user) {
+        setIsAuthLoading(false);
         setAuthError(res.error || 'Não foi possível entrar na conta.');
         return;
       }
+
+      // Load this user's own isolated database (or fetch from Supabase cloud if empty locally)
+      let userDb = loadDatabaseForUser(res.user);
+      if (userDb.entries.length === 0 && userDb.expenses.length === 0) {
+        const remote = await fetchRemoteCloudData(res.user.email);
+        if (remote) {
+          userDb = {
+            ...userDb,
+            entries: remote.entries ?? [],
+            expenses: remote.expenses ?? [],
+            dailyGoal: remote.dailyGoal ?? userDb.dailyGoal,
+            maintenanceItems: remote.maintenanceItems ?? userDb.maintenanceItems,
+            fuelConfig: remote.fuelConfig ?? userDb.fuelConfig,
+            customApps: remote.customApps ?? [],
+            customCategories: remote.customCategories ?? [],
+            appOverrides: remote.appOverrides ?? {},
+          };
+        }
+      }
+
+      setIsAuthLoading(false);
       setCurrentUser(res.user);
       setShowAuthScreen(false);
       setAuthPassword('');
-      if (res.user.bikeModel && res.user.bikeModel !== dbState.fuelConfig.bikeModelName) {
-        persistAndEnqueueWorkManager({
-          ...dbState,
-          fuelConfig: {
-            ...dbState.fuelConfig,
-            bikeModelName: res.user.bikeModel,
-          },
-        });
-      } else {
-        persistAndEnqueueWorkManager(dbState);
-      }
+      await persistAndEnqueueWorkManager(userDb, res.user);
       return;
     }
 
@@ -430,17 +433,18 @@ export default function App() {
         setAuthError(res.error || 'Não foi possível criar sua conta.');
         return;
       }
+
+      // Brand-new account ALWAYS starts 100% clean (zero entries, zero expenses, zero demo data)
+      const freshUserDb = createCleanDatabaseState(res.user.bikeModel);
       setCurrentUser(res.user);
       setShowAuthScreen(false);
+      setAuthName('');
+      setAuthPhone('');
+      setAuthBikeModel('');
       setAuthPassword('');
       setAuthConfirmPassword('');
-      persistAndEnqueueWorkManager({
-        ...dbState,
-        fuelConfig: {
-          ...dbState.fuelConfig,
-          bikeModelName: res.user.bikeModel || dbState.fuelConfig.bikeModelName,
-        },
-      });
+      await clearRemoteCloudData(res.user.email);
+      await persistAndEnqueueWorkManager(freshUserDb, res.user);
       return;
     }
 
@@ -469,11 +473,13 @@ export default function App() {
       id: 'guest_local',
       name: 'Piloto Convidado',
       email: 'offline@copilotrider.local',
-      bikeModel: dbState.fuelConfig.bikeModelName || 'Honda CG 160 Titan',
+      bikeModel: 'Minha Moto',
       createdAt: new Date().toISOString(),
       isGuest: true,
     };
     saveActiveSessionUser(guestProfile);
+    const guestDb = loadDatabaseForUser(guestProfile);
+    setDbState(guestDb);
     setCurrentUser(guestProfile);
     setShowAuthScreen(false);
   };
@@ -481,6 +487,7 @@ export default function App() {
   const handleLogout = () => {
     saveActiveSessionUser(null);
     setCurrentUser(null);
+    setDbState(createCleanDatabaseState());
     setAuthError(null);
     setAuthSuccess(null);
     setAuthPassword('');
@@ -611,9 +618,70 @@ export default function App() {
   const [maintDraft, setMaintDraft] = useState<MaintenanceItem | null>(null);
   const [isAddingNewMaint, setIsAddingNewMaint] = useState<boolean>(false);
   const [maintSortBy, setMaintSortBy] = useState<'urgency' | 'name' | 'updatedAt'>('urgency');
+  const [maintSearchQuery, setMaintSearchQuery] = useState<string>('');
 
   const sortedMaintenanceItems = useMemo(() => {
-    return [...dbState.maintenanceItems].sort((a, b) => {
+    const rawQuery = maintSearchQuery.trim();
+    const normalizeText = (str: string) =>
+      str
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+
+    const filtered = dbState.maintenanceItems.filter(item => {
+      if (!rawQuery) return true;
+      if (editingMaintId === item.id) return true;
+
+      const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
+      const interval = Math.max(100, item.intervalKm || 1000);
+      const kmRemaining = Math.max(0, interval - kmUsed);
+
+      const normQuery = normalizeText(rawQuery);
+      const normName = normalizeText(item.name || '');
+      const normNotes = normalizeText(item.notes || '');
+
+      // 1. Match by maintenance name (or notes)
+      if (normName.includes(normQuery) || normNotes.includes(normQuery)) {
+        return true;
+      }
+
+      // 2. Support comparison operators for remaining mileage (e.g., "<= 500", "< 1000", ">= 2000")
+      const opMatch = normQuery.match(/^(<=|>=|<|>|=)\s*([\d.]+)\s*(km)?$/);
+      if (opMatch) {
+        const op = opMatch[1];
+        const targetKm = Number(opMatch[2].replace(/\./g, ''));
+        if (!Number.isNaN(targetKm)) {
+          if (op === '<=') return kmRemaining <= targetKm;
+          if (op === '<') return kmRemaining < targetKm;
+          if (op === '>=') return kmRemaining >= targetKm;
+          if (op === '>') return kmRemaining > targetKm;
+          if (op === '=') return kmRemaining === targetKm;
+        }
+      }
+
+      // 3. Match by remaining mileage (raw digits or formatted pt-BR string)
+      const remainingRawStr = String(kmRemaining);
+      const remainingFormattedStr = kmRemaining.toLocaleString('pt-BR');
+      const cleanedKmQuery = normQuery
+        .replace(/restam|restante|faltam|km/g, '')
+        .trim();
+      const digitsOnlyQuery = cleanedKmQuery.replace(/\./g, '');
+
+      if (
+        remainingRawStr.includes( normQuery ) ||
+        remainingFormattedStr.includes( normQuery ) ||
+        (digitsOnlyQuery !== '' &&
+          /^\d+$/.test(digitsOnlyQuery) &&
+          (remainingRawStr.includes(digitsOnlyQuery) ||
+            remainingFormattedStr.replace(/\./g, '').includes(digitsOnlyQuery)))
+      ) {
+        return true;
+      }
+
+      return false;
+    });
+
+    return filtered.sort((a, b) => {
       if (maintSortBy === 'urgency') {
         const kmUsedA = Math.max(0, totals.totalKm - (a.lastChangeKm || 0));
         const pctA = (kmUsedA / Math.max(100, a.intervalKm || 1000)) * 100;
@@ -631,7 +699,7 @@ export default function App() {
       }
       return 0;
     });
-  }, [dbState.maintenanceItems, maintSortBy, totals.totalKm]);
+  }, [dbState.maintenanceItems, maintSortBy, maintSearchQuery, totals.totalKm, editingMaintId]);
 
   const [isEditingFuelCard, setIsEditingFuelCard] = useState<boolean>(false);
   const [fuelDraft, setFuelDraft] = useState<FuelDiagnosticsConfig>(dbState.fuelConfig);
@@ -2075,33 +2143,63 @@ export default function App() {
         {activeTab === 'maintenance' && (
           <div className="flex flex-col gap-4 sm:gap-6">
             {/* Header & Action Bar */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4`}>
-              <div>
-                <div className="flex items-center gap-2">
-                  <Wrench className="w-5 h-5 text-[#FF6A1A]" />
-                  <h1 className="text-lg sm:text-2xl font-black tracking-tight">
-                    Garagem & Manutenção da Moto (100% Editável)
-                  </h1>
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} flex flex-col gap-3.5 sm:gap-4`}>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Wrench className="w-5 h-5 text-[#FF6A1A]" />
+                    <h1 className="text-lg sm:text-2xl font-black tracking-tight">
+                      Garagem & Manutenção da Moto (100% Editável)
+                    </h1>
+                  </div>
+                  <p className={`text-xs sm:text-sm mt-1 leading-relaxed ${mutedText}`}>
+                    Toque em <span className="text-[#FF6A1A] font-bold">Editar Card</span> em qualquer item para personalizar nome, ícone, KM da troca, intervalo, alerta % e dados de combustível.
+                  </p>
                 </div>
-                <p className={`text-xs sm:text-sm mt-1 leading-relaxed ${mutedText}`}>
-                  Toque em <span className="text-[#FF6A1A] font-bold">Editar Card</span> em qualquer item para personalizar nome, ícone, KM da troca, intervalo, alerta % e dados de combustível.
-                </p>
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
+                  <button
+                    onClick={startEditFuelCard}
+                    className={`flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                  >
+                    <SlidersHorizontal className="w-4 h-4 text-[#FF6A1A]" />
+                    <span>Dados da Moto</span>
+                  </button>
+                  <button
+                    onClick={() => startCreateMaintenanceCard()}
+                    className="flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                  >
+                    <Plus className="w-4 h-4 stroke-[2.5]" />
+                    <span>Nova Manutenção</span>
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
-                <button
-                  onClick={startEditFuelCard}
-                  className={`flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                >
-                  <SlidersHorizontal className="w-4 h-4 text-[#FF6A1A]" />
-                  <span>Dados da Moto</span>
-                </button>
-                <button
-                  onClick={() => startCreateMaintenanceCard()}
-                  className="flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center gap-1.5 cursor-pointer min-h-[44px]"
-                >
-                  <Plus className="w-4 h-4 stroke-[2.5]" />
-                  <span>Nova Manutenção</span>
-                </button>
+
+              {/* Search Bar in Maintenance Header */}
+              <div className="relative flex items-center">
+                <Search className={`w-4 h-4 absolute left-3.5 pointer-events-none ${mutedText}`} />
+                <input
+                  type="text"
+                  value={maintSearchQuery}
+                  onChange={e => setMaintSearchQuery(e.target.value)}
+                  placeholder="Buscar por nome da manutenção ou KM restante (ex: Óleo, Relação, 500, <= 1000)..."
+                  aria-label="Buscar manutenção pelo nome ou quilometragem restante"
+                  className={`w-full pl-10 pr-24 py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-bold outline-none transition-colors ${inputSurface}`}
+                />
+                {maintSearchQuery.trim() !== '' && (
+                  <div className="absolute right-2.5 flex items-center gap-1.5">
+                    <span className="text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30 tabular-nums">
+                      {sortedMaintenanceItems.length}/{dbState.maintenanceItems.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMaintSearchQuery('')}
+                      title="Limpar busca"
+                      className={`p-1.5 rounded-lg cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2793,6 +2891,29 @@ export default function App() {
                 );
               })}
 
+              {sortedMaintenanceItems.length === 0 && maintSearchQuery.trim() !== '' && (
+                <div
+                  className={`col-span-1 md:col-span-2 rounded-2xl sm:rounded-3xl p-6 sm:p-8 text-center flex flex-col items-center justify-center gap-3 ${surfaceCard}`}
+                >
+                  <Search className="w-8 h-8 text-[#FF6A1A] opacity-80" />
+                  <div>
+                    <h3 className="text-sm sm:text-base font-extrabold">
+                      Nenhuma manutenção encontrada para "{maintSearchQuery}"
+                    </h3>
+                    <p className={`text-xs mt-1 ${mutedText}`}>
+                      Tente buscar por outro nome de peça/serviço ou por outra quilometragem restante.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMaintSearchQuery('')}
+                    className="mt-1 px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer"
+                  >
+                    Limpar filtro de busca
+                  </button>
+                </div>
+              )}
+
               {/* BOTÃO / CARD DEDICADO PARA ADICIONAR OUTRAS NOVAS MANUTENÇÕES */}
               <button
                 type="button"
@@ -3206,6 +3327,25 @@ export default function App() {
             </div>
 
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+              {dbState.entries.length === 0 && dbState.expenses.length === 0 ? (
+                <div className="py-10 text-center flex flex-col items-center gap-3">
+                  <History className={`w-10 h-10 ${mutedText}`} />
+                  <div>
+                    <div className="text-sm sm:text-base font-extrabold">Nenhum registro salvo ainda</div>
+                    <p className={`text-xs sm:text-sm mt-1 max-w-md mx-auto ${mutedText}`}>
+                      Sua conta começa 100% zerada. Adicione sua primeira corrida ou gasto para acompanhar seu histórico.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openNewEntryModal}
+                    className="mt-1 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4 stroke-[2.5]" />
+                    <span>Adicionar Primeiro Registro</span>
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-col divide-y divide-slate-800/40">
                 {[
                   ...dbState.entries.map(e => ({ ...e, itemType: 'ganho' as const })),
@@ -3314,6 +3454,7 @@ export default function App() {
                     }
                   })}
               </div>
+              )}
             </div>
           </div>
         )}
@@ -4261,18 +4402,9 @@ export default function App() {
               </button>
               <button
                 onClick={async () => {
-                  const fresh: LocalRoomDatabaseState = {
-                    entries: [],
-                    expenses: [],
-                    dailyGoal: 150,
-                    maintenanceItems: DEFAULT_MAINTENANCE_ITEMS,
-                    fuelConfig: DEFAULT_FUEL_CONFIG,
-                    customApps: [],
-                    customCategories: [],
-                    appOverrides: {},
-                  };
-                  await clearRemoteCloudData(null);
-                  persistAndEnqueueWorkManager(fresh);
+                  const fresh = createCleanDatabaseState(currentUser?.bikeModel);
+                  await clearRemoteCloudData(currentUser?.email ?? null);
+                  await persistAndEnqueueWorkManager(fresh);
                   setShowResetConfirm(false);
                 }}
                 className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-rose-500 text-white cursor-pointer"

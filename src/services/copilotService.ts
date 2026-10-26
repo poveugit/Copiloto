@@ -16,6 +16,18 @@ export function evaluateShiftWorthiness(
   allEntries: RideEntry[]
 ): ShiftEvaluation {
   const goal = Number(dailyGoal) || 150;
+  if (!todayEntries || todayEntries.length === 0) {
+    return {
+      status: 'good',
+      badge: 'Sem Registros Hoje',
+      badgeColor: '#38BDF8',
+      title: 'Nenhum turno registrado hoje ainda.',
+      summary: 'Seus dados começam zerados. Lance suas corridas do dia para acompanhar sua média por hora e progresso da meta.',
+      recommendation: 'Toque no botão "+ Novo Registro" no topo para adicionar seu primeiro ganho ou despesa.',
+      projectedExtra: `Meta diária configurada: R$ ${goal.toLocaleString('pt-BR')}`,
+    };
+  }
+
   const todayRev = todayEntries.reduce((s, e) => s + Number(e.revenue || 0), 0);
   const todayHours = todayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
 
