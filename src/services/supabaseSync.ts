@@ -27,6 +27,14 @@ export interface ExpenseEntry {
   amount: number;
 }
 
+export interface MaintenanceHistoryRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  km: number;
+  amount: number;
+  notes?: string;
+}
+
 export interface MaintenanceItem {
   id: string;
   name: string;
@@ -38,6 +46,7 @@ export interface MaintenanceItem {
   isDefault?: boolean;
   updatedAt?: number;
   alertThresholdPct?: number; // Porcentagem configurável de alerta (ex: 80, 85, 90)
+  history?: MaintenanceHistoryRecord[];
 }
 
 export interface FuelDiagnosticsConfig {
@@ -68,6 +77,7 @@ export interface LocalRoomDatabaseState {
   entries: RideEntry[];
   expenses: ExpenseEntry[];
   dailyGoal: number;
+  weeklyGoal: number;
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
   customApps: AppDefinition[];
@@ -148,6 +158,7 @@ export async function runWorkManagerCloudSync(
       tankCapacityLiters: state.fuelConfig.tankCapacityLiters,
       bikeModelName: state.fuelConfig.bikeModelName,
       odometerBaseKm: state.fuelConfig.odometerBaseKm,
+      weeklyGoal: state.weeklyGoal || 900,
     };
 
     await client.from('moto_settings').upsert(
@@ -350,6 +361,7 @@ export async function fetchRemoteCloudData(
       entries,
       expenses,
       dailyGoal: Number(settings?.daily_goal) || 150,
+      weeklyGoal: Number(m.weeklyGoal) || 900,
       maintenanceItems: Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
         ? settings.custom_maints
         : undefined,

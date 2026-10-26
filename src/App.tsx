@@ -47,6 +47,7 @@ import {
   RideEntry,
   ExpenseEntry,
   MaintenanceItem,
+  MaintenanceHistoryRecord,
   FuelDiagnosticsConfig,
   AppDefinition,
   CategoryDefinition,
@@ -175,6 +176,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     entries: [],
     expenses: [],
     dailyGoal: 150,
+    weeklyGoal: 900,
     maintenanceItems: DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item })),
     fuelConfig: {
       ...DEFAULT_FUEL_CONFIG,
@@ -222,6 +224,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         entries: cleanEntries,
         expenses: cleanExpenses,
         dailyGoal: Number(parsed.dailyGoal) || 150,
+        weeklyGoal: Number(parsed.weeklyGoal) || 900,
         maintenanceItems: maintItems,
         fuelConfig: fuelCfg,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
@@ -339,6 +342,7 @@ export default function App() {
             entries: remote.entries ?? prev.entries,
             expenses: remote.expenses ?? prev.expenses,
             dailyGoal: remote.dailyGoal ?? prev.dailyGoal,
+            weeklyGoal: remote.weeklyGoal ?? prev.weeklyGoal,
             maintenanceItems: remote.maintenanceItems ?? prev.maintenanceItems,
             fuelConfig: remote.fuelConfig ?? prev.fuelConfig,
             customApps: remote.customApps ?? prev.customApps,
@@ -398,6 +402,7 @@ export default function App() {
             entries: remote.entries ?? [],
             expenses: remote.expenses ?? [],
             dailyGoal: remote.dailyGoal ?? userDb.dailyGoal,
+            weeklyGoal: remote.weeklyGoal ?? userDb.weeklyGoal,
             maintenanceItems: remote.maintenanceItems ?? userDb.maintenanceItems,
             fuelConfig: remote.fuelConfig ?? userDb.fuelConfig,
             customApps: remote.customApps ?? [],
@@ -775,14 +780,147 @@ export default function App() {
     }
   };
 
+  // Maintenance Component Replacement History Pop-up Modal State
+  const [selectedMaintHistoryId, setSelectedMaintHistoryId] = useState<string | null>(null);
+  const [showAddMaintHistoryForm, setShowAddMaintHistoryForm] = useState<boolean>(false);
+  const [editingMaintHistoryRecordId, setEditingMaintHistoryRecordId] = useState<string | null>(null);
+  const [maintHistoryDate, setMaintHistoryDate] = useState<string>(todayStr());
+  const [maintHistoryKm, setMaintHistoryKm] = useState<string>('');
+  const [maintHistoryAmount, setMaintHistoryAmount] = useState<string>('');
+  const [maintHistoryNotes, setMaintHistoryNotes] = useState<string>('');
+  const [maintHistoryAddToExpenses, setMaintHistoryAddToExpenses] = useState<boolean>(false);
+
+  const openMaintenanceHistoryModal = (item: MaintenanceItem, openFormDirectly = false) => {
+    setSelectedMaintHistoryId(item.id);
+    setEditingMaintHistoryRecordId(null);
+    setMaintHistoryDate(todayStr());
+    setMaintHistoryKm(String(totals.totalKm));
+    setMaintHistoryAmount(String(item.costEstimate || 0));
+    setMaintHistoryNotes(item.notes || '');
+    setMaintHistoryAddToExpenses(false);
+    setShowAddMaintHistoryForm(openFormDirectly);
+  };
+
   const quickResetMaintenanceCard = (id: string) => {
-    const updatedList = dbState.maintenanceItems.map(m =>
-      m.id === id ? { ...m, lastChangeKm: totals.totalKm, updatedAt: Date.now() } : m
-    );
+    const newRecordId = 'mh_' + Date.now();
+    const today = todayStr();
+    const updatedList = dbState.maintenanceItems.map(m => {
+      if (m.id !== id) return m;
+      const newEntry: MaintenanceHistoryRecord = {
+        id: newRecordId,
+        date: today,
+        km: totals.totalKm,
+        amount: Math.max(0, Number(m.costEstimate) || 0),
+        notes: m.notes || 'Troca registrada no painel',
+      };
+      const prevHistory = Array.isArray(m.history) ? m.history : [];
+      return {
+        ...m,
+        lastChangeKm: totals.totalKm,
+        updatedAt: Date.now(),
+        history: [newEntry, ...prevHistory],
+      };
+    });
     persistAndEnqueueWorkManager({
       ...dbState,
       maintenanceItems: updatedList,
     });
+  };
+
+  const handleSaveMaintenanceHistoryRecord = () => {
+    if (!selectedMaintHistoryId) return;
+    const targetItem = dbState.maintenanceItems.find(m => m.id === selectedMaintHistoryId);
+    if (!targetItem) return;
+
+    const dateVal = maintHistoryDate || todayStr();
+    const kmVal = Math.max(0, Number(maintHistoryKm) || 0);
+    const amountVal = Math.max(0, Number(maintHistoryAmount) || 0);
+    const notesVal = maintHistoryNotes.trim();
+    const prevHistory = Array.isArray(targetItem.history) ? targetItem.history : [];
+
+    let nextHistory: MaintenanceHistoryRecord[];
+    if (editingMaintHistoryRecordId) {
+      nextHistory = prevHistory.map(r =>
+        r.id === editingMaintHistoryRecordId
+          ? { ...r, date: dateVal, km: kmVal, amount: amountVal, notes: notesVal }
+          : r
+      );
+    } else {
+      const newRecord: MaintenanceHistoryRecord = {
+        id: 'mh_' + Date.now(),
+        date: dateVal,
+        km: kmVal,
+        amount: amountVal,
+        notes: notesVal,
+      };
+      nextHistory = [newRecord, ...prevHistory];
+    }
+
+    // Sort newest first by date, then by KM descending
+    nextHistory.sort((a, b) => {
+      if (b.date !== a.date) return b.date.localeCompare(a.date);
+      return (b.km || 0) - (a.km || 0);
+    });
+
+    const highestRecordedKm = nextHistory.reduce(
+      (maxKm, rec) => Math.max(maxKm, Number(rec.km) || 0),
+      targetItem.lastChangeKm || 0
+    );
+
+    const updatedItems = dbState.maintenanceItems.map(m =>
+      m.id === selectedMaintHistoryId
+        ? {
+            ...m,
+            lastChangeKm: !editingMaintHistoryRecordId
+              ? Math.max(m.lastChangeKm || 0, kmVal)
+              : highestRecordedKm,
+            updatedAt: Date.now(),
+            history: nextHistory,
+          }
+        : m
+    );
+
+    const nextExpenses =
+      !editingMaintHistoryRecordId && maintHistoryAddToExpenses && amountVal > 0
+        ? [
+            ...dbState.expenses,
+            {
+              id: Date.now(),
+              date: dateVal,
+              category: 'manutencao',
+              amount: amountVal,
+            },
+          ]
+        : dbState.expenses;
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      maintenanceItems: updatedItems,
+      expenses: nextExpenses,
+    });
+
+    setEditingMaintHistoryRecordId(null);
+    setShowAddMaintHistoryForm(false);
+  };
+
+  const handleDeleteMaintenanceHistoryRecord = (maintId: string, recordId: string) => {
+    const updatedItems = dbState.maintenanceItems.map(m => {
+      if (m.id !== maintId) return m;
+      const filteredHistory = (m.history || []).filter(r => r.id !== recordId);
+      return {
+        ...m,
+        history: filteredHistory,
+        updatedAt: Date.now(),
+      };
+    });
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      maintenanceItems: updatedItems,
+    });
+    if (editingMaintHistoryRecordId === recordId) {
+      setEditingMaintHistoryRecordId(null);
+      setShowAddMaintHistoryForm(false);
+    }
   };
 
   const startEditFuelCard = () => {
@@ -1933,6 +2071,80 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Meta de Faturamento Semanal Progress Bar */}
+                {(() => {
+                  const weeklyTarget = Math.max(50, Number(dbState.weeklyGoal) || 900);
+                  const weeklyEarned = periodTotals.revWeek;
+                  const weeklyRawPct = Math.round((weeklyEarned / weeklyTarget) * 100);
+                  const weeklyBarPct = Math.min(100, Math.max(0, weeklyRawPct));
+                  const weeklyRemaining = Math.max(0, weeklyTarget - weeklyEarned);
+                  const isWeeklyGoalReached = weeklyEarned >= weeklyTarget;
+
+                  return (
+                    <div className={`mt-2.5 sm:mt-3 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 ${surfaceSubtle}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Trophy
+                            className={`w-4 h-4 shrink-0 ${
+                              isWeeklyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}
+                          />
+                          <span className="text-xs sm:text-sm font-extrabold">
+                            Meta de Faturamento Semanal
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-xs sm:text-sm font-black tabular-nums ${
+                              isWeeklyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}
+                          >
+                            {fmtMoney(weeklyEarned)} / {fmtMoney(weeklyTarget)} ({weeklyRawPct}%)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('settings')}
+                            title="Ajustar Meta Semanal nas Configurações"
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                              isDark
+                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
+                            }`}
+                          >
+                            Ajustar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`mt-2.5 h-2.5 sm:h-3 rounded-full overflow-hidden ${
+                          isDark ? 'bg-slate-800' : 'bg-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isWeeklyGoalReached
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
+                          }`}
+                          style={{ width: `${weeklyBarPct}%` }}
+                        />
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
+                        <span className={mutedText}>
+                          {isWeeklyGoalReached
+                            ? `🎉 Meta semanal batida! (+${fmtMoney(weeklyEarned - weeklyTarget)} acima da meta)`
+                            : `Faltam ${fmtMoney(weeklyRemaining)} para atingir a meta da semana`}
+                        </span>
+                        <span className={isWeeklyGoalReached ? 'text-emerald-400 font-extrabold' : mutedText}>
+                          {weeklyRawPct}% concluído
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mt-2.5 sm:mt-3">
                   <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 ${surfaceSubtle}`}>
                     <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / Hora</div>
@@ -2077,17 +2289,33 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <span
-                          className={`text-[11px] sm:text-xs font-black whitespace-nowrap shrink-0 ${
-                            isDanger
-                              ? 'text-rose-400 animate-pulse'
-                              : isWarn
-                              ? 'text-amber-400 animate-pulse'
-                              : 'text-emerald-400'
-                          }`}
-                        >
-                          {isDanger ? '⚠️ Trocar Já' : isWarn ? `⚠️ Alerta (${rawPct}%)` : 'Em Dia'}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              openMaintenanceHistoryModal(item);
+                            }}
+                            title={`Ver histórico de trocas de ${item.name}`}
+                            className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors ${surfaceCard} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                          >
+                            <History className="w-3.5 h-3.5 shrink-0" />
+                            {(item.history?.length || 0) > 0 && (
+                              <span className="tabular-nums text-[10px] font-black">{item.history?.length}</span>
+                            )}
+                          </button>
+                          <span
+                            className={`text-[11px] sm:text-xs font-black whitespace-nowrap shrink-0 ${
+                              isDanger
+                                ? 'text-rose-400 animate-pulse'
+                                : isWarn
+                                ? 'text-amber-400 animate-pulse'
+                                : 'text-emerald-400'
+                            }`}
+                          >
+                            {isDanger ? '⚠️ Trocar Já' : isWarn ? `⚠️ Alerta (${rawPct}%)` : 'Em Dia'}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
@@ -2789,15 +3017,31 @@ export default function App() {
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => startEditMaintenanceCard(item)}
-                              className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
-                              title="Editar dados deste card"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span className="hidden sm:inline">Editar Card</span>
-                              <span className="sm:hidden">Editar</span>
-                            </button>
+                            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => openMaintenanceHistoryModal(item)}
+                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-slate-200`}
+                                title={`Ver histórico de datas e valores pagos de ${item.name}`}
+                              >
+                                <History className="w-3.5 h-3.5 text-[#FF6A1A] shrink-0" />
+                                <span className="hidden sm:inline">Histórico</span>
+                                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                                  {(item.history || []).length}
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => startEditMaintenanceCard(item)}
+                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                                title="Editar dados deste card"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Editar Card</span>
+                                <span className="sm:hidden">Editar</span>
+                              </button>
+                            </div>
                           </div>
 
                           {/* Metadata Line */}
@@ -2872,10 +3116,11 @@ export default function App() {
                         </div>
 
                         {/* Card Footer Actions */}
-                        <div className="mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t border-slate-800/40 flex items-center justify-between gap-3">
+                        <div className="mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t border-slate-800/40 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
                           <button
+                            type="button"
                             onClick={() => quickResetMaintenanceCard(item.id)}
-                            className={`w-full py-2.5 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] text-center ${
+                            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] text-center ${
                               isDanger
                                 ? 'bg-emerald-500/25 border-2 border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/35 shadow-sm'
                                 : `${surfaceSubtle} hover:border-emerald-500/60`
@@ -2883,6 +3128,18 @@ export default function App() {
                           >
                             <RotateCcw className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                             <span>Registrar Troca Agora ({totals.totalKm.toLocaleString('pt-BR')} km)</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openMaintenanceHistoryModal(item)}
+                            className={`py-2.5 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] shrink-0 ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                            title="Abrir pop-up com histórico de datas e valores pagos"
+                          >
+                            <History className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              Ver Histórico {(item.history || []).length > 0 ? `(${(item.history || []).length})` : ''}
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -3682,6 +3939,26 @@ export default function App() {
                 />
               </div>
 
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-2 border-b border-slate-800/40">
+                <div>
+                  <div className="text-sm font-bold">Meta de Faturamento Semanal (R$)</div>
+                  <div className={`text-xs ${mutedText}`}>Exibida na barra de progresso semanal no Painel de Início</div>
+                </div>
+                <input
+                  type="number"
+                  min="50"
+                  step="50"
+                  value={dbState.weeklyGoal || 900}
+                  onChange={e =>
+                    persistAndEnqueueWorkManager({
+                      ...dbState,
+                      weeklyGoal: Math.max(50, Number(e.target.value) || 900),
+                    })
+                  }
+                  className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
+                />
+              </div>
+
               <div className="flex items-center justify-between gap-4 py-3 border-b border-slate-800/40">
                 <span className="text-sm font-bold">Tema da interface</span>
                 <button
@@ -4415,6 +4692,298 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* COMPONENT MAINTENANCE REPLACEMENT HISTORY POP-UP MODAL */}
+      {selectedMaintHistoryId && (() => {
+        const activeMaintItem = dbState.maintenanceItems.find(m => m.id === selectedMaintHistoryId);
+        if (!activeMaintItem) return null;
+
+        const historyRecords = [...(activeMaintItem.history || [])].sort((a, b) => {
+          if (b.date !== a.date) return b.date.localeCompare(a.date);
+          return (b.km || 0) - (a.km || 0);
+        });
+
+        const totalSpent = historyRecords.reduce((acc, rec) => acc + (Number(rec.amount) || 0), 0);
+        const lastRecord = historyRecords[0] || null;
+
+        const formatPtDate = (isoDate: string) => {
+          if (!isoDate) return '—';
+          const parts = isoDate.split('-');
+          if (parts.length === 3) {
+            return `${parts[2]}/${parts[1]}/${parts[0]}`;
+          }
+          return isoDate;
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={() => {
+              setSelectedMaintHistoryId(null);
+              setShowAddMaintHistoryForm(false);
+              setEditingMaintHistoryRecordId(null);
+            }}
+          >
+            <div
+              className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[88vh] shadow-2xl ${surfaceCard}`}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Pop-up Header */}
+              <div className="flex items-start justify-between gap-3 pb-3.5 sm:pb-4 border-b border-slate-800/50">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/35 flex items-center justify-center text-2xl shrink-0">
+                    {activeMaintItem.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <History className="w-3.5 h-3.5 text-[#FF6A1A] shrink-0" />
+                      <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-[#FF6A1A]">
+                        Histórico de Trocas & Valores
+                      </span>
+                    </div>
+                    <h3 className="text-base sm:text-lg font-black truncate mt-0.5">{activeMaintItem.name}</h3>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedMaintHistoryId(null);
+                    setShowAddMaintHistoryForm(false);
+                    setEditingMaintHistoryRecordId(null);
+                  }}
+                  className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer shrink-0`}
+                  aria-label="Fechar histórico"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Quick Summary Metrics */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-2.5 my-3.5 sm:my-4">
+                <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3 ${surfaceSubtle}`}>
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Trocas Registradas</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block">
+                    {historyRecords.length}
+                  </span>
+                </div>
+                <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3 ${surfaceSubtle}`}>
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Último Valor Pago</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums text-[#FF6A1A] mt-0.5 block truncate">
+                    {lastRecord
+                      ? fmtCurrencyExact(lastRecord.amount)
+                      : fmtCurrencyExact(activeMaintItem.costEstimate || 0)}
+                  </span>
+                </div>
+                <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3 ${surfaceSubtle}`}>
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Total Investido</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums text-emerald-400 mt-0.5 block truncate">
+                    {fmtCurrencyExact(totalSpent)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Toggle / Form to Add or Edit a Replacement Entry */}
+              {!showAddMaintHistoryForm ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingMaintHistoryRecordId(null);
+                    setMaintHistoryDate(todayStr());
+                    setMaintHistoryKm(String(totals.totalKm));
+                    setMaintHistoryAmount(String(activeMaintItem.costEstimate || 0));
+                    setMaintHistoryNotes(activeMaintItem.notes || '');
+                    setMaintHistoryAddToExpenses(false);
+                    setShowAddMaintHistoryForm(true);
+                  }}
+                  className="mb-3.5 w-full py-2.5 px-4 rounded-xl text-xs font-extrabold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[42px]"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <span>Registrar Troca com Data e Valor Pago</span>
+                </button>
+              ) : (
+                <div className={`mb-3.5 p-3.5 rounded-2xl border border-[#FF6A1A]/50 ${surfaceSubtle} flex flex-col gap-3`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#FF6A1A]">
+                      {editingMaintHistoryRecordId
+                        ? 'Editar Registro do Histórico'
+                        : 'Nova Troca no Histórico da Peça'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddMaintHistoryForm(false);
+                        setEditingMaintHistoryRecordId(null);
+                      }}
+                      className={`p-1 rounded-lg ${mutedText} cursor-pointer`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>Data da Troca</label>
+                      <input
+                        type="date"
+                        value={maintHistoryDate}
+                        onChange={e => setMaintHistoryDate(e.target.value)}
+                        className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>Valor Pago (R$)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Ex: 45.00"
+                        value={maintHistoryAmount}
+                        onChange={e => setMaintHistoryAmount(e.target.value)}
+                        className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>Odômetro (KM)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="Ex: 15000"
+                        value={maintHistoryKm}
+                        onChange={e => setMaintHistoryKm(e.target.value)}
+                        className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                      Observação / Marca da Peça (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={maintHistoryNotes}
+                      onChange={e => setMaintHistoryNotes(e.target.value)}
+                      placeholder="Ex: Motul 10W30, Oficina do João..."
+                      className={`w-full px-3 py-2 rounded-xl text-xs font-semibold outline-none ${inputSurface}`}
+                    />
+                  </div>
+
+                  {!editingMaintHistoryRecordId && (
+                    <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={maintHistoryAddToExpenses}
+                        onChange={e => setMaintHistoryAddToExpenses(e.target.checked)}
+                        className="rounded accent-[#FF6A1A] w-4 h-4"
+                      />
+                      <span className={mutedText}>
+                        Lançar também este valor nas Despesas Gerais (Manutenção)
+                      </span>
+                    </label>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddMaintHistoryForm(false);
+                        setEditingMaintHistoryRecordId(null);
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer ${surfaceCard}`}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveMaintenanceHistoryRecord}
+                      className="px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>Salvar no Histórico</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* History List */}
+              <div className="flex-1 overflow-y-auto pr-0.5 flex flex-col gap-2.5">
+                {historyRecords.length === 0 ? (
+                  <div className={`rounded-2xl p-6 text-center flex flex-col items-center justify-center gap-2 ${surfaceSubtle}`}>
+                    <History className={`w-7 h-7 ${mutedText} opacity-60`} />
+                    <p className="text-xs sm:text-sm font-bold">
+                      Nenhuma troca registrada ainda para {activeMaintItem.name}
+                    </p>
+                    <p className={`text-[11px] max-w-xs ${mutedText}`}>
+                      Ao clicar em "Registrar Troca Agora" no card ou no botão acima, as datas, quilometragens e valores pagos ficam salvos aqui.
+                    </p>
+                  </div>
+                ) : (
+                  historyRecords.map((rec, idx) => (
+                    <div
+                      key={rec.id}
+                      className={`rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-3 transition-colors ${surfaceSubtle}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs sm:text-sm font-extrabold tabular-nums">
+                            📅 {formatPtDate(rec.date)}
+                          </span>
+                          {idx === 0 && (
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                              Mais recente
+                            </span>
+                          )}
+                          <span className={`text-[11px] font-bold tabular-nums ${mutedText}`}>
+                            · {(Number(rec.km) || 0).toLocaleString('pt-BR')} km
+                          </span>
+                        </div>
+                        {rec.notes && (
+                          <p className={`text-[11px] mt-1 truncate ${mutedText}`}>{rec.notes}</p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <span className="block text-xs sm:text-sm font-black tabular-nums text-[#FF6A1A]">
+                            {fmtCurrencyExact(Number(rec.amount) || 0)}
+                          </span>
+                          <span className={`block text-[10px] font-semibold ${mutedText}`}>valor pago</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingMaintHistoryRecordId(rec.id);
+                            setMaintHistoryDate(rec.date || todayStr());
+                            setMaintHistoryKm(String(rec.km || 0));
+                            setMaintHistoryAmount(String(rec.amount || 0));
+                            setMaintHistoryNotes(rec.notes || '');
+                            setShowAddMaintHistoryForm(true);
+                          }}
+                          title="Editar data ou valor pago"
+                          className={`p-2 rounded-xl ${surfaceCard} hover:border-[#FF6A1A] text-[#FF6A1A] cursor-pointer`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMaintenanceHistoryRecord(activeMaintItem.id, rec.id)}
+                          title="Excluir registro do histórico"
+                          className={`p-2 rounded-xl ${surfaceCard} hover:border-rose-500/60 text-rose-400 cursor-pointer`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
