@@ -31,6 +31,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Bell,
+  BellOff,
+  BellRing,
   User,
   LogOut,
   Eye,
@@ -177,6 +179,10 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     expenses: [],
     dailyGoal: 150,
     weeklyGoal: 900,
+    customGoalTarget: 3000,
+    customGoalDays: 20,
+    customGoalTitle: 'Meta Personalizada de Ganhos',
+    maintenanceNotificationsEnabled: true,
     maintenanceItems: DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item })),
     fuelConfig: {
       ...DEFAULT_FUEL_CONFIG,
@@ -225,6 +231,13 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         expenses: cleanExpenses,
         dailyGoal: Number(parsed.dailyGoal) || 150,
         weeklyGoal: Number(parsed.weeklyGoal) || 900,
+        customGoalTarget: Number(parsed.customGoalTarget) || 3000,
+        customGoalDays: Number(parsed.customGoalDays) || 20,
+        customGoalTitle: parsed.customGoalTitle || 'Meta Personalizada de Ganhos',
+        maintenanceNotificationsEnabled:
+          typeof parsed.maintenanceNotificationsEnabled === 'boolean'
+            ? parsed.maintenanceNotificationsEnabled
+            : true,
         maintenanceItems: maintItems,
         fuelConfig: fuelCfg,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
@@ -473,22 +486,6 @@ export default function App() {
     }
   };
 
-  const handleContinueAsGuest = () => {
-    const guestProfile: UserProfile = {
-      id: 'guest_local',
-      name: 'Piloto Convidado',
-      email: 'offline@copilotrider.local',
-      bikeModel: 'Minha Moto',
-      createdAt: new Date().toISOString(),
-      isGuest: true,
-    };
-    saveActiveSessionUser(guestProfile);
-    const guestDb = loadDatabaseForUser(guestProfile);
-    setDbState(guestDb);
-    setCurrentUser(guestProfile);
-    setShowAuthScreen(false);
-  };
-
   const handleLogout = () => {
     saveActiveSessionUser(null);
     setCurrentUser(null);
@@ -617,6 +614,160 @@ export default function App() {
   const bikeDiagnostics = useMemo(() => {
     return evaluateBikeDiagnostics(dbState.maintenanceItems, dbState.fuelConfig, totals.totalKm);
   }, [dbState.maintenanceItems, dbState.fuelConfig, totals.totalKm]);
+
+  // ================= LOCAL PUSH NOTIFICATIONS FOR MAINTENANCE ALERTS =================
+  interface LocalPushToast {
+    id: string;
+    itemId: string;
+    itemName: string;
+    itemIcon: string;
+    severity: 'alert' | 'overdue';
+    wearPct: number;
+    thresholdPct: number;
+    kmRemaining: number;
+    timestamp: string;
+  }
+
+  const [localPushToasts, setLocalPushToasts] = useState<LocalPushToast[]>([]);
+  const [browserNotifPermission, setBrowserNotifPermission] = useState<string>(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      return Notification.permission;
+    }
+    return 'unsupported';
+  });
+
+  const isMaintNotificationsEnabled = dbState.maintenanceNotificationsEnabled !== false;
+
+  const maintAlertStats = useMemo(() => {
+    let overdueCount = 0;
+    let alertCount = 0;
+    dbState.maintenanceItems.forEach(item => {
+      const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
+      const interval = Math.max(100, item.intervalKm || 1000);
+      const wearPct = Math.round((kmUsed / interval) * 100);
+      const thresholdPct = item.alertThresholdPct ?? 85;
+      if (wearPct >= 100) {
+        overdueCount += 1;
+      } else if (wearPct >= thresholdPct) {
+        alertCount += 1;
+      }
+    });
+    return { overdueCount, alertCount };
+  }, [dbState.maintenanceItems, totals.totalKm]);
+
+  const dispatchNativeAndLocalPush = useCallback((toast: LocalPushToast) => {
+    setLocalPushToasts(prev => {
+      const filtered = prev.filter(t => t.itemId !== toast.itemId);
+      return [toast, ...filtered].slice(0, 4);
+    });
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        const title =
+          toast.severity === 'overdue'
+            ? `🚨 Manutenção Vencida: ${toast.itemName}`
+            : `⚠️ Ponto de Alerta (${toast.wearPct}%): ${toast.itemName}`;
+        const body =
+          toast.severity === 'overdue'
+            ? `O limite de quilometragem foi atingido (${toast.wearPct}% de uso). Agende a troca agora.`
+            : `Atingiu o ponto de alerta de ${toast.thresholdPct}%! Restam ${toast.kmRemaining.toLocaleString('pt-BR')} km para a revisão.`;
+        new Notification(title, {
+          body,
+          tag: `copilotrider_maint_${toast.itemId}`,
+        });
+      } catch {
+        // Fallback handled by in-app local push banner
+      }
+    }
+  }, []);
+
+  // Watch maintenance items against totalKm and fire local push when alertThresholdPct is reached
+  useEffect(() => {
+    if (!isMaintNotificationsEnabled || showAuthScreen) return;
+
+    const notifiedStorageKey = `${getStorageKeyForUser(currentUser)}_notified_alerts_v1`;
+    let notifiedMap: Record<string, boolean> = {};
+    try {
+      const raw = localStorage.getItem(notifiedStorageKey);
+      if (raw) notifiedMap = JSON.parse(raw) || {};
+    } catch {
+      notifiedMap = {};
+    }
+
+    let updatedMap = false;
+    const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+    dbState.maintenanceItems.forEach(item => {
+      const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
+      const interval = Math.max(100, item.intervalKm || 1000);
+      const kmRemaining = Math.max(0, interval - kmUsed);
+      const wearPct = Math.round((kmUsed / interval) * 100);
+      const thresholdPct = item.alertThresholdPct ?? 85;
+
+      if (wearPct >= thresholdPct) {
+        const severity: 'alert' | 'overdue' = wearPct >= 100 ? 'overdue' : 'alert';
+        const cycleKey = `${item.id}_${item.lastChangeKm || 0}_${severity}`;
+        if (!notifiedMap[cycleKey]) {
+          notifiedMap[cycleKey] = true;
+          updatedMap = true;
+          dispatchNativeAndLocalPush({
+            id: `${cycleKey}_${Date.now()}`,
+            itemId: item.id,
+            itemName: item.name,
+            itemIcon: item.icon || '🔧',
+            severity,
+            wearPct,
+            thresholdPct,
+            kmRemaining,
+            timestamp: nowTime,
+          });
+        }
+      }
+    });
+
+    if (updatedMap) {
+      try {
+        localStorage.setItem(notifiedStorageKey, JSON.stringify(notifiedMap));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }
+  }, [
+    dbState.maintenanceItems,
+    totals.totalKm,
+    isMaintNotificationsEnabled,
+    showAuthScreen,
+    currentUser,
+    dispatchNativeAndLocalPush,
+  ]);
+
+  const handleToggleMaintenanceNotifications = async (nextEnabled: boolean) => {
+    if (nextEnabled && typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        try {
+          const perm = await Notification.requestPermission();
+          setBrowserNotifPermission(perm);
+        } catch {
+          // Ignore iframe permission restriction
+        }
+      } else {
+        setBrowserNotifPermission(Notification.permission);
+      }
+    }
+
+    if (!nextEnabled) {
+      setLocalPushToasts([]);
+    } else {
+      // Clear notified cache for current active alerts so enabling immediately notifies any items already at alert point
+      const notifiedStorageKey = `${getStorageKeyForUser(currentUser)}_notified_alerts_v1`;
+      localStorage.removeItem(notifiedStorageKey);
+    }
+
+    await persistAndEnqueueWorkManager({
+      ...dbState,
+      maintenanceNotificationsEnabled: nextEnabled,
+    });
+  };
 
   // ================= EDITABLE MOTO CARDS STATE (100% EDITABLE) =================
   const [editingMaintId, setEditingMaintId] = useState<string | null>(null);
@@ -1438,6 +1589,448 @@ export default function App() {
     return streak;
   }, [dbState.entries, dbState.expenses]);
 
+  // Comprehensive Progress, Performance & Statistics Analytics
+  const progressAnalytics = useMemo(() => {
+    const today = todayStr();
+    const dailyGoal = Math.max(10, Number(dbState.dailyGoal) || 150);
+    const weeklyGoal = Math.max(50, Number(dbState.weeklyGoal) || 900);
+    const customGoalTarget = Math.max(10, Number(dbState.customGoalTarget) || 3000);
+    const customGoalDays = Math.max(1, Number(dbState.customGoalDays) || 20);
+    const customGoalTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
+
+    // Today stats
+    const todayEntries = dbState.entries.filter(e => e.date === today);
+    const revToday = todayEntries.reduce((s, e) => s + Number(e.revenue || 0), 0);
+    const kmToday = todayEntries.reduce((s, e) => s + Number(e.km || 0), 0);
+    const hoursToday = todayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
+    const dailyPct = Math.min(100, Math.round((revToday / dailyGoal) * 100));
+    const dailyRemaining = Math.max(0, dailyGoal - revToday);
+
+    // Weekly stats
+    const now = new Date();
+    const dayOfWeek = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (dayOfWeek - 1));
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const weekEntries = dbState.entries.filter(e => {
+      if (!e.date) return false;
+      const dt = new Date(e.date + 'T12:00:00');
+      return dt >= monday && dt <= sunday;
+    });
+    const revWeek = periodTotals.revWeek;
+    const kmWeek = weekEntries.reduce((s, e) => s + Number(e.km || 0), 0);
+    const hoursWeek = weekEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
+    const weekActiveDays = new Set(weekEntries.map(e => e.date)).size;
+    const weeklyPct = Math.min(100, Math.round((revWeek / weeklyGoal) * 100));
+    const weeklyRemaining = Math.max(0, weeklyGoal - revWeek);
+    const remainingDaysInWeek = Math.max(1, 8 - dayOfWeek);
+    const weeklyDailyNeeded = weeklyRemaining > 0 ? weeklyRemaining / remainingDaysInWeek : 0;
+
+    // Custom Goal stats
+    const customCurrent = totals.totalRevenue;
+    const customPct = Math.min(100, Math.round((customCurrent / customGoalTarget) * 100));
+    const customRemaining = Math.max(0, customGoalTarget - customCurrent);
+    const customDailyNeeded = customRemaining > 0 ? customRemaining / customGoalDays : 0;
+
+    // Group entries by date for work days, records, goal hit rate, and max streak
+    const byDateMap: Record<
+      string,
+      { date: string; rev: number; km: number; hours: number; count: number; exp: number }
+    > = {};
+
+    dbState.entries.forEach(e => {
+      if (!e.date) return;
+      if (!byDateMap[e.date]) {
+        byDateMap[e.date] = { date: e.date, rev: 0, km: 0, hours: 0, count: 0, exp: 0 };
+      }
+      byDateMap[e.date].rev += Number(e.revenue || 0);
+      byDateMap[e.date].km += Number(e.km || 0);
+      byDateMap[e.date].hours += Number(e.hours || 0);
+      byDateMap[e.date].count += 1;
+    });
+
+    dbState.expenses.forEach(ex => {
+      if (!ex.date) return;
+      if (!byDateMap[ex.date]) {
+        byDateMap[ex.date] = { date: ex.date, rev: 0, km: 0, hours: 0, count: 0, exp: 0 };
+      }
+      byDateMap[ex.date].exp += Number(ex.amount || 0);
+    });
+
+    const allDaysList = Object.values(byDateMap).sort((a, b) => a.date.localeCompare(b.date));
+    const workDaysList = allDaysList.filter(d => d.rev > 0 || d.km > 0 || d.count > 0);
+    const uniqueWorkDays = workDaysList.length;
+
+    // Max historical streak
+    let maxStreak = streakCount;
+    let currentRun = 0;
+    let prevDateObj: Date | null = null;
+    allDaysList.forEach(d => {
+      const currObj = new Date(d.date + 'T12:00:00');
+      if (!prevDateObj) {
+        currentRun = 1;
+      } else {
+        const diffDays = Math.round((currObj.getTime() - prevDateObj.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          currentRun += 1;
+        } else if (diffDays > 1) {
+          currentRun = 1;
+        }
+      }
+      if (currentRun > maxStreak) maxStreak = currentRun;
+      prevDateObj = currObj;
+    });
+
+    // Days that met or exceeded dailyGoal
+    const daysMetDailyGoal = workDaysList.filter(d => d.rev >= dailyGoal).length;
+    const goalHitRatePct = uniqueWorkDays > 0 ? Math.round((daysMetDailyGoal / uniqueWorkDays) * 100) : 0;
+
+    // Averages per work day
+    const avgRevPerDay = uniqueWorkDays > 0 ? totals.totalRevenue / uniqueWorkDays : 0;
+    const avgNetPerDay = uniqueWorkDays > 0 ? totals.lucro / uniqueWorkDays : 0;
+    const avgKmPerDay = uniqueWorkDays > 0 ? totals.ridesKm / uniqueWorkDays : 0;
+    const avgHoursPerDay = uniqueWorkDays > 0 ? totals.totalHours / uniqueWorkDays : 0;
+
+    // Hourly & Per-KM productivity
+    const grossPerHour = totals.totalHours > 0 ? totals.totalRevenue / totals.totalHours : 0;
+    const netPerHour = totals.totalHours > 0 ? totals.lucro / totals.totalHours : 0;
+    const kmPerHour = totals.totalHours > 0 ? totals.ridesKm / totals.totalHours : 0;
+
+    const grossPerKm = totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : 0;
+    const netPerKm = totals.ridesKm > 0 ? totals.lucro / totals.ridesKm : 0;
+    const expensePerKm = totals.ridesKm > 0 ? totals.totalExpense / totals.ridesKm : 0;
+
+    const kmPerLiter = Math.max(5, Number(dbState.fuelConfig.kmPerLiter) || 35);
+    const fuelPrice = Math.max(0.5, Number(dbState.fuelConfig.fuelPrice) || 5.8);
+    const estimatedFuelLiters = totals.ridesKm > 0 ? totals.ridesKm / kmPerLiter : 0;
+    const estimatedFuelCost = estimatedFuelLiters * fuelPrice;
+    const profitMarginPct =
+      totals.totalRevenue > 0 ? Math.round((totals.lucro / totals.totalRevenue) * 100) : 0;
+
+    // Estimated days to finish Custom Goal at current daily average
+    const estimatedDaysToCustomGoal =
+      customRemaining <= 0
+        ? 0
+        : avgRevPerDay > 0
+        ? Math.ceil(customRemaining / avgRevPerDay)
+        : customGoalDays;
+
+    // Best day record
+    const bestDayByRev =
+      workDaysList.length > 0
+        ? [...workDaysList].sort((a, b) => b.rev - a.rev)[0]
+        : null;
+
+    const bestDayByHourly =
+      workDaysList.filter(d => d.hours > 0).length > 0
+        ? [...workDaysList.filter(d => d.hours > 0)].sort(
+            (a, b) => b.rev / b.hours - a.rev / a.hours
+          )[0]
+        : null;
+
+    // Performance by App
+    const appStatsMap: Record<
+      string,
+      { id: string; name: string; icon: string; rev: number; km: number; hours: number; count: number }
+    > = {};
+    allApps.forEach(a => {
+      appStatsMap[a.id] = { id: a.id, name: a.name, icon: a.icon, rev: 0, km: 0, hours: 0, count: 0 };
+    });
+    dbState.entries.forEach(e => {
+      if (!appStatsMap[e.app]) {
+        appStatsMap[e.app] = {
+          id: e.app,
+          name: e.app,
+          icon: '🛵',
+          rev: 0,
+          km: 0,
+          hours: 0,
+          count: 0,
+        };
+      }
+      appStatsMap[e.app].rev += Number(e.revenue || 0);
+      appStatsMap[e.app].km += Number(e.km || 0);
+      appStatsMap[e.app].hours += Number(e.hours || 0);
+      appStatsMap[e.app].count += 1;
+    });
+    const appPerformance = Object.values(appStatsMap)
+      .filter(a => a.rev > 0 || a.count > 0)
+      .map(a => ({
+        ...a,
+        sharePct: totals.totalRevenue > 0 ? Math.round((a.rev / totals.totalRevenue) * 100) : 0,
+        revPerKm: a.km > 0 ? a.rev / a.km : 0,
+        revPerHour: a.hours > 0 ? a.rev / a.hours : 0,
+      }))
+      .sort((a, b) => b.rev - a.rev);
+
+    const bestApp = appPerformance.length > 0 ? appPerformance[0] : null;
+
+    // Performance by Shift
+    const shiftStatsMap: Record<
+      string,
+      { id: string; name: string; rev: number; km: number; hours: number; count: number }
+    > = {};
+    allShifts.forEach(s => {
+      shiftStatsMap[s.id] = { id: s.id, name: s.name, rev: 0, km: 0, hours: 0, count: 0 };
+    });
+    dbState.entries.forEach(e => {
+      const shId = e.shift || 'almoco';
+      if (!shiftStatsMap[shId]) {
+        shiftStatsMap[shId] = { id: shId, name: shId, rev: 0, km: 0, hours: 0, count: 0 };
+      }
+      shiftStatsMap[shId].rev += Number(e.revenue || 0);
+      shiftStatsMap[shId].km += Number(e.km || 0);
+      shiftStatsMap[shId].hours += Number(e.hours || 0);
+      shiftStatsMap[shId].count += 1;
+    });
+    const shiftPerformance = Object.values(shiftStatsMap)
+      .filter(s => s.rev > 0 || s.count > 0)
+      .map(s => ({
+        ...s,
+        sharePct: totals.totalRevenue > 0 ? Math.round((s.rev / totals.totalRevenue) * 100) : 0,
+        revPerKm: s.km > 0 ? s.rev / s.km : 0,
+        revPerHour: s.hours > 0 ? s.rev / s.hours : 0,
+      }))
+      .sort((a, b) => b.rev - a.rev);
+
+    const bestShift = shiftPerformance.length > 0 ? shiftPerformance[0] : null;
+
+    // Maintenance health summary
+    const totalMaintItems = dbState.maintenanceItems.length;
+    const healthyMaintCount = Math.max(
+      0,
+      totalMaintItems - maintAlertStats.overdueCount - maintAlertStats.alertCount
+    );
+    const totalMaintHistorySpent = dbState.maintenanceItems.reduce((sum, item) => {
+      const hist = Array.isArray(item.history) ? item.history : [];
+      return sum + hist.reduce((s, r) => s + Number(r.amount || 0), 0);
+    }, 0);
+
+    // Last 7 days detailed evolution
+    const last7DaysDetailed = chart7Days.map(d => {
+      const dayEntries = dbState.entries.filter(e => e.date === d.date);
+      const hours = dayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
+      const goalPct = Math.min(100, Math.round((d.rev / dailyGoal) * 100));
+      const revPerHour = hours > 0 ? d.rev / hours : 0;
+      const revPerKm = d.km > 0 ? d.rev / d.km : 0;
+      return {
+        ...d,
+        hours,
+        goalPct,
+        metGoal: d.rev >= dailyGoal,
+        revPerHour,
+        revPerKm,
+        count: dayEntries.length,
+      };
+    });
+
+    // 12 Progressive Achievements with individual progress bars
+    const uniqueAppsUsedCount = appPerformance.length;
+    const achievements = [
+      {
+        id: 'km_100',
+        icon: '🏁',
+        title: 'Primeiros 100 km',
+        desc: 'Complete seus primeiros 100 km registrados',
+        current: totals.totalKm,
+        target: 100,
+        unit: 'km',
+        unlocked: totals.totalKm >= 100,
+        pct: Math.min(100, Math.round((totals.totalKm / 100) * 100)),
+      },
+      {
+        id: 'km_500',
+        icon: '🛣️',
+        title: 'Piloto de Rota (500 km)',
+        desc: 'Alcance 500 km acumulados no odômetro/corridas',
+        current: totals.totalKm,
+        target: 500,
+        unit: 'km',
+        unlocked: totals.totalKm >= 500,
+        pct: Math.min(100, Math.round((totals.totalKm / 500) * 100)),
+      },
+      {
+        id: 'km_1000',
+        icon: '🏍️',
+        title: '1.000 km no Asfalto',
+        desc: 'Supere a marca de 1.000 km monitorados no app',
+        current: totals.totalKm,
+        target: 1000,
+        unit: 'km',
+        unlocked: totals.totalKm >= 1000,
+        pct: Math.min(100, Math.round((totals.totalKm / 1000) * 100)),
+      },
+      {
+        id: 'km_5000',
+        icon: '⚡',
+        title: 'Veterano 5.000 km',
+        desc: 'Atinja 5.000 km de rodagem acompanhada',
+        current: totals.totalKm,
+        target: 5000,
+        unit: 'km',
+        unlocked: totals.totalKm >= 5000,
+        pct: Math.min(100, Math.round((totals.totalKm / 5000) * 100)),
+      },
+      {
+        id: 'rev_500',
+        icon: '💵',
+        title: 'Primeiros R$ 500',
+        desc: 'Acumule R$ 500 em faturamento bruto registrado',
+        current: totals.totalRevenue,
+        target: 500,
+        unit: 'R$',
+        unlocked: totals.totalRevenue >= 500,
+        pct: Math.min(100, Math.round((totals.totalRevenue / 500) * 100)),
+      },
+      {
+        id: 'rev_1000',
+        icon: '💰',
+        title: 'R$ 1.000 Faturados',
+        desc: 'Chegue ao primeiro milhar em ganhos brutos',
+        current: totals.totalRevenue,
+        target: 1000,
+        unit: 'R$',
+        unlocked: totals.totalRevenue >= 1000,
+        pct: Math.min(100, Math.round((totals.totalRevenue / 1000) * 100)),
+      },
+      {
+        id: 'rev_5000',
+        icon: '💎',
+        title: 'R$ 5.000 Faturados',
+        desc: 'Alcance R$ 5.000 de faturamento acumulado',
+        current: totals.totalRevenue,
+        target: 5000,
+        unit: 'R$',
+        unlocked: totals.totalRevenue >= 5000,
+        pct: Math.min(100, Math.round((totals.totalRevenue / 5000) * 100)),
+      },
+      {
+        id: 'rev_10000',
+        icon: '👑',
+        title: 'Elite R$ 10.000',
+        desc: 'Fature R$ 10.000 registrados no CopilotRider',
+        current: totals.totalRevenue,
+        target: 10000,
+        unit: 'R$',
+        unlocked: totals.totalRevenue >= 10000,
+        pct: Math.min(100, Math.round((totals.totalRevenue / 10000) * 100)),
+      },
+      {
+        id: 'streak_7',
+        icon: '🔥',
+        title: '7 Dias Seguidos',
+        desc: 'Registre corridas ou gastos por 7 dias consecutivos',
+        current: maxStreak,
+        target: 7,
+        unit: 'dias',
+        unlocked: maxStreak >= 7,
+        pct: Math.min(100, Math.round((maxStreak / 7) * 100)),
+      },
+      {
+        id: 'goal_hunter',
+        icon: '🎯',
+        title: 'Batedor de Metas (5x)',
+        desc: 'Bata sua Meta Diária em pelo menos 5 dias diferentes',
+        current: daysMetDailyGoal,
+        target: 5,
+        unit: 'dias',
+        unlocked: daysMetDailyGoal >= 5,
+        pct: Math.min(100, Math.round((daysMetDailyGoal / 5) * 100)),
+      },
+      {
+        id: 'multi_app',
+        icon: '🗺️',
+        title: 'Estrategista Multi-App',
+        desc: 'Registre corridas em pelo menos 3 aplicativos diferentes',
+        current: uniqueAppsUsedCount,
+        target: 3,
+        unit: 'apps',
+        unlocked: uniqueAppsUsedCount >= 3,
+        pct: Math.min(100, Math.round((uniqueAppsUsedCount / 3) * 100)),
+      },
+      {
+        id: 'positive_profit',
+        icon: '📊',
+        title: 'Gestão no Azul',
+        desc: 'Mantenha lucro líquido positivo acima de R$ 500',
+        current: Math.max(0, totals.lucro),
+        target: 500,
+        unit: 'R$',
+        unlocked: totals.lucro >= 500,
+        pct: Math.min(100, Math.round((Math.max(0, totals.lucro) / 500) * 100)),
+      },
+    ];
+
+    const unlockedCount = achievements.filter(a => a.unlocked).length;
+
+    return {
+      dailyGoal,
+      weeklyGoal,
+      customGoalTarget,
+      customGoalDays,
+      customGoalTitle,
+      revToday,
+      kmToday,
+      hoursToday,
+      dailyPct,
+      dailyRemaining,
+      revWeek,
+      kmWeek,
+      hoursWeek,
+      weekActiveDays,
+      weeklyPct,
+      weeklyRemaining,
+      weeklyDailyNeeded,
+      customCurrent,
+      customPct,
+      customRemaining,
+      customDailyNeeded,
+      estimatedDaysToCustomGoal,
+      uniqueWorkDays,
+      maxStreak,
+      daysMetDailyGoal,
+      goalHitRatePct,
+      avgRevPerDay,
+      avgNetPerDay,
+      avgKmPerDay,
+      avgHoursPerDay,
+      grossPerHour,
+      netPerHour,
+      kmPerHour,
+      grossPerKm,
+      netPerKm,
+      expensePerKm,
+      estimatedFuelLiters,
+      estimatedFuelCost,
+      profitMarginPct,
+      bestDayByRev,
+      bestDayByHourly,
+      appPerformance,
+      bestApp,
+      shiftPerformance,
+      bestShift,
+      totalMaintItems,
+      healthyMaintCount,
+      totalMaintHistorySpent,
+      last7DaysDetailed,
+      achievements,
+      unlockedCount,
+    };
+  }, [
+    dbState,
+    periodTotals.revWeek,
+    totals,
+    streakCount,
+    allApps,
+    allShifts,
+    maintAlertStats,
+    chart7Days,
+  ]);
+
   // Notifications State & Pending Alerts from Room DB (Threshold >= alertThresholdPct or >= 100%)
   const [showNotificationsModal, setShowNotificationsModal] = useState<boolean>(false);
   const pendingAlertNotifications = useMemo(() => {
@@ -1782,18 +2375,6 @@ export default function App() {
                   <ArrowRight className="w-4 h-4 stroke-[2.5]" />
                 </button>
               </form>
-
-              {/* Divider + Guest / Offline Quick Access */}
-              <div className="mt-5 pt-4 border-t border-slate-800/40 flex flex-col gap-2.5">
-                <button
-                  type="button"
-                  onClick={handleContinueAsGuest}
-                  className={`w-full py-3 px-4 rounded-2xl text-xs font-bold cursor-pointer transition-colors flex items-center justify-center gap-2 min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                >
-                  <Database className="w-3.5 h-3.5 text-[#FF6A1A]" />
-                  <span>Continuar sem conta (Modo Offline Local)</span>
-                </button>
-              </div>
             </div>
           </div>
         </main>
@@ -2139,6 +2720,178 @@ export default function App() {
                         </span>
                         <span className={isWeeklyGoalReached ? 'text-emerald-400 font-extrabold' : mutedText}>
                           {weeklyRawPct}% concluído
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Meta Personalizada de Ganhos + Barra de Progresso + Meta Diária até Atingir o Objetivo */}
+                {(() => {
+                  const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
+                  const customDays = Math.max(1, Number(dbState.customGoalDays) || 20);
+                  const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
+                  const currentEarned = totals.totalRevenue;
+                  const rawPct = Math.round((currentEarned / customTarget) * 100);
+                  const barPct = Math.min(100, Math.max(0, rawPct));
+                  const remainingToGoal = Math.max(0, customTarget - currentEarned);
+                  const isGoalReached = currentEarned >= customTarget;
+                  const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
+                  const estimatedDaysAtCurrentDailyGoal =
+                    isGoalReached || dbState.dailyGoal <= 0
+                      ? 0
+                      : Math.ceil(remainingToGoal / Math.max(10, dbState.dailyGoal));
+
+                  return (
+                    <div
+                      className={`mt-2.5 sm:mt-3 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 border transition-colors ${
+                        isGoalReached
+                          ? isDark
+                            ? 'bg-emerald-950/20 border-emerald-500/40'
+                            : 'bg-emerald-50/70 border-emerald-300'
+                          : surfaceSubtle
+                      }`}
+                    >
+                      {/* Header + Editable Inputs for Custom Goal */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${
+                              isGoalReached
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : 'bg-[#FF6A1A]/15 text-[#FF6A1A]'
+                            }`}
+                          >
+                            <Trophy className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-xs sm:text-sm font-extrabold block leading-tight">
+                              {customTitle}
+                            </span>
+                            <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
+                              Defina seu objetivo de ganhos e acompanhe a meta diária necessária
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-xs sm:text-sm font-black tabular-nums ${
+                              isGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}
+                          >
+                            {fmtMoney(currentEarned)} / {fmtMoney(customTarget)} ({rawPct}%)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Inline Fields: Valor da Meta Personalizada (R$) & Prazo (Dias) */}
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
+                            Definir Meta de Ganhos (R$)
+                          </label>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-xs font-black text-[#FF6A1A]">R$</span>
+                            <input
+                              type="number"
+                              min="50"
+                              step="50"
+                              value={dbState.customGoalTarget || 3000}
+                              onChange={e =>
+                                persistAndEnqueueWorkManager({
+                                  ...dbState,
+                                  customGoalTarget: Math.max(10, Number(e.target.value) || 0),
+                                })
+                              }
+                              placeholder="Ex: 3000"
+                              className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                          </div>
+                        </div>
+
+                        <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
+                            Prazo p/ Objetivo (Dias)
+                          </label>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <input
+                              type="number"
+                              min="1"
+                              max="365"
+                              value={dbState.customGoalDays || 20}
+                              onChange={e =>
+                                persistAndEnqueueWorkManager({
+                                  ...dbState,
+                                  customGoalDays: Math.max(1, Math.min(365, Number(e.target.value) || 1)),
+                                })
+                              }
+                              className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                            <span className={`text-xs font-bold shrink-0 ${mutedText}`}>dias</span>
+                          </div>
+                        </div>
+
+                        <div
+                          className={`rounded-xl p-2.5 flex flex-col justify-between border ${
+                            isGoalReached
+                              ? 'bg-emerald-500/10 border-emerald-500/30'
+                              : 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30'
+                          }`}
+                        >
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
+                            Meta Diária até o Objetivo
+                          </span>
+                          <div className="mt-1 flex items-baseline justify-between gap-1">
+                            <span
+                              className={`text-sm sm:text-base font-black tabular-nums ${
+                                isGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}
+                            >
+                              {isGoalReached
+                                ? 'Objetivo Atingido!'
+                                : `${fmtCurrencyExact(requiredDailyToReachGoal)}/dia`}
+                            </span>
+                            {!isGoalReached && (
+                              <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
+                                por {customDays} {customDays === 1 ? 'dia' : 'dias'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div
+                        className={`mt-3 h-3 rounded-full overflow-hidden ${
+                          isDark ? 'bg-slate-800' : 'bg-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isGoalReached
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-[#FF6A1A] via-amber-500 to-emerald-400'
+                          }`}
+                          style={{ width: `${barPct}%` }}
+                        />
+                      </div>
+
+                      {/* Bottom Status Details */}
+                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
+                        <span className={mutedText}>
+                          {isGoalReached
+                            ? `🏆 Parabéns! Você superou sua meta personalizada em ${fmtMoney(
+                                currentEarned - customTarget
+                              )}!`
+                            : `Faltam ${fmtMoney(remainingToGoal)} · Faça ${fmtCurrencyExact(
+                                requiredDailyToReachGoal
+                              )}/dia (${customDays} dias) ou ~${estimatedDaysAtCurrentDailyGoal} dias na meta de ${fmtMoney(
+                                dbState.dailyGoal
+                              )}/dia`}
+                        </span>
+                        <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-[#FF6A1A] font-extrabold'}>
+                          {rawPct}% do objetivo
                         </span>
                       </div>
                     </div>
@@ -3716,68 +4469,721 @@ export default function App() {
           </div>
         )}
 
-        {/* ================= ABA 5: PROGRESSO & CONQUISTAS ================= */}
+        {/* ================= ABA 5: PROGRESSO, ESTATÍSTICAS & CONQUISTAS ================= */}
         {activeTab === 'progress' && (
           <div className="flex flex-col gap-4 sm:gap-6">
-            <h1 className="text-xl sm:text-2xl font-black">Progresso & Conquistas</h1>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex items-center gap-4 sm:gap-5 ${surfaceCard}`}>
-                <Flame className="w-10 h-10 sm:w-12 sm:h-12 text-[#FF6A1A] shrink-0" />
-                <div>
-                  <div className="text-3xl sm:text-4xl font-black text-[#FF6A1A] tabular-nums">{streakCount}</div>
-                  <div className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider mt-0.5 sm:mt-1 ${mutedText}`}>
-                    Dias Seguidos Registrados
+            {/* TOP HEADER + PILOT LEVEL BANNER */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3.5">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center shrink-0">
+                    <Trophy className="w-6 h-6 sm:w-7 sm:h-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider px-2.5 py-0.5 rounded-lg bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                        Patente: {level.name}
+                      </span>
+                      <span className={`text-xs font-bold ${mutedText}`}>
+                        {progressAnalytics.unlockedCount}/{progressAnalytics.achievements.length} conquistas desbloqueadas
+                      </span>
+                    </div>
+                    <h1 className="text-lg sm:text-2xl font-black mt-1">
+                      Progresso, Estatísticas & Performance
+                    </h1>
+                    <p className={`text-xs mt-0.5 ${mutedText}`}>
+                      Análise completa de metas, eficiência por hora/KM, recordes pessoais e evolução diária
+                    </p>
                   </div>
                 </div>
-              </div>
 
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex items-center justify-between gap-4 sm:gap-5 ${surfaceCard}`}>
-                <div>
-                  <div className="text-2xl sm:text-3xl font-black text-emerald-400 tabular-nums">
-                    {Math.min(
-                      100,
-                      Math.round(
-                        (dbState.entries
-                          .filter(e => e.date === todayStr())
-                          .reduce((s, e) => s + Number(e.revenue || 0), 0) /
-                          (dbState.dailyGoal || 150)) *
-                          100
-                      )
-                    )}
-                    %
+                {/* Level XP Bar */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 lg:w-80 shrink-0 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="font-extrabold text-[#FF6A1A]">Progresso de Patente</span>
+                    <span className="font-black tabular-nums">
+                      {totals.totalKm.toLocaleString('pt-BR')} / {level.end.toLocaleString('pt-BR')} km
+                    </span>
                   </div>
-                  <div className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider mt-0.5 sm:mt-1 ${mutedText}`}>
-                    Meta Diária ({fmtMoney(dbState.dailyGoal)})
+                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#FF6A1A] to-amber-400 transition-all duration-500"
+                      style={{ width: `${Math.min(100, Math.round(level.pct))}%` }}
+                    />
+                  </div>
+                  <div className={`flex items-center justify-between text-[11px] mt-1.5 ${mutedText}`}>
+                    <span>Nível atual: {level.start.toLocaleString('pt-BR')} km</span>
+                    <span className="font-bold">
+                      Faltam {Math.max(0, level.end - totals.totalKm).toLocaleString('pt-BR')} km
+                    </span>
                   </div>
                 </div>
-                <CheckCircle2 className="w-10 h-10 sm:w-12 sm:h-12 text-emerald-400 shrink-0" />
               </div>
             </div>
 
+            {/* SECTION 1: PAINEL DE METAS (DIÁRIA, SEMANAL E META PERSONALIZADA) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-5">
+              {/* Card 1: Meta Diária (Hoje) */}
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3 ${surfaceCard}`}>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-[11px] font-extrabold uppercase tracking-wider ${mutedText}`}>
+                      Meta Diária (Hoje)
+                    </span>
+                    <span
+                      className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                        progressAnalytics.revToday >= progressAnalytics.dailyGoal
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30'
+                      }`}
+                    >
+                      {progressAnalytics.dailyPct}% atingido
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-2 mt-2">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-400">
+                      {fmtCurrencyExact(progressAnalytics.revToday)}
+                    </div>
+                    <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
+                      de {fmtMoney(progressAnalytics.dailyGoal)}
+                    </div>
+                  </div>
+
+                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        progressAnalytics.revToday >= progressAnalytics.dailyGoal
+                          ? 'bg-emerald-400'
+                          : 'bg-[#FF6A1A]'
+                      }`}
+                      style={{ width: `${progressAnalytics.dailyPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className={`rounded-xl p-2.5 grid grid-cols-3 gap-2 text-center ${surfaceSubtle}`}>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Status Hoje</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.dailyRemaining > 0
+                        ? `Faltam ${fmtMoney(progressAnalytics.dailyRemaining)}`
+                        : 'Meta Batida!'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>KM Hoje</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.kmToday.toLocaleString('pt-BR')} km
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Horas Hoje</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.hoursToday.toFixed(1)}h
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Meta Semanal */}
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3 ${surfaceCard}`}>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-[11px] font-extrabold uppercase tracking-wider ${mutedText}`}>
+                      Meta Semanal
+                    </span>
+                    <span
+                      className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                        progressAnalytics.revWeek >= progressAnalytics.weeklyGoal
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                      }`}
+                    >
+                      {progressAnalytics.weeklyPct}% atingido
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-2 mt-2">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-400">
+                      {fmtCurrencyExact(progressAnalytics.revWeek)}
+                    </div>
+                    <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
+                      de {fmtMoney(progressAnalytics.weeklyGoal)}
+                    </div>
+                  </div>
+
+                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        progressAnalytics.revWeek >= progressAnalytics.weeklyGoal
+                          ? 'bg-emerald-400'
+                          : 'bg-sky-400'
+                      }`}
+                      style={{ width: `${progressAnalytics.weeklyPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className={`rounded-xl p-2.5 grid grid-cols-3 gap-2 text-center ${surfaceSubtle}`}>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Restante</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.weeklyRemaining > 0
+                        ? fmtMoney(progressAnalytics.weeklyRemaining)
+                        : 'Concluída!'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Ritmo p/ Bater</div>
+                    <div className="text-xs font-black tabular-nums text-sky-400 mt-0.5">
+                      {progressAnalytics.weeklyRemaining > 0
+                        ? `${fmtMoney(progressAnalytics.weeklyDailyNeeded)}/dia`
+                        : '100% OK'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Dias na Sem.</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.weekActiveDays} dia(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Meta Personalizada de Ganhos */}
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3 ${surfaceCard}`}>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A] truncate">
+                      {progressAnalytics.customGoalTitle}
+                    </span>
+                    <span
+                      className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border shrink-0 ${
+                        progressAnalytics.customCurrent >= progressAnalytics.customGoalTarget
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30'
+                      }`}
+                    >
+                      {progressAnalytics.customPct}% atingido
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-2 mt-2">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A]">
+                      {fmtCurrencyExact(progressAnalytics.customCurrent)}
+                    </div>
+                    <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
+                      de {fmtMoney(progressAnalytics.customGoalTarget)}
+                    </div>
+                  </div>
+
+                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        progressAnalytics.customCurrent >= progressAnalytics.customGoalTarget
+                          ? 'bg-emerald-400'
+                          : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
+                      }`}
+                      style={{ width: `${progressAnalytics.customPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className={`rounded-xl p-2.5 grid grid-cols-3 gap-2 text-center ${surfaceSubtle}`}>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Meta Diária</div>
+                    <div className="text-xs font-black tabular-nums text-[#FF6A1A] mt-0.5">
+                      {progressAnalytics.customRemaining > 0
+                        ? `${fmtCurrencyExact(progressAnalytics.customDailyNeeded)}/dia`
+                        : 'Objetivo Batido!'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Faltam</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {fmtMoney(progressAnalytics.customRemaining)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Prazo / Ritmo</div>
+                    <div className="text-xs font-black tabular-nums mt-0.5">
+                      {progressAnalytics.customGoalDays}d (est. {progressAnalytics.estimatedDaysToCustomGoal}d)
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 2: KPIs DE EFICIÊNCIA E ESTATÍSTICAS OPERACIONAIS (8 INDICADORES) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Sequência Ativa</span>
+                  <Flame className="w-4 h-4 text-[#FF6A1A]" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-black text-[#FF6A1A] tabular-nums mt-1">
+                  {streakCount} {streakCount === 1 ? 'dia' : 'dias'}
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Recorde pessoal: <strong className="text-current">{progressAnalytics.maxStreak} dias</strong> seguidos
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Dias Trabalhados</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-black tabular-nums mt-1">
+                  {progressAnalytics.uniqueWorkDays}
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Meta batida em <strong className="text-emerald-400">{progressAnalytics.daysMetDailyGoal}</strong> ({progressAnalytics.goalHitRatePct}%)
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Média / Dia Ativo</span>
+                  <BarChart3 className="w-4 h-4 text-sky-400" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-sky-400 tabular-nums mt-1">
+                  {fmtCurrencyExact(progressAnalytics.avgRevPerDay)}
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Líquido/dia: <strong className="text-emerald-400">{fmtCurrencyExact(progressAnalytics.avgNetPerDay)}</strong> · {Math.round(progressAnalytics.avgKmPerDay)} km/dia
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Ganho por Hora</span>
+                  <Gauge className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums mt-1">
+                  {fmtCurrencyExact(progressAnalytics.grossPerHour)}/h
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Líquido/h: <strong className="text-emerald-400">{fmtCurrencyExact(progressAnalytics.netPerHour)}/h</strong> ({totals.totalHours.toFixed(1)}h totais)
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Rentabilidade / KM</span>
+                  <Gauge className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-emerald-400 tabular-nums mt-1">
+                  {fmtCurrencyExact(progressAnalytics.grossPerKm)}/km
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Lucro/km: <strong className="text-current">{fmtCurrencyExact(progressAnalytics.netPerKm)}</strong> · Custo/km: {fmtCurrencyExact(progressAnalytics.expensePerKm)}
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Margem Líquida</span>
+                  <BarChart3 className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div
+                  className={`text-2xl sm:text-3xl font-black tabular-nums mt-1 ${
+                    progressAnalytics.profitMarginPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {progressAnalytics.profitMarginPct}%
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Lucro Real: <strong className="text-current">{fmtCurrencyExact(totals.lucro)}</strong>
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Combustível Est.</span>
+                  <Fuel className="w-4 h-4 text-[#FF6A1A]" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black tabular-nums mt-1">
+                  {progressAnalytics.estimatedFuelLiters.toFixed(1)} L
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Est. <strong className="text-current">{fmtCurrencyExact(progressAnalytics.estimatedFuelCost)}</strong> ({dbState.fuelConfig.kmPerLiter} km/L)
+                </div>
+              </div>
+
+              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-bold uppercase ${mutedText}`}>Saúde da Moto</span>
+                  <Wrench className="w-4 h-4 text-sky-400" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black tabular-nums mt-1">
+                  {progressAnalytics.healthyMaintCount}/{progressAnalytics.totalMaintItems} em dia
+                </div>
+                <div className={`text-[11px] mt-1 ${mutedText}`}>
+                  Investido em trocas: <strong className="text-current">{fmtMoney(progressAnalytics.totalMaintHistorySpent)}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 3: RECORDES PESSOAIS & DESTAQUES DO PILOTO */}
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-              <h2 className="text-sm sm:text-base font-extrabold mb-3 sm:mb-4">Conquistas Desbloqueadas</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-4">
-                {[
-                  { icon: '🏁', label: 'Primeiros 100 km', unlocked: totals.totalKm >= 100 },
-                  { icon: '💰', label: 'R$ 1.000 Faturados', unlocked: totals.totalRevenue >= 1000 },
-                  { icon: '🔥', label: '7 Dias Seguidos', unlocked: streakCount >= 7 },
-                  {
-                    icon: '🗺️',
-                    label: '5 Apps Usados',
-                    unlocked: new Set(dbState.entries.map(e => e.app)).size >= 5,
-                  },
-                  { icon: '🏍️', label: '1.000 km Rodados', unlocked: totals.totalKm >= 1000 },
-                  { icon: '📊', label: 'Lucro no Positivo', unlocked: totals.lucro > 0 && totals.totalRevenue > 0 },
-                ].map((b, i) => (
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <div>
+                  <h2 className="text-sm sm:text-base font-black">Recordes Pessoais & Destaques da Operação</h2>
+                  <p className={`text-xs ${mutedText}`}>
+                    Seus melhores marcos históricos calculados automaticamente a partir dos seus registros
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                {/* Recorde 1: Melhor Dia de Faturamento */}
+                <div className={`rounded-2xl p-4 ${surfaceSubtle}`}>
+                  <div className="text-[11px] font-extrabold uppercase text-[#FF6A1A]">
+                    🏆 Melhor Dia de Ganhos
+                  </div>
+                  {progressAnalytics.bestDayByRev ? (
+                    <>
+                      <div className="text-xl font-black tabular-nums mt-1.5">
+                        {fmtCurrencyExact(progressAnalytics.bestDayByRev.rev)}
+                      </div>
+                      <div className={`text-xs mt-1 ${mutedText}`}>
+                        Data: <strong className="text-current">{progressAnalytics.bestDayByRev.date.split('-').reverse().join('/')}</strong>
+                      </div>
+                      <div className={`text-[11px] mt-0.5 ${mutedText}`}>
+                        {progressAnalytics.bestDayByRev.km} km · {progressAnalytics.bestDayByRev.hours.toFixed(1)}h trabalhadas
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`text-xs mt-2 ${mutedText}`}>
+                      Registre seu primeiro ganho para desbloquear seu recorde diário.
+                    </div>
+                  )}
+                </div>
+
+                {/* Recorde 2: Melhor Hora Produtiva */}
+                <div className={`rounded-2xl p-4 ${surfaceSubtle}`}>
+                  <div className="text-[11px] font-extrabold uppercase text-emerald-400">
+                    ⚡ Maior Produtividade / Hora
+                  </div>
+                  {progressAnalytics.bestDayByHourly ? (
+                    <>
+                      <div className="text-xl font-black tabular-nums text-emerald-400 mt-1.5">
+                        {fmtCurrencyExact(
+                          progressAnalytics.bestDayByHourly.rev / progressAnalytics.bestDayByHourly.hours
+                        )}
+                        /h
+                      </div>
+                      <div className={`text-xs mt-1 ${mutedText}`}>
+                        Data: <strong className="text-current">{progressAnalytics.bestDayByHourly.date.split('-').reverse().join('/')}</strong>
+                      </div>
+                      <div className={`text-[11px] mt-0.5 ${mutedText}`}>
+                        {fmtCurrencyExact(progressAnalytics.bestDayByHourly.rev)} em {progressAnalytics.bestDayByHourly.hours.toFixed(1)}h
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`text-xs mt-2 ${mutedText}`}>
+                      Informe as horas trabalhadas nos lançamentos para medir seu pico de R$/h.
+                    </div>
+                  )}
+                </div>
+
+                {/* Recorde 3: Aplicativo Mais Rentável */}
+                <div className={`rounded-2xl p-4 ${surfaceSubtle}`}>
+                  <div className="text-[11px] font-extrabold uppercase text-sky-400">
+                    🛵 App Campeão de Receita
+                  </div>
+                  {progressAnalytics.bestApp ? (
+                    <>
+                      <div className="text-lg font-black mt-1.5 flex items-center gap-1.5 truncate">
+                        <span>{progressAnalytics.bestApp.icon}</span>
+                        <span className="truncate">{progressAnalytics.bestApp.name}</span>
+                      </div>
+                      <div className={`text-xs mt-1 ${mutedText}`}>
+                        Total: <strong className="text-sky-400">{fmtCurrencyExact(progressAnalytics.bestApp.rev)}</strong> ({progressAnalytics.bestApp.sharePct}%)
+                      </div>
+                      <div className={`text-[11px] mt-0.5 ${mutedText}`}>
+                        {fmtCurrencyExact(progressAnalytics.bestApp.revPerKm)}/km · {fmtCurrencyExact(progressAnalytics.bestApp.revPerHour)}/h
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`text-xs mt-2 ${mutedText}`}>
+                      Ainda sem corridas registradas por aplicativo.
+                    </div>
+                  )}
+                </div>
+
+                {/* Recorde 4: Melhor Turno */}
+                <div className={`rounded-2xl p-4 ${surfaceSubtle}`}>
+                  <div className="text-[11px] font-extrabold uppercase text-amber-400">
+                    🌙 Turno Mais Lucrativo
+                  </div>
+                  {progressAnalytics.bestShift ? (
+                    <>
+                      <div className="text-base font-black mt-1.5 truncate">
+                        {progressAnalytics.bestShift.name}
+                      </div>
+                      <div className={`text-xs mt-1 ${mutedText}`}>
+                        Total: <strong className="text-amber-400">{fmtCurrencyExact(progressAnalytics.bestShift.rev)}</strong> ({progressAnalytics.bestShift.sharePct}%)
+                      </div>
+                      <div className={`text-[11px] mt-0.5 ${mutedText}`}>
+                        {fmtCurrencyExact(progressAnalytics.bestShift.revPerHour)}/h · {progressAnalytics.bestShift.count} lançamento(s)
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`text-xs mt-2 ${mutedText}`}>
+                      Registre seus turnos para descobrir o horário mais rentável.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 4: COMPARATIVO DE EFICIÊNCIA POR APLICATIVO E POR TURNO */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+              {/* Ranking por Aplicativo */}
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-sm sm:text-base font-black">Desempenho por Aplicativo / Fonte</h2>
+                    <p className={`text-xs ${mutedText}`}>Comparativo de ganhos, R$/km e R$/h em cada app</p>
+                  </div>
+                  <span className={`text-xs font-bold ${mutedText}`}>
+                    {progressAnalytics.appPerformance.length} ativo(s)
+                  </span>
+                </div>
+
+                {progressAnalytics.appPerformance.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    {progressAnalytics.appPerformance.map(app => (
+                      <div key={app.id} className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg shrink-0">{app.icon}</span>
+                            <span className="text-xs sm:text-sm font-black truncate">{app.name}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A]`}>
+                              {app.sharePct}%
+                            </span>
+                          </div>
+                          <span className="text-xs sm:text-sm font-black tabular-nums text-emerald-400 shrink-0">
+                            {fmtCurrencyExact(app.rev)}
+                          </span>
+                        </div>
+
+                        <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                          <div
+                            className="h-full rounded-full bg-[#FF6A1A]"
+                            style={{ width: `${Math.max(4, app.sharePct)}%` }}
+                          />
+                        </div>
+
+                        <div className={`flex flex-wrap items-center justify-between gap-2 text-[11px] ${mutedText}`}>
+                          <span>{app.km.toLocaleString('pt-BR')} km · {app.hours.toFixed(1)}h · {app.count} reg(s)</span>
+                          <span className="font-bold text-current">
+                            {fmtCurrencyExact(app.revPerKm)}/km · {fmtCurrencyExact(app.revPerHour)}/h
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={`rounded-2xl p-6 text-center text-xs ${surfaceSubtle} ${mutedText}`}>
+                    Adicione corridas na tela inicial para visualizar o ranking comparativo entre aplicativos.
+                  </div>
+                )}
+              </div>
+
+              {/* Ranking por Turno */}
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-sm sm:text-base font-black">Eficiência por Turno de Trabalho</h2>
+                    <p className={`text-xs ${mutedText}`}>Descubra em quais horários sua hora vale mais</p>
+                  </div>
+                  <span className={`text-xs font-bold ${mutedText}`}>
+                    {progressAnalytics.shiftPerformance.length} turno(s)
+                  </span>
+                </div>
+
+                {progressAnalytics.shiftPerformance.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    {progressAnalytics.shiftPerformance.map(sh => (
+                      <div key={sh.id} className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-xs sm:text-sm font-black truncate">{sh.name}</span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400">
+                              {sh.sharePct}%
+                            </span>
+                          </div>
+                          <span className="text-xs sm:text-sm font-black tabular-nums text-sky-400 shrink-0">
+                            {fmtCurrencyExact(sh.rev)}
+                          </span>
+                        </div>
+
+                        <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                          <div
+                            className="h-full rounded-full bg-sky-400"
+                            style={{ width: `${Math.max(4, sh.sharePct)}%` }}
+                          />
+                        </div>
+
+                        <div className={`flex flex-wrap items-center justify-between gap-2 text-[11px] ${mutedText}`}>
+                          <span>{sh.km.toLocaleString('pt-BR')} km · {sh.hours.toFixed(1)}h · {sh.count} reg(s)</span>
+                          <span className="font-bold text-current">
+                            {fmtCurrencyExact(sh.revPerHour)}/h · {fmtCurrencyExact(sh.revPerKm)}/km
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={`rounded-2xl p-6 text-center text-xs ${surfaceSubtle} ${mutedText}`}>
+                    Seus turnos aparecerão aqui assim que você registrar seus ganhos diários.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SECTION 5: EVOLUÇÃO DOS ÚLTIMOS 7 DIAS VS META DIÁRIA */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <h2 className="text-sm sm:text-base font-black">
+                    Desempenho nos Últimos 7 Dias vs Meta Diária ({fmtMoney(progressAnalytics.dailyGoal)})
+                  </h2>
+                  <p className={`text-xs ${mutedText}`}>
+                    Acompanhe a consistência diária de ganhos, quilometragem e produtividade por hora
+                  </p>
+                </div>
+                <span className="text-xs font-extrabold text-emerald-400">
+                  {progressAnalytics.last7DaysDetailed.filter(d => d.metGoal).length}/7 dias com meta batida
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5">
+                {progressAnalytics.last7DaysDetailed.map(day => (
                   <div
-                    key={i}
-                    className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-opacity ${surfaceSubtle} ${
-                      b.unlocked ? 'opacity-100 border-[#FF6A1A]/50' : 'opacity-40'
+                    key={day.date}
+                    className={`rounded-2xl p-3 flex flex-col justify-between gap-2 border ${
+                      day.metGoal
+                        ? 'border-emerald-500/40 bg-emerald-500/5'
+                        : day.rev > 0
+                        ? 'border-[#FF6A1A]/30 bg-[#FF6A1A]/5'
+                        : isDark
+                        ? 'border-slate-800/70 bg-[#181B26]/60'
+                        : 'border-slate-200 bg-slate-100/70'
                     }`}
                   >
-                    <span className="text-2xl sm:text-3xl">{b.icon}</span>
-                    <span className="text-[11px] sm:text-xs font-bold">{b.label}</span>
+                    <div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-black">{day.label}</span>
+                        <span
+                          className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                            day.metGoal
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : day.rev > 0
+                              ? 'bg-[#FF6A1A]/20 text-[#FF6A1A]'
+                              : `${mutedText}`
+                          }`}
+                        >
+                          {day.goalPct}%
+                        </span>
+                      </div>
+
+                      <div className="text-sm sm:text-base font-black tabular-nums mt-1.5">
+                        {fmtMoney(day.rev)}
+                      </div>
+
+                      <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                        <div
+                          className={`h-full rounded-full ${
+                            day.metGoal ? 'bg-emerald-400' : 'bg-[#FF6A1A]'
+                          }`}
+                          style={{ width: `${day.goalPct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`text-[10px] flex flex-col gap-0.5 ${mutedText}`}>
+                      <span>{day.km} km · {day.hours.toFixed(1)}h</span>
+                      <span className="font-bold text-current">
+                        {day.hours > 0 ? `${fmtMoney(day.revPerHour)}/h` : 'Sem horas'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* SECTION 6: GALERIA COMPLETA DE CONQUISTAS COM PROGRESSO INDIVIDUAL */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <h2 className="text-sm sm:text-base font-black">Galeria de Conquistas & Marcos do Piloto</h2>
+                  <p className={`text-xs ${mutedText}`}>
+                    Acompanhe o progresso individual de cada medalha conforme você roda e registra seus ganhos
+                  </p>
+                </div>
+                <span className="text-xs font-black px-3 py-1 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30 self-start sm:self-center">
+                  {progressAnalytics.unlockedCount} de {progressAnalytics.achievements.length} Concluídas
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                {progressAnalytics.achievements.map(ach => (
+                  <div
+                    key={ach.id}
+                    className={`rounded-2xl p-4 flex flex-col justify-between gap-3 transition-all border ${
+                      ach.unlocked
+                        ? 'border-[#FF6A1A]/50 bg-[#FF6A1A]/5'
+                        : `${surfaceSubtle} opacity-80`
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={`w-11 h-11 rounded-2xl flex items-center justify-center text-2xl shrink-0 ${
+                            ach.unlocked ? 'bg-[#FF6A1A]/20' : 'bg-slate-800/60 grayscale'
+                          }`}
+                        >
+                          {ach.icon}
+                        </div>
+                        <div>
+                          <div className="text-xs sm:text-sm font-black">{ach.title}</div>
+                          <p className={`text-[11px] mt-0.5 leading-snug ${mutedText}`}>{ach.desc}</p>
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                          ach.unlocked
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {ach.unlocked ? 'Desbloqueada' : `${ach.pct}%`}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className={mutedText}>Progresso</span>
+                        <span className="font-black tabular-nums">
+                          {ach.unit === 'R$'
+                            ? `${fmtMoney(ach.current)} / ${fmtMoney(ach.target)}`
+                            : `${Math.round(ach.current).toLocaleString('pt-BR')} / ${ach.target.toLocaleString('pt-BR')} ${ach.unit}`}
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-800/80 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            ach.unlocked ? 'bg-emerald-400' : 'bg-[#FF6A1A]'
+                          }`}
+                          style={{ width: `${ach.pct}%` }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -3799,61 +5205,30 @@ export default function App() {
                 <div className="min-w-0">
                   <div className="text-sm sm:text-base font-black truncate">{currentUser.name}</div>
                   <div className={`text-xs truncate ${mutedText}`}>
-                    {currentUser.isGuest
-                      ? 'Modo Convidado Offline · Entre para sincronizar na nuvem'
-                      : `${currentUser.email}${currentUser.phone ? ` · ${currentUser.phone}` : ''}`}
+                    {`${currentUser.email}${currentUser.phone ? ` · ${currentUser.phone}` : ''}`}
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                {currentUser.isGuest ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('login');
-                        setShowAuthScreen(true);
-                      }}
-                      className="flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5 min-h-[40px]"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      <span>Entrar na Conta</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('register');
-                        setShowAuthScreen(true);
-                      }}
-                      className={`flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                    >
-                      <UserPlus className="w-3.5 h-3.5 text-[#FF6A1A]" />
-                      <span>Criar Conta</span>
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('login');
-                        setShowAuthScreen(true);
-                      }}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                    >
-                      Trocar Conta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleLogout}
-                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 min-h-[40px]"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      <span>Sair</span>
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setShowAuthScreen(true);
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                >
+                  Trocar Conta
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 min-h-[40px]"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sair</span>
+                </button>
               </div>
             </div>
 
@@ -3957,6 +5332,157 @@ export default function App() {
                   }
                   className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
                 />
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-2 border-b border-slate-800/40">
+                <div>
+                  <div className="text-sm font-bold">Meta Personalizada de Ganhos (R$) & Prazo</div>
+                  <div className={`text-xs ${mutedText}`}>
+                    Exibe barra de progresso e calcula a meta diária necessária até atingir seu objetivo
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                    <span className={`text-xs font-bold ${mutedText}`}>R$</span>
+                    <input
+                      type="number"
+                      min="50"
+                      step="50"
+                      value={dbState.customGoalTarget || 3000}
+                      onChange={e =>
+                        persistAndEnqueueWorkManager({
+                          ...dbState,
+                          customGoalTarget: Math.max(10, Number(e.target.value) || 0),
+                        })
+                      }
+                      className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={dbState.customGoalDays || 20}
+                      onChange={e =>
+                        persistAndEnqueueWorkManager({
+                          ...dbState,
+                          customGoalDays: Math.max(1, Math.min(365, Number(e.target.value) || 1)),
+                        })
+                      }
+                      className={`w-20 px-3 py-2 rounded-xl text-center font-black tabular-nums outline-none ${inputSurface}`}
+                      title="Prazo em dias para atingir a meta personalizada"
+                    />
+                    <span className={`text-xs font-bold ${mutedText}`}>dias</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* LOCAL PUSH NOTIFICATIONS COMPONENT FOR MAINTENANCE ALERTS */}
+              <div className="py-3 border-b border-slate-800/40 flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border transition-colors ${
+                        isMaintNotificationsEnabled
+                          ? 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]'
+                          : isDark
+                          ? 'bg-slate-800/70 border-slate-700 text-slate-400'
+                          : 'bg-slate-100 border-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {isMaintNotificationsEnabled ? (
+                        <BellRing className="w-5 h-5" />
+                      ) : (
+                        <BellOff className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold">
+                          Notificações Locais de Manutenção (Push Local)
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                            isMaintNotificationsEnabled
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : isDark
+                              ? 'bg-slate-800 text-slate-400 border-slate-700'
+                              : 'bg-slate-200 text-slate-600 border-slate-300'
+                          }`}
+                        >
+                          {isMaintNotificationsEnabled ? 'Habilitado' : 'Desabilitado'}
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Dispara um alerta push local sempre que uma manutenção atingir o ponto de alerta configurado (ex: 85% de uso) ou vencer o limite de troca.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Interactive Toggle Switch */}
+                  <div className="flex items-center gap-2.5 self-start sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isMaintNotificationsEnabled}
+                      onClick={() => handleToggleMaintenanceNotifications(!isMaintNotificationsEnabled)}
+                      className={`relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        isMaintNotificationsEnabled
+                          ? 'bg-[#FF6A1A]'
+                          : isDark
+                          ? 'bg-slate-700'
+                          : 'bg-slate-300'
+                      }`}
+                      title={
+                        isMaintNotificationsEnabled
+                          ? 'Desabilitar notificações locais de manutenção'
+                          : 'Habilitar notificações locais de manutenção'
+                      }
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                          isMaintNotificationsEnabled ? 'translate-x-6' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-xs font-extrabold min-w-[70px]">
+                      {isMaintNotificationsEnabled ? 'Ativado' : 'Desativado'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Details & Test Push Action Bar */}
+                <div
+                  className={`rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${surfaceSubtle}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          !isMaintNotificationsEnabled
+                            ? 'bg-slate-500'
+                            : maintAlertStats.overdueCount > 0
+                            ? 'bg-rose-500 animate-pulse'
+                            : maintAlertStats.alertCount > 0
+                            ? 'bg-amber-400 animate-pulse'
+                            : 'bg-emerald-400'
+                        }`}
+                      />
+                      Status de Monitoramento:
+                    </span>
+                    <span className={mutedText}>
+                      {!isMaintNotificationsEnabled
+                        ? 'Alertas silenciados pelo usuário'
+                        : `${maintAlertStats.overdueCount} vencida(s) · ${maintAlertStats.alertCount} no ponto de alerta`}
+                    </span>
+                    {browserNotifPermission === 'granted' && isMaintNotificationsEnabled && (
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                        Push Nativo + In-App Ativo
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-center justify-between gap-4 py-3 border-b border-slate-800/40">
@@ -4984,6 +6510,101 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* FLOATING LOCAL PUSH NOTIFICATION BANNER (MOTO MAINTENANCE ALERTS) */}
+      {isMaintNotificationsEnabled && localPushToasts.length > 0 && (
+        <div className="fixed top-3 right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
+          {localPushToasts.map(toast => {
+            const isOverdue = toast.severity === 'overdue';
+            return (
+              <div
+                key={toast.id}
+                className={`pointer-events-auto rounded-2xl p-3.5 shadow-2xl border backdrop-blur-md transition-all flex flex-col gap-2.5 ${
+                  isDark
+                    ? isOverdue
+                      ? 'bg-[#181115]/95 border-rose-500/50 text-slate-100'
+                      : 'bg-[#171510]/95 border-amber-500/50 text-slate-100'
+                    : isOverdue
+                    ? 'bg-white/95 border-rose-400 text-slate-900'
+                    : 'bg-white/95 border-amber-400 text-slate-900'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 border ${
+                        isOverdue
+                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                          : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                      }`}
+                    >
+                      {toast.itemIcon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                            isOverdue
+                              ? 'bg-rose-500/20 text-rose-400'
+                              : 'bg-amber-500/20 text-amber-400'
+                          }`}
+                        >
+                          {isOverdue ? '🚨 Manutenção Vencida' : `⚠️ Ponto de Alerta (${toast.thresholdPct}%)`}
+                        </span>
+                        <span className={`text-[10px] font-semibold ${mutedText}`}>
+                          · Push Local · {toast.timestamp}
+                        </span>
+                      </div>
+                      <h5 className="text-xs sm:text-sm font-black truncate mt-0.5">
+                        {toast.itemName} ({toast.wearPct}% de desgaste)
+                      </h5>
+                      <p className={`text-[11px] leading-snug mt-0.5 ${mutedText}`}>
+                        {isOverdue
+                          ? 'Limite de quilometragem ultrapassado! Realize a manutenção para evitar danos.'
+                          : `Atingiu o ponto de alerta configurado (${toast.thresholdPct}%). Restam ${toast.kmRemaining.toLocaleString('pt-BR')} km.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id))
+                    }
+                    className={`p-1.5 rounded-xl shrink-0 cursor-pointer ${surfaceSubtle}`}
+                    title="Dispensar notificação"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-700/30">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id))
+                    }
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${mutedText}`}
+                  >
+                    Agora não
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('maintenance');
+                      setMaintSearchQuery(toast.itemName);
+                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id));
+                    }}
+                    className="px-3 py-1 rounded-lg text-[11px] font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer"
+                  >
+                    Ver Componente
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

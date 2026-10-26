@@ -78,6 +78,10 @@ export interface LocalRoomDatabaseState {
   expenses: ExpenseEntry[];
   dailyGoal: number;
   weeklyGoal: number;
+  customGoalTarget?: number;
+  customGoalDays?: number;
+  customGoalTitle?: string;
+  maintenanceNotificationsEnabled?: boolean;
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
   customApps: AppDefinition[];
@@ -159,6 +163,10 @@ export async function runWorkManagerCloudSync(
       bikeModelName: state.fuelConfig.bikeModelName,
       odometerBaseKm: state.fuelConfig.odometerBaseKm,
       weeklyGoal: state.weeklyGoal || 900,
+      customGoalTarget: state.customGoalTarget || 3000,
+      customGoalDays: state.customGoalDays || 20,
+      customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
+      maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
     };
 
     await client.from('moto_settings').upsert(
@@ -261,7 +269,12 @@ export function getActiveSessionUser(): UserProfile | null {
   try {
     const raw = localStorage.getItem(ACTIVE_SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as UserProfile;
+    const parsed = JSON.parse(raw) as UserProfile;
+    if (parsed?.isGuest || parsed?.id === 'guest_local') {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -362,6 +375,11 @@ export async function fetchRemoteCloudData(
       expenses,
       dailyGoal: Number(settings?.daily_goal) || 150,
       weeklyGoal: Number(m.weeklyGoal) || 900,
+      customGoalTarget: Number(m.customGoalTarget) || 3000,
+      customGoalDays: Number(m.customGoalDays) || 20,
+      customGoalTitle: m.customGoalTitle || 'Meta Personalizada de Ganhos',
+      maintenanceNotificationsEnabled:
+        typeof m.maintenanceNotificationsEnabled === 'boolean' ? m.maintenanceNotificationsEnabled : true,
       maintenanceItems: Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
         ? settings.custom_maints
         : undefined,
