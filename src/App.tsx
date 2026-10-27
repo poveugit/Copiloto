@@ -50,6 +50,9 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -121,6 +124,61 @@ const BASE_SHIFTS: ShiftDefinition[] = [
   { id: 'manha', name: 'Manhã (06h-11h)' },
   { id: 'tarde', name: 'Tarde (15h-18h)' },
 ];
+
+interface FreeNumberInputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> {
+  value: number | string | undefined | null;
+  onValueChange: (numericValue: number, rawString: string) => void;
+}
+
+const FreeNumberInput: React.FC<FreeNumberInputProps> = ({
+  value,
+  onValueChange,
+  onFocus,
+  onBlur,
+  ...rest
+}) => {
+  const [isFocused, setIsFocused] = useState(false);
+  const [localStr, setLocalStr] = useState<string>(() =>
+    value === undefined || value === null ? '' : String(value)
+  );
+
+  useEffect(() => {
+    if (!isFocused) {
+      const currentNum = localStr.trim() === '' ? 0 : Number(localStr);
+      const propNum = value === undefined || value === null || value === '' ? 0 : Number(value);
+      if (currentNum !== propNum) {
+        setLocalStr(value === undefined || value === null ? '' : String(value));
+      }
+    }
+  }, [value, isFocused, localStr]);
+
+  return (
+    <input
+      {...rest}
+      type="number"
+      value={localStr}
+      onFocus={e => {
+        setIsFocused(true);
+        onFocus?.(e);
+      }}
+      onBlur={e => {
+        setIsFocused(false);
+        onBlur?.(e);
+      }}
+      onChange={e => {
+        const raw = e.target.value;
+        setLocalStr(raw);
+        if (raw.trim() === '') {
+          onValueChange(0, '');
+        } else {
+          const parsed = Number(raw);
+          onValueChange(Number.isFinite(parsed) ? parsed : 0, raw);
+        }
+      }}
+    />
+  );
+};
 
 const LEVEL_NAMES = [
   'Estreante',
@@ -2492,6 +2550,122 @@ export default function App() {
     };
   }, [dbState, finPlan, progressAnalytics, totals]);
 
+  // ================= 6-MONTH REVENUE SEASONALITY ANALYTICS (RECHARTS BAR CHART) =================
+  const sixMonthSeasonality = useMemo(() => {
+    const monthShortNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    const monthFullNames = [
+      'Janeiro',
+      'Fevereiro',
+      'Março',
+      'Abril',
+      'Maio',
+      'Junho',
+      'Julho',
+      'Agosto',
+      'Setembro',
+      'Outubro',
+      'Novembro',
+      'Dezembro',
+    ];
+
+    const now = new Date();
+    const monthsData: {
+      yearMonth: string;
+      label: string;
+      fullLabel: string;
+      faturamento: number;
+      gastos: number;
+      lucro: number;
+      km: number;
+      corridas: number;
+      isPeak: boolean;
+      isCurrent: boolean;
+    }[] = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const yyyy = d.getFullYear();
+      const mmIndex = d.getMonth();
+      const mmStr = String(mmIndex + 1).padStart(2, '0');
+      const yearMonth = `${yyyy}-${mmStr}`;
+      const shortYear = String(yyyy).slice(-2);
+
+      const monthEntries = dbState.entries.filter(e => (e.date || '').startsWith(yearMonth));
+      const monthExpenses = dbState.expenses.filter(ex => (ex.date || '').startsWith(yearMonth));
+
+      const rev = monthEntries.reduce((acc, e) => acc + (Number(e.revenue) || 0), 0);
+      const exp = monthExpenses.reduce((acc, ex) => acc + (Number(ex.amount) || 0), 0);
+      const km = monthEntries.reduce((acc, e) => acc + (Number(e.km) || 0), 0);
+
+      monthsData.push({
+        yearMonth,
+        label: `${monthShortNames[mmIndex]}/${shortYear}`,
+        fullLabel: `${monthFullNames[mmIndex]} de ${yyyy}`,
+        faturamento: Math.round(rev * 100) / 100,
+        gastos: Math.round(exp * 100) / 100,
+        lucro: Math.round((rev - exp) * 100) / 100,
+        km: Math.round(km * 10) / 10,
+        corridas: monthEntries.length,
+        isPeak: false,
+        isCurrent: i === 0,
+      });
+    }
+
+    const total6MonthsRev = monthsData.reduce((s, m) => s + m.faturamento, 0);
+    const activeMonths = monthsData.filter(m => m.faturamento > 0);
+    const avgMonthlyRev =
+      activeMonths.length > 0 ? total6MonthsRev / activeMonths.length : total6MonthsRev / 6;
+
+    let peakMonth: (typeof monthsData)[0] | null = null;
+    let lowActiveMonth: (typeof monthsData)[0] | null = null;
+
+    if (activeMonths.length > 0) {
+      peakMonth = [...activeMonths].sort((a, b) => b.faturamento - a.faturamento)[0];
+      lowActiveMonth = [...activeMonths].sort((a, b) => a.faturamento - b.faturamento)[0];
+    }
+
+    const enrichedMonths = monthsData.map(m => ({
+      ...m,
+      isPeak: Boolean(peakMonth && m.faturamento > 0 && m.yearMonth === peakMonth.yearMonth),
+    }));
+
+    const currentMonthObj = enrichedMonths[enrichedMonths.length - 1];
+    const prevMonthObj = enrichedMonths[enrichedMonths.length - 2];
+    const momGrowthPct =
+      prevMonthObj && prevMonthObj.faturamento > 0
+        ? Math.round(((currentMonthObj.faturamento - prevMonthObj.faturamento) / prevMonthObj.faturamento) * 100)
+        : null;
+
+    let seasonalitySummary =
+      'Registre seus ganhos ao longo dos meses para identificar os períodos de alta demanda e planejar reservas para meses mais fracos.';
+    if (peakMonth && activeMonths.length >= 2 && lowActiveMonth) {
+      const diffPct =
+        lowActiveMonth.faturamento > 0
+          ? Math.round(((peakMonth.faturamento - lowActiveMonth.faturamento) / lowActiveMonth.faturamento) * 100)
+          : 0;
+      seasonalitySummary = `Pico sazonal em ${peakMonth.fullLabel} (${fmtMoney(
+        peakMonth.faturamento
+      )}), enquanto ${lowActiveMonth.fullLabel} teve ${fmtMoney(
+        lowActiveMonth.faturamento
+      )} (${diffPct > 0 ? `+${diffPct}% no pico` : 'estável'}). Aproveite os meses de alta para reforçar sua reserva de emergência.`;
+    } else if (peakMonth && activeMonths.length === 1) {
+      seasonalitySummary = `Mês ativo identificado: ${peakMonth.fullLabel} com ${fmtMoney(
+        peakMonth.faturamento
+      )} acumulados. Continue lançando suas corridas para comparar a evolução sazonal mês a mês.`;
+    }
+
+    return {
+      months: enrichedMonths,
+      total6MonthsRev,
+      avgMonthlyRev,
+      peakMonth,
+      lowActiveMonth,
+      activeMonthsCount: activeMonths.length,
+      momGrowthPct,
+      seasonalitySummary,
+    };
+  }, [dbState.entries, dbState.expenses]);
+
   const [aiFinancialAdvice, setAiFinancialAdvice] = useState<string>('');
   const [isAiFinancialLoading, setIsAiFinancialLoading] = useState<boolean>(false);
   const [aiFinancialPrompt, setAiFinancialPrompt] = useState<string>('');
@@ -3419,15 +3593,13 @@ export default function App() {
                           </label>
                           <div className="flex items-center gap-1.5 mt-1">
                             <span className="text-xs font-black text-[#FF6A1A]">R$</span>
-                            <input
-                              type="number"
-                              min="50"
+                            <FreeNumberInput
                               step="50"
-                              value={dbState.customGoalTarget || 3000}
-                              onChange={e =>
+                              value={dbState.customGoalTarget ?? 3000}
+                              onValueChange={val =>
                                 persistAndEnqueueWorkManager({
                                   ...dbState,
-                                  customGoalTarget: Math.max(10, Number(e.target.value) || 0),
+                                  customGoalTarget: Math.max(0, val),
                                 })
                               }
                               placeholder="Ex: 3000"
@@ -3441,17 +3613,15 @@ export default function App() {
                             Prazo p/ Objetivo (Dias)
                           </label>
                           <div className="flex items-center gap-1.5 mt-1">
-                            <input
-                              type="number"
-                              min="1"
-                              max="365"
-                              value={dbState.customGoalDays || 20}
-                              onChange={e =>
+                            <FreeNumberInput
+                              value={dbState.customGoalDays ?? 20}
+                              onValueChange={val =>
                                 persistAndEnqueueWorkManager({
                                   ...dbState,
-                                  customGoalDays: Math.max(1, Math.min(365, Number(e.target.value) || 1)),
+                                  customGoalDays: Math.max(0, val),
                                 })
                               }
+                              placeholder="Ex: 20"
                               className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
                             />
                             <span className={`text-xs font-bold shrink-0 ${mutedText}`}>dias</span>
@@ -3952,34 +4122,28 @@ export default function App() {
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Intervalo de Troca (KM)</label>
-                    <input
-                      type="number"
-                      min="100"
+                    <FreeNumberInput
                       step="100"
                       value={maintDraft.intervalKm}
-                      onChange={e => setMaintDraft({ ...maintDraft, intervalKm: Number(e.target.value) })}
+                      onValueChange={val => setMaintDraft({ ...maintDraft, intervalKm: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM da Última Troca</label>
-                    <input
-                      type="number"
-                      min="0"
+                    <FreeNumberInput
                       step="10"
                       value={maintDraft.lastChangeKm}
-                      onChange={e => setMaintDraft({ ...maintDraft, lastChangeKm: Number(e.target.value) })}
+                      onValueChange={val => setMaintDraft({ ...maintDraft, lastChangeKm: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Custo Estimado (R$)</label>
-                    <input
-                      type="number"
-                      min="0"
+                    <FreeNumberInput
                       step="5"
                       value={maintDraft.costEstimate}
-                      onChange={e => setMaintDraft({ ...maintDraft, costEstimate: Number(e.target.value) })}
+                      onValueChange={val => setMaintDraft({ ...maintDraft, costEstimate: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
@@ -4006,16 +4170,13 @@ export default function App() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 self-start sm:self-auto">
-                        <input
-                          type="number"
-                          min="50"
-                          max="99"
+                        <FreeNumberInput
                           step="1"
                           value={maintDraft.alertThresholdPct ?? 85}
-                          onChange={e =>
+                          onValueChange={val =>
                             setMaintDraft({
                               ...maintDraft,
-                              alertThresholdPct: Math.min(99, Math.max(50, Number(e.target.value) || 85)),
+                              alertThresholdPct: Math.max(0, val),
                             })
                           }
                           className={`w-20 px-3 py-1.5 rounded-xl text-center text-sm font-black tabular-nums outline-none text-amber-300 ${inputSurface}`}
@@ -4146,13 +4307,11 @@ export default function App() {
                             <label className={`block text-[10px] sm:text-[11px] font-bold mb-1 ${mutedText}`}>
                               Última Troca (KM)
                             </label>
-                            <input
-                              type="number"
-                              min="0"
+                            <FreeNumberInput
                               step="10"
                               value={maintDraft.lastChangeKm}
-                              onChange={e =>
-                                setMaintDraft({ ...maintDraft, lastChangeKm: Number(e.target.value) })
+                              onValueChange={val =>
+                                setMaintDraft({ ...maintDraft, lastChangeKm: Math.max(0, val) })
                               }
                               className={`w-full px-3 py-2 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                             />
@@ -4161,13 +4320,11 @@ export default function App() {
                             <label className={`block text-[10px] sm:text-[11px] font-bold mb-1 ${mutedText}`}>
                               Intervalo Revisão (KM)
                             </label>
-                            <input
-                              type="number"
-                              min="100"
+                            <FreeNumberInput
                               step="100"
                               value={maintDraft.intervalKm}
-                              onChange={e =>
-                                setMaintDraft({ ...maintDraft, intervalKm: Number(e.target.value) })
+                              onValueChange={val =>
+                                setMaintDraft({ ...maintDraft, intervalKm: Math.max(0, val) })
                               }
                               className={`w-full px-3 py-2 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                             />
@@ -4176,13 +4333,11 @@ export default function App() {
                             <label className={`block text-[10px] sm:text-[11px] font-bold mb-1 ${mutedText}`}>
                               Custo Estimado (R$)
                             </label>
-                            <input
-                              type="number"
-                              min="0"
+                            <FreeNumberInput
                               step="5"
                               value={maintDraft.costEstimate}
-                              onChange={e =>
-                                setMaintDraft({ ...maintDraft, costEstimate: Number(e.target.value) })
+                              onValueChange={val =>
+                                setMaintDraft({ ...maintDraft, costEstimate: Math.max(0, val) })
                               }
                               className={`w-full px-3 py-2 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                             />
@@ -4214,16 +4369,13 @@ export default function App() {
                               </p>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <input
-                                type="number"
-                                min="50"
-                                max="99"
+                              <FreeNumberInput
                                 step="1"
                                 value={maintDraft.alertThresholdPct ?? 85}
-                                onChange={e =>
+                                onValueChange={val =>
                                   setMaintDraft({
                                     ...maintDraft,
-                                    alertThresholdPct: Math.min(99, Math.max(50, Number(e.target.value) || 85)),
+                                    alertThresholdPct: Math.max(0, val),
                                   })
                                 }
                                 className={`w-16 px-2 py-1 rounded-lg text-center text-xs font-black tabular-nums outline-none text-amber-300 ${inputSurface}`}
@@ -4595,45 +4747,37 @@ export default function App() {
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Média da Moto (km/L)</label>
-                    <input
-                      type="number"
+                    <FreeNumberInput
                       step="0.5"
-                      min="5"
                       value={fuelDraft.kmPerLiter}
-                      onChange={e => setFuelDraft({ ...fuelDraft, kmPerLiter: Number(e.target.value) })}
+                      onValueChange={val => setFuelDraft({ ...fuelDraft, kmPerLiter: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço Gasolina (R$/L)</label>
-                    <input
-                      type="number"
+                    <FreeNumberInput
                       step="0.05"
-                      min="1"
                       value={fuelDraft.fuelPrice}
-                      onChange={e => setFuelDraft({ ...fuelDraft, fuelPrice: Number(e.target.value) })}
+                      onValueChange={val => setFuelDraft({ ...fuelDraft, fuelPrice: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Tanque (Litros)</label>
-                    <input
-                      type="number"
+                    <FreeNumberInput
                       step="0.5"
-                      min="3"
                       value={fuelDraft.tankCapacityLiters}
-                      onChange={e => setFuelDraft({ ...fuelDraft, tankCapacityLiters: Number(e.target.value) })}
+                      onValueChange={val => setFuelDraft({ ...fuelDraft, tankCapacityLiters: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Odômetro Base Inicial (KM)</label>
-                    <input
-                      type="number"
+                    <FreeNumberInput
                       step="10"
-                      min="0"
                       value={fuelDraft.odometerBaseKm}
-                      onChange={e => setFuelDraft({ ...fuelDraft, odometerBaseKm: Number(e.target.value) })}
+                      onValueChange={val => setFuelDraft({ ...fuelDraft, odometerBaseKm: Math.max(0, val) })}
                       className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
@@ -4785,13 +4929,11 @@ export default function App() {
                         Faturamento Bruto Base / Dia (R$)
                       </label>
                       {finPlan.revenueBaseMode === 'custom_daily' ? (
-                        <input
-                          type="number"
-                          min="20"
+                        <FreeNumberInput
                           step="10"
                           value={finPlan.customDailyGrossBase ?? 180}
-                          onChange={e =>
-                            updateFinancialPlan({ customDailyGrossBase: Math.max(20, Number(e.target.value) || 0) })
+                          onValueChange={val =>
+                            updateFinancialPlan({ customDailyGrossBase: Math.max(0, val) })
                           }
                           className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                         />
@@ -4810,13 +4952,11 @@ export default function App() {
                         Rodagem Média / Dia (KM)
                       </label>
                       {finPlan.revenueBaseMode === 'custom_daily' ? (
-                        <input
-                          type="number"
-                          min="10"
+                        <FreeNumberInput
                           step="5"
                           value={finPlan.customDailyKmBase ?? 110}
-                          onChange={e =>
-                            updateFinancialPlan({ customDailyKmBase: Math.max(10, Number(e.target.value) || 0) })
+                          onValueChange={val =>
+                            updateFinancialPlan({ customDailyKmBase: Math.max(0, val) })
                           }
                           className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                         />
@@ -4835,14 +4975,11 @@ export default function App() {
                         Dias Trabalhados por Mês
                       </label>
                       <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
+                        <FreeNumberInput
                           value={finPlan.workDaysPerMonth}
-                          onChange={e =>
+                          onValueChange={val =>
                             updateFinancialPlan({
-                              workDaysPerMonth: Math.max(1, Math.min(31, Number(e.target.value) || 24)),
+                              workDaysPerMonth: Math.max(0, val),
                             })
                           }
                           className={`w-20 px-3 py-1.5 rounded-xl text-sm font-black tabular-nums text-center outline-none ${inputSurface}`}
@@ -5018,6 +5155,191 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* GRÁFICO DE BARRAS (RECHARTS): COMPARATIVO DE FATURAMENTO DOS ÚLTIMOS 6 MESES & SAZONALIDADE */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-black">
+                          Sazonalidade: Faturamento Total dos Últimos 6 Meses
+                        </h2>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                          Gráfico de Barras · 6 Meses
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Compare a evolução mensal dos seus ganhos brutos para identificar meses de alta demanda e períodos de baixa sazonalidade
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 shrink-0">
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Total (6 Meses)</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-[#FF6A1A]">
+                          {fmtCurrencyExact(sixMonthSeasonality.total6MonthsRev)}
+                        </div>
+                      </div>
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Média Mensal</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400">
+                          {fmtCurrencyExact(sixMonthSeasonality.avgMonthlyRev)}
+                        </div>
+                      </div>
+                      <div className={`rounded-xl px-3 py-2 col-span-2 sm:col-span-1 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Melhor Mês (Pico)</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-emerald-400 truncate">
+                          {sixMonthSeasonality.peakMonth
+                            ? `${sixMonthSeasonality.peakMonth.label} · ${fmtMoney(sixMonthSeasonality.peakMonth.faturamento)}`
+                            : 'Sem registros'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-64 sm:h-72 mt-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={sixMonthSeasonality.months}
+                        margin={{ top: 14, right: 16, left: 0, bottom: 4 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={isDark ? '#1e293b' : '#e2e8f0'}
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="label"
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
+                          tick={{ fontSize: 11, fontWeight: 800 }}
+                          tickLine={false}
+                          axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
+                        />
+                        <YAxis
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
+                          tick={{ fontSize: 11, fontWeight: 700 }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(val: number) => `R$ ${val}`}
+                          width={72}
+                        />
+                        <Tooltip
+                          cursor={{ fill: isDark ? 'rgba(255, 106, 26, 0.08)' : 'rgba(255, 106, 26, 0.06)' }}
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            const item = payload[0].payload;
+                            return (
+                              <div
+                                className={`rounded-2xl p-3.5 shadow-xl border text-xs ${
+                                  isDark
+                                    ? 'bg-[#12141C] border-slate-700 text-slate-100'
+                                    : 'bg-white border-slate-200 text-slate-900'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-3 mb-1.5">
+                                  <span className="font-black text-[#FF6A1A]">{item.fullLabel}</span>
+                                  {item.isPeak && (
+                                    <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                                      Pico Sazonal
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-between gap-4 font-bold">
+                                  <span className={mutedText}>Faturamento Total:</span>
+                                  <span className="text-[#FF6A1A] font-black tabular-nums">
+                                    {fmtCurrencyExact(item.faturamento)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 mt-0.5">
+                                  <span className={mutedText}>Gastos Lançados:</span>
+                                  <span className="text-rose-400 font-bold tabular-nums">
+                                    {fmtCurrencyExact(item.gastos)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 mt-0.5">
+                                  <span className={mutedText}>Saldo do Mês:</span>
+                                  <span
+                                    className={`font-black tabular-nums ${
+                                      item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {fmtCurrencyExact(item.lucro)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 mt-1 pt-1 border-t border-slate-700/40">
+                                  <span className={mutedText}>Rodagem / Registros:</span>
+                                  <span className="font-bold tabular-nums">
+                                    {item.km.toLocaleString('pt-BR')} km · {item.corridas} reg(s)
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        {sixMonthSeasonality.avgMonthlyRev > 0 && (
+                          <ReferenceLine
+                            y={Math.round(sixMonthSeasonality.avgMonthlyRev)}
+                            stroke="#38bdf8"
+                            strokeDasharray="4 4"
+                            strokeWidth={1.5}
+                            label={{
+                              value: `Média: ${fmtMoney(sixMonthSeasonality.avgMonthlyRev)}`,
+                              position: 'insideTopRight',
+                              fill: '#38bdf8',
+                              fontSize: 11,
+                              fontWeight: 800,
+                            }}
+                          />
+                        )}
+                        <Bar
+                          dataKey="faturamento"
+                          name="Faturamento Mensal (R$)"
+                          radius={[8, 8, 0, 0]}
+                          maxBarSize={54}
+                        >
+                          {sixMonthSeasonality.months.map(entry => (
+                            <Cell
+                              key={entry.yearMonth}
+                              fill={
+                                entry.isPeak
+                                  ? '#10b981'
+                                  : entry.isCurrent
+                                  ? '#FF6A1A'
+                                  : entry.faturamento > 0
+                                  ? '#fb923c'
+                                  : isDark
+                                  ? '#1e293b'
+                                  : '#cbd5e1'
+                              }
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Insight de Sazonalidade & Legenda Rápida */}
+                  <div className={`mt-3 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${surfaceSubtle}`}>
+                    <div className="text-xs leading-relaxed">
+                      <span className="font-black text-[#FF6A1A] mr-1.5">📊 Análise de Sazonalidade:</span>
+                      <span className={mutedText}>{sixMonthSeasonality.seasonalitySummary}</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-[11px] font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 inline-block" />
+                        <span>Pico</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-[#FF6A1A] inline-block" />
+                        <span>Mês Atual</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-sky-400 inline-block" />
+                        <span>Média</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* SEÇÃO DUPLA: (1) ALIMENTAÇÃO, MANUTENÇÃO & EMERGÊNCIA | (2) DOCUMENTO DA MOTO, IPVA & LICENCIAMENTO */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                   {/* CARD ESQUERDO: CONFIGURAR RESERVAS DE ALMOÇO, LANCHE, MANUTENÇÃO E EMERGÊNCIA */}
@@ -5039,13 +5361,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             Almoço / Marmita por Dia (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="1"
                             value={finPlan.dailyLunchBudget}
-                            onChange={e =>
-                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -5055,13 +5375,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             Lanche / Café / Água por Dia (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="1"
                             value={finPlan.dailySnackBudget}
-                            onChange={e =>
-                              updateFinancialPlan({ dailySnackBudget: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -5072,15 +5390,12 @@ export default function App() {
                             Reserva de Emergência (% do Bruto)
                           </label>
                           <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min="0"
-                              max="40"
+                            <FreeNumberInput
                               step="1"
                               value={finPlan.emergencyReservePct}
-                              onChange={e =>
+                              onValueChange={val =>
                                 updateFinancialPlan({
-                                  emergencyReservePct: Math.max(0, Math.min(40, Number(e.target.value) || 0)),
+                                  emergencyReservePct: Math.max(0, val),
                                 })
                               }
                               className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
@@ -5096,15 +5411,12 @@ export default function App() {
                             Margem Extra Imprevisto Mecânico (%)
                           </label>
                           <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min="0"
-                              max="25"
+                            <FreeNumberInput
                               step="1"
                               value={finPlan.maintenanceExtraBufferPct}
-                              onChange={e =>
+                              onValueChange={val =>
                                 updateFinancialPlan({
-                                  maintenanceExtraBufferPct: Math.max(0, Math.min(25, Number(e.target.value) || 0)),
+                                  maintenanceExtraBufferPct: Math.max(0, val),
                                 })
                               }
                               className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
@@ -5182,13 +5494,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             IPVA Anual da Moto (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="10"
                             value={finPlan.ipvaAnnual}
-                            onChange={e =>
-                              updateFinancialPlan({ ipvaAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -5198,13 +5508,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             Licenciamento Anual CRLV-e (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="5"
                             value={finPlan.licensingAnnual}
-                            onChange={e =>
-                              updateFinancialPlan({ licensingAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -5214,13 +5522,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             DAS MEI / Seguro / Rastreador Mensal (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="5"
                             value={finPlan.insuranceOrMeiMonthly}
-                            onChange={e =>
-                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -5230,13 +5536,11 @@ export default function App() {
                           <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                             Outras Taxas Anuais / CNH / Detran (R$)
                           </label>
-                          <input
-                            type="number"
-                            min="0"
+                          <FreeNumberInput
                             step="10"
                             value={finPlan.otherDocsAnnual}
-                            onChange={e =>
-                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            onValueChange={val =>
+                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
                             }
                             className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
                           />
@@ -6747,13 +7051,12 @@ export default function App() {
                   <div className="text-sm font-bold">Meta Diária de Faturamento (R$)</div>
                   <div className={`text-xs ${mutedText}`}>Usada no cálculo de progresso diário e Copilot</div>
                 </div>
-                <input
-                  type="number"
+                <FreeNumberInput
                   value={dbState.dailyGoal}
-                  onChange={e =>
+                  onValueChange={val =>
                     persistAndEnqueueWorkManager({
                       ...dbState,
-                      dailyGoal: Math.max(10, Number(e.target.value) || 150),
+                      dailyGoal: Math.max(0, val),
                     })
                   }
                   className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
@@ -6765,15 +7068,13 @@ export default function App() {
                   <div className="text-sm font-bold">Meta de Faturamento Semanal (R$)</div>
                   <div className={`text-xs ${mutedText}`}>Exibida na barra de progresso semanal no Painel de Início</div>
                 </div>
-                <input
-                  type="number"
-                  min="50"
+                <FreeNumberInput
                   step="50"
-                  value={dbState.weeklyGoal || 900}
-                  onChange={e =>
+                  value={dbState.weeklyGoal ?? 900}
+                  onValueChange={val =>
                     persistAndEnqueueWorkManager({
                       ...dbState,
-                      weeklyGoal: Math.max(50, Number(e.target.value) || 900),
+                      weeklyGoal: Math.max(0, val),
                     })
                   }
                   className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
@@ -6790,30 +7091,25 @@ export default function App() {
                 <div className="flex items-center gap-2 w-full sm:w-auto">
                   <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
                     <span className={`text-xs font-bold ${mutedText}`}>R$</span>
-                    <input
-                      type="number"
-                      min="50"
+                    <FreeNumberInput
                       step="50"
-                      value={dbState.customGoalTarget || 3000}
-                      onChange={e =>
+                      value={dbState.customGoalTarget ?? 3000}
+                      onValueChange={val =>
                         persistAndEnqueueWorkManager({
                           ...dbState,
-                          customGoalTarget: Math.max(10, Number(e.target.value) || 0),
+                          customGoalTarget: Math.max(0, val),
                         })
                       }
                       className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={dbState.customGoalDays || 20}
-                      onChange={e =>
+                    <FreeNumberInput
+                      value={dbState.customGoalDays ?? 20}
+                      onValueChange={val =>
                         persistAndEnqueueWorkManager({
                           ...dbState,
-                          customGoalDays: Math.max(1, Math.min(365, Number(e.target.value) || 1)),
+                          customGoalDays: Math.max(0, val),
                         })
                       }
                       className={`w-20 px-3 py-2 rounded-xl text-center font-black tabular-nums outline-none ${inputSurface}`}
@@ -7761,8 +8057,12 @@ export default function App() {
                   onClick={() => {
                     setEditingMaintHistoryRecordId(null);
                     setMaintHistoryDate(todayStr());
-                    setMaintHistoryKm(String(totals.totalKm));
-                    setMaintHistoryAmount(String(activeMaintItem.costEstimate || 0));
+                    setMaintHistoryKm(totals.totalKm > 0 ? String(totals.totalKm) : '');
+                    setMaintHistoryAmount(
+                      activeMaintItem.costEstimate && activeMaintItem.costEstimate > 0
+                        ? String(activeMaintItem.costEstimate)
+                        : ''
+                    );
                     setMaintHistoryNotes(activeMaintItem.notes || '');
                     setMaintHistoryAddToExpenses(false);
                     setShowAddMaintHistoryForm(true);
