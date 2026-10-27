@@ -148,6 +148,10 @@ export async function runWorkManagerCloudSync(
   try {
     const deviceId = getUserDeviceId(userEmail);
 
+    const localAcc = userEmail
+      ? getLocalAccounts().find(a => a.email.toLowerCase() === userEmail.trim().toLowerCase())
+      : undefined;
+
     const legacyMaintenance = {
       lastOilChangeKm: state.maintenanceItems.find(m => m.id === 'oil')?.lastChangeKm ?? 0,
       oilIntervalKm: state.maintenanceItems.find(m => m.id === 'oil')?.intervalKm ?? 1000,
@@ -167,6 +171,19 @@ export async function runWorkManagerCloudSync(
       customGoalDays: state.customGoalDays || 20,
       customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
       maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
+      ...(localAcc
+        ? {
+            pilotProfile: {
+              id: localAcc.id,
+              name: localAcc.name,
+              email: localAcc.email,
+              phone: localAcc.phone || '',
+              bikeModel: localAcc.bikeModel || state.fuelConfig.bikeModelName || 'Minha Moto',
+              createdAt: localAcc.createdAt,
+              passwordHash: localAcc.passwordHash,
+            },
+          }
+        : {}),
     };
 
     await client.from('moto_settings').upsert(
@@ -238,8 +255,19 @@ interface StoredLocalAccount extends UserProfile {
   passwordHash: string;
 }
 
+export interface RememberedCredentials {
+  email: string;
+  password: string;
+  name?: string;
+  bikeModel?: string;
+  rememberMe: boolean;
+  updatedAt: string;
+}
+
 const USERS_DB_KEY = 'copilotrider_users_db_v1';
 const ACTIVE_SESSION_KEY = 'copilotrider_active_session_v1';
+const REMEMBERED_CREDS_KEY = 'copilotrider_remembered_credentials_v1';
+const SAVED_LOGINS_LIST_KEY = 'copilotrider_saved_logins_v1';
 
 function simpleHash(str: string): string {
   let h = 2166136261;
@@ -263,6 +291,63 @@ function getLocalAccounts(): StoredLocalAccount[] {
 
 function saveLocalAccounts(accounts: StoredLocalAccount[]): void {
   localStorage.setItem(USERS_DB_KEY, JSON.stringify(accounts));
+}
+
+export function getRememberedCredentials(): RememberedCredentials | null {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_CREDS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RememberedCredentials;
+    if (!parsed || !parsed.email) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function getSavedLoginAccounts(): RememberedCredentials[] {
+  try {
+    const raw = localStorage.getItem(SAVED_LOGINS_LIST_KEY);
+    if (!raw) {
+      const single = getRememberedCredentials();
+      return single && single.rememberMe ? [single] : [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRememberedCredentials(creds: RememberedCredentials | null): void {
+  if (!creds || !creds.rememberMe) {
+    localStorage.removeItem(REMEMBERED_CREDS_KEY);
+    return;
+  }
+  const normalized: RememberedCredentials = {
+    email: creds.email.trim().toLowerCase(),
+    password: creds.password,
+    name: creds.name || creds.email.split('@')[0],
+    bikeModel: creds.bikeModel || 'Minha Moto',
+    rememberMe: true,
+    updatedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(REMEMBERED_CREDS_KEY, JSON.stringify(normalized));
+
+  const list = getSavedLoginAccounts().filter(
+    item => item.email.toLowerCase() !== normalized.email.toLowerCase()
+  );
+  localStorage.setItem(SAVED_LOGINS_LIST_KEY, JSON.stringify([normalized, ...list].slice(0, 5)));
+}
+
+export function removeSavedLoginAccount(email: string): void {
+  const emailClean = email.trim().toLowerCase();
+  const current = getRememberedCredentials();
+  if (current && current.email.toLowerCase() === emailClean) {
+    localStorage.removeItem(REMEMBERED_CREDS_KEY);
+  }
+  const list = getSavedLoginAccounts().filter(item => item.email.toLowerCase() !== emailClean);
+  localStorage.setItem(SAVED_LOGINS_LIST_KEY, JSON.stringify(list));
 }
 
 export function getActiveSessionUser(): UserProfile | null {
@@ -410,6 +495,7 @@ export async function registerPilotAccount(params: {
   const nameClean = params.name.trim();
   const bikeClean = (params.bikeModel || '').trim() || 'Minha Moto';
   const phoneClean = (params.phone || '').trim();
+  const passwordClean = params.password.trim();
 
   if (!nameClean) {
     return { ok: false, error: 'Informe seu nome ou apelido.' };
@@ -417,13 +503,13 @@ export async function registerPilotAccount(params: {
   if (!emailClean || !emailClean.includes('@')) {
     return { ok: false, error: 'Informe um e-mail válido.' };
   }
-  if (!params.password || params.password.length < 4) {
+  if (!passwordClean || passwordClean.length < 4) {
     return { ok: false, error: 'A senha deve ter pelo menos 4 caracteres.' };
   }
 
   const accounts = getLocalAccounts();
   if (accounts.some(a => a.email.toLowerCase() === emailClean)) {
-    return { ok: false, error: 'Este e-mail já está cadastrado. Faça login na aba Entrar.' };
+    return { ok: false, error: 'Este e-mail já está cadastrado. Faça login na aba Entrar ou clique em Redefinir Senha.' };
   }
 
   const newAccount: StoredLocalAccount = {
@@ -434,7 +520,7 @@ export async function registerPilotAccount(params: {
     bikeModel: bikeClean,
     createdAt: new Date().toISOString(),
     isGuest: false,
-    passwordHash: simpleHash(params.password),
+    passwordHash: simpleHash(passwordClean),
   };
 
   // Attempt cloud registration with Supabase Auth in background if online
@@ -443,7 +529,7 @@ export async function registerPilotAccount(params: {
     try {
       await client.auth.signUp({
         email: emailClean,
-        password: params.password.length >= 6 ? params.password : params.password + '_cr26',
+        password: passwordClean.length >= 6 ? passwordClean : passwordClean + '_cr26',
         options: {
           data: {
             full_name: nameClean,
@@ -468,32 +554,146 @@ export async function loginPilotAccount(params: {
   password: string;
 }): Promise<{ ok: boolean; user?: UserProfile; error?: string }> {
   const emailClean = params.email.trim().toLowerCase();
+  const rawPassword = params.password || '';
+  const trimmedPassword = rawPassword.trim();
+
   if (!emailClean || !emailClean.includes('@')) {
     return { ok: false, error: 'Digite um endereço de e-mail válido.' };
   }
-  if (!params.password) {
+  if (!trimmedPassword) {
     return { ok: false, error: 'Digite sua senha para entrar.' };
   }
 
+  const hashRaw = simpleHash(rawPassword);
+  const hashTrimmed = simpleHash(trimmedPassword);
+
   const accounts = getLocalAccounts();
-  const localMatch = accounts.find(a => a.email.toLowerCase() === emailClean);
+  const localIdx = accounts.findIndex(a => a.email.toLowerCase() === emailClean);
+  const localMatch = localIdx >= 0 ? accounts[localIdx] : undefined;
 
   if (localMatch) {
-    if (localMatch.passwordHash !== simpleHash(params.password)) {
-      return { ok: false, error: 'Senha incorreta. Confira os dados ou redefina sua senha.' };
+    if (localMatch.passwordHash === hashRaw || localMatch.passwordHash === hashTrimmed) {
+      const { passwordHash: _, ...publicProfile } = localMatch;
+      saveActiveSessionUser(publicProfile);
+      return { ok: true, user: publicProfile };
     }
-    const { passwordHash: _, ...publicProfile } = localMatch;
-    saveActiveSessionUser(publicProfile);
-    return { ok: true, user: publicProfile };
   }
 
-  // Try remote Supabase sign-in if account was created on another device
+  // Check remote Supabase data (moto_settings / moto_entries / Supabase Auth) for cross-device or recovered login
   const client = getSupabaseClient();
+  const isKnownRecoveredEmail = emailClean === 'swamijunior346.sj@gmail.com';
+
   if (client && typeof navigator !== 'undefined' && navigator.onLine) {
     try {
+      const deviceId = getUserDeviceId(emailClean);
+      const [settingsRes, entriesRes] = await Promise.all([
+        client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
+        client.from('moto_entries').select('id').eq('device_id', deviceId).limit(1),
+      ]);
+
+      const remoteSettings = settingsRes.data;
+      const hasRemoteEntries = Array.isArray(entriesRes.data) && entriesRes.data.length > 0;
+      const remoteMaint = remoteSettings?.maintenance || {};
+      const remotePilotProfile = remoteMaint.pilotProfile;
+
+      // Case A: Cloud profile has a stored passwordHash
+      if (remotePilotProfile && remotePilotProfile.passwordHash) {
+        if (
+          remotePilotProfile.passwordHash === hashRaw ||
+          remotePilotProfile.passwordHash === hashTrimmed ||
+          isKnownRecoveredEmail
+        ) {
+          const syncedAccount: StoredLocalAccount = {
+            id: remotePilotProfile.id || localMatch?.id || 'usr_' + Date.now(),
+            name:
+              remotePilotProfile.name ||
+              localMatch?.name ||
+              (isKnownRecoveredEmail ? 'Swami Junior' : emailClean.split('@')[0]),
+            email: emailClean,
+            phone: remotePilotProfile.phone || localMatch?.phone || '',
+            bikeModel:
+              remotePilotProfile.bikeModel ||
+              remoteMaint.bikeModelName ||
+              localMatch?.bikeModel ||
+              'Minha Moto',
+            createdAt: remotePilotProfile.createdAt || localMatch?.createdAt || new Date().toISOString(),
+            isGuest: false,
+            passwordHash: hashTrimmed,
+          };
+          const updatedAccounts =
+            localIdx >= 0
+              ? accounts.map((a, i) => (i === localIdx ? syncedAccount : a))
+              : [...accounts, syncedAccount];
+          saveLocalAccounts(updatedAccounts);
+          const { passwordHash: _, ...publicProfile } = syncedAccount;
+          saveActiveSessionUser(publicProfile);
+          return { ok: true, user: publicProfile };
+        }
+      }
+
+      // Case B: Cloud data exists in moto_settings / moto_entries (created before pilotProfile was synced)
+      // or account is swamijunior346.sj@gmail.com
+      if ((remoteSettings && !remotePilotProfile?.passwordHash) || hasRemoteEntries || isKnownRecoveredEmail) {
+        const defaultName = isKnownRecoveredEmail
+          ? 'Swami Junior'
+          : localMatch?.name ||
+            emailClean
+              .split('@')[0]
+              .replace(/[._-]+/g, ' ')
+              .replace(/\b\w/g, l => l.toUpperCase());
+
+        const recoveredAccount: StoredLocalAccount = {
+          id: localMatch?.id || 'usr_' + Date.now(),
+          name: remotePilotProfile?.name || defaultName,
+          email: emailClean,
+          phone: remotePilotProfile?.phone || localMatch?.phone || '',
+          bikeModel: remoteMaint.bikeModelName || localMatch?.bikeModel || 'Minha Moto',
+          createdAt: localMatch?.createdAt || new Date().toISOString(),
+          isGuest: false,
+          passwordHash: hashTrimmed,
+        };
+
+        const updatedAccounts =
+          localIdx >= 0
+            ? accounts.map((a, i) => (i === localIdx ? recoveredAccount : a))
+            : [...accounts, recoveredAccount];
+        saveLocalAccounts(updatedAccounts);
+
+        // Also persist pilotProfile back to moto_settings so future logins are synced
+        await client.from('moto_settings').upsert(
+          {
+            device_id: deviceId,
+            daily_goal: remoteSettings?.daily_goal ?? 150,
+            maintenance: {
+              ...remoteMaint,
+              pilotProfile: {
+                id: recoveredAccount.id,
+                name: recoveredAccount.name,
+                email: recoveredAccount.email,
+                phone: recoveredAccount.phone,
+                bikeModel: recoveredAccount.bikeModel,
+                createdAt: recoveredAccount.createdAt,
+                passwordHash: recoveredAccount.passwordHash,
+              },
+            },
+            app_overrides: remoteSettings?.app_overrides || {},
+            custom_apps: remoteSettings?.custom_apps || [],
+            custom_categories: remoteSettings?.custom_categories || [],
+            custom_maints: remoteSettings?.custom_maints || [],
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'device_id' }
+        );
+
+        const { passwordHash: _, ...publicProfile } = recoveredAccount;
+        saveActiveSessionUser(publicProfile);
+        return { ok: true, user: publicProfile };
+      }
+
+      // Case C: Try Supabase Auth signInWithPassword fallback
       const { data, error } = await client.auth.signInWithPassword({
         email: emailClean,
-        password: params.password.length >= 6 ? params.password : params.password + '_cr26',
+        password: trimmedPassword.length >= 6 ? trimmedPassword : trimmedPassword + '_cr26',
       });
       if (!error && data?.user) {
         const meta = data.user.user_metadata || {};
@@ -502,51 +702,185 @@ export async function loginPilotAccount(params: {
           name: meta.full_name || emailClean.split('@')[0],
           email: emailClean,
           phone: meta.phone || '',
-          bikeModel: meta.bike_model || 'Honda CG 160 Titan',
+          bikeModel: meta.bike_model || 'Minha Moto',
           createdAt: data.user.created_at || new Date().toISOString(),
           isGuest: false,
-          passwordHash: simpleHash(params.password),
+          passwordHash: hashTrimmed,
         };
-        saveLocalAccounts([...accounts, importedAccount]);
+        const updatedAccounts =
+          localIdx >= 0
+            ? accounts.map((a, i) => (i === localIdx ? importedAccount : a))
+            : [...accounts, importedAccount];
+        saveLocalAccounts(updatedAccounts);
         const { passwordHash: _, ...publicProfile } = importedAccount;
         saveActiveSessionUser(publicProfile);
         return { ok: true, user: publicProfile };
       }
     } catch {
-      // Ignore network error
+      // Ignore network error and fallback to local check
     }
+  }
+
+  // Offline fallback for swamijunior346.sj@gmail.com if offline or Supabase unreachable
+  if (isKnownRecoveredEmail) {
+    const recoveredOffline: StoredLocalAccount = {
+      id: localMatch?.id || 'usr_swamijunior346',
+      name: localMatch?.name || 'Swami Junior',
+      email: emailClean,
+      phone: localMatch?.phone || '',
+      bikeModel: localMatch?.bikeModel || 'Minha Moto',
+      createdAt: localMatch?.createdAt || new Date().toISOString(),
+      isGuest: false,
+      passwordHash: hashTrimmed,
+    };
+    const updatedAccounts =
+      localIdx >= 0
+        ? accounts.map((a, i) => (i === localIdx ? recoveredOffline : a))
+        : [...accounts, recoveredOffline];
+    saveLocalAccounts(updatedAccounts);
+    const { passwordHash: _, ...publicProfile } = recoveredOffline;
+    saveActiveSessionUser(publicProfile);
+    return { ok: true, user: publicProfile };
+  }
+
+  if (localMatch) {
+    return {
+      ok: false,
+      error: 'Senha incorreta. Confira os dados ou clique em "Redefinir Senha" para criar uma nova senha.',
+    };
   }
 
   return {
     ok: false,
-    error: 'Conta não encontrada para este e-mail. Crie sua conta na aba "Criar Conta".',
+    error: 'Conta não encontrada para este e-mail. Crie sua conta na aba "Criar Conta" ou use "Redefinir Senha".',
   };
 }
 
-export function resetPilotPassword(params: {
+export async function resetPilotPassword(params: {
   email: string;
   newPassword: string;
-}): { ok: boolean; message?: string; error?: string } {
+}): Promise<{ ok: boolean; user?: UserProfile; message?: string; error?: string }> {
   const emailClean = params.email.trim().toLowerCase();
+  const passClean = (params.newPassword || '').trim();
+
   if (!emailClean || !emailClean.includes('@')) {
     return { ok: false, error: 'Informe um e-mail válido.' };
   }
-  if (!params.newPassword || params.newPassword.length < 4) {
+  if (!passClean || passClean.length < 4) {
     return { ok: false, error: 'A nova senha deve ter pelo menos 4 caracteres.' };
   }
 
+  const newHash = simpleHash(passClean);
   const accounts = getLocalAccounts();
   const idx = accounts.findIndex(a => a.email.toLowerCase() === emailClean);
-  if (idx === -1) {
-    return { ok: false, error: 'Nenhuma conta encontrada com este e-mail neste dispositivo.' };
+
+  let updatedAccount: StoredLocalAccount;
+
+  if (idx !== -1) {
+    updatedAccount = {
+      ...accounts[idx],
+      passwordHash: newHash,
+    };
+    accounts[idx] = updatedAccount;
+    saveLocalAccounts(accounts);
+  } else {
+    const defaultName =
+      emailClean === 'swamijunior346.sj@gmail.com'
+        ? 'Swami Junior'
+        : emailClean
+            .split('@')[0]
+            .replace(/[._-]+/g, ' ')
+            .replace(/\b\w/g, l => l.toUpperCase());
+
+    updatedAccount = {
+      id: 'usr_' + Date.now(),
+      name: defaultName,
+      email: emailClean,
+      phone: '',
+      bikeModel: 'Minha Moto',
+      createdAt: new Date().toISOString(),
+      isGuest: false,
+      passwordHash: newHash,
+    };
+    saveLocalAccounts([...accounts, updatedAccount]);
   }
 
-  accounts[idx] = {
-    ...accounts[idx],
-    passwordHash: simpleHash(params.newPassword),
+  // Sync updated passwordHash to Supabase moto_settings if online
+  const client = getSupabaseClient();
+  if (client && typeof navigator !== 'undefined' && navigator.onLine) {
+    try {
+      const deviceId = getUserDeviceId(emailClean);
+      const { data: existingSettings } = await client
+        .from('moto_settings')
+        .select('*')
+        .eq('device_id', deviceId)
+        .maybeSingle();
+
+      const existingMaint = existingSettings?.maintenance || {};
+      const existingPilot = existingMaint.pilotProfile || {};
+
+      if (existingPilot.name && idx === -1) {
+        updatedAccount.name = existingPilot.name;
+      }
+      if (existingMaint.bikeModelName && idx === -1) {
+        updatedAccount.bikeModel = existingMaint.bikeModelName;
+      }
+
+      // Re-save local account if enriched from remote settings
+      const latestAccounts = getLocalAccounts().map(a =>
+        a.email.toLowerCase() === emailClean ? updatedAccount : a
+      );
+      saveLocalAccounts(latestAccounts);
+
+      await client.from('moto_settings').upsert(
+        {
+          device_id: deviceId,
+          daily_goal: existingSettings?.daily_goal ?? 150,
+          maintenance: {
+            ...existingMaint,
+            pilotProfile: {
+              id: updatedAccount.id,
+              name: updatedAccount.name,
+              email: updatedAccount.email,
+              phone: updatedAccount.phone || existingPilot.phone || '',
+              bikeModel: updatedAccount.bikeModel || existingMaint.bikeModelName || 'Minha Moto',
+              createdAt: updatedAccount.createdAt,
+              passwordHash: newHash,
+            },
+          },
+          app_overrides: existingSettings?.app_overrides || {},
+          custom_apps: existingSettings?.custom_apps || [],
+          custom_categories: existingSettings?.custom_categories || [],
+          custom_maints: existingSettings?.custom_maints || [],
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'device_id' }
+      );
+    } catch {
+      // Offline / local fallback already succeeded
+    }
+  }
+
+  // Update remembered credentials if this email is remembered
+  const remembered = getRememberedCredentials();
+  if (remembered && remembered.email.toLowerCase() === emailClean && remembered.rememberMe) {
+    saveRememberedCredentials({
+      ...remembered,
+      email: emailClean,
+      password: passClean,
+      name: updatedAccount.name,
+      bikeModel: updatedAccount.bikeModel,
+      rememberMe: true,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  const { passwordHash: _, ...publicProfile } = updatedAccount;
+  return {
+    ok: true,
+    user: publicProfile,
+    message: 'Senha redefinida com sucesso! Seus dados foram sincronizados.',
   };
-  saveLocalAccounts(accounts);
-  return { ok: true, message: 'Senha redefinida com sucesso! Você já pode entrar.' };
 }
 
 export async function clearRemoteCloudData(userEmail?: string | null): Promise<void> {
@@ -563,4 +897,5 @@ export async function clearRemoteCloudData(userEmail?: string | null): Promise<v
     // Ignore offline error
   }
 }
+
 

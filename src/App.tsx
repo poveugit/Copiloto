@@ -46,6 +46,16 @@ import {
   Search,
 } from 'lucide-react';
 import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ReferenceLine,
+} from 'recharts';
+import {
   RideEntry,
   ExpenseEntry,
   MaintenanceItem,
@@ -56,8 +66,13 @@ import {
   ShiftDefinition,
   LocalRoomDatabaseState,
   UserProfile,
+  RememberedCredentials,
   getActiveSessionUser,
   saveActiveSessionUser,
+  getRememberedCredentials,
+  saveRememberedCredentials,
+  getSavedLoginAccounts,
+  removeSavedLoginAccount,
   registerPilotAccount,
   loginPilotAccount,
   resetPilotPassword,
@@ -287,15 +302,20 @@ export default function App() {
   const [selectedKotlinFileIndex, setSelectedKotlinFileIndex] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
-  // ================= AUTHENTICATION (LOGIN & CADASTRO) STATE =================
+  // ================= AUTHENTICATION (LOGIN, CADASTRO, REDEFINIR SENHA & LEMBRAR DADOS) STATE =================
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getActiveSessionUser());
   const [showAuthScreen, setShowAuthScreen] = useState<boolean>(() => !getActiveSessionUser());
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'recover'>('login');
+  const [rememberMe, setRememberMe] = useState<boolean>(() => {
+    const rem = getRememberedCredentials();
+    return rem ? rem.rememberMe : true;
+  });
+  const [savedAccounts, setSavedAccounts] = useState<RememberedCredentials[]>(() => getSavedLoginAccounts());
   const [authName, setAuthName] = useState<string>('');
-  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authEmail, setAuthEmail] = useState<string>(() => getRememberedCredentials()?.email || '');
   const [authPhone, setAuthPhone] = useState<string>('');
   const [authBikeModel, setAuthBikeModel] = useState<string>('');
-  const [authPassword, setAuthPassword] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>(() => getRememberedCredentials()?.password || '');
   const [authConfirmPassword, setAuthConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -356,6 +376,11 @@ export default function App() {
             expenses: remote.expenses ?? prev.expenses,
             dailyGoal: remote.dailyGoal ?? prev.dailyGoal,
             weeklyGoal: remote.weeklyGoal ?? prev.weeklyGoal,
+            customGoalTarget: remote.customGoalTarget ?? prev.customGoalTarget,
+            customGoalDays: remote.customGoalDays ?? prev.customGoalDays,
+            customGoalTitle: remote.customGoalTitle ?? prev.customGoalTitle,
+            maintenanceNotificationsEnabled:
+              remote.maintenanceNotificationsEnabled ?? prev.maintenanceNotificationsEnabled,
             maintenanceItems: remote.maintenanceItems ?? prev.maintenanceItems,
             fuelConfig: remote.fuelConfig ?? prev.fuelConfig,
             customApps: remote.customApps ?? prev.customApps,
@@ -387,8 +412,86 @@ export default function App() {
     return () => clearInterval(interval);
   }, [dbState, simulateOffline, currentUser]);
 
+  // Helper to complete login and hydrate user database from Room or Supabase Cloud
+  const completeUserSessionLogin = async (
+    user: UserProfile,
+    plainPassword: string,
+    shouldRemember: boolean
+  ) => {
+    if (shouldRemember) {
+      saveRememberedCredentials({
+        email: user.email,
+        password: plainPassword.trim(),
+        name: user.name,
+        bikeModel: user.bikeModel,
+        rememberMe: true,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      saveRememberedCredentials(null);
+    }
+    setSavedAccounts(getSavedLoginAccounts());
+
+    let userDb = loadDatabaseForUser(user);
+    if (userDb.entries.length === 0 && userDb.expenses.length === 0) {
+      const remote = await fetchRemoteCloudData(user.email);
+      if (remote) {
+        userDb = {
+          ...userDb,
+          entries: remote.entries ?? [],
+          expenses: remote.expenses ?? [],
+          dailyGoal: remote.dailyGoal ?? userDb.dailyGoal,
+          weeklyGoal: remote.weeklyGoal ?? userDb.weeklyGoal,
+          customGoalTarget: remote.customGoalTarget ?? userDb.customGoalTarget,
+          customGoalDays: remote.customGoalDays ?? userDb.customGoalDays,
+          customGoalTitle: remote.customGoalTitle ?? userDb.customGoalTitle,
+          maintenanceNotificationsEnabled:
+            remote.maintenanceNotificationsEnabled ?? userDb.maintenanceNotificationsEnabled,
+          maintenanceItems: remote.maintenanceItems ?? userDb.maintenanceItems,
+          fuelConfig: remote.fuelConfig ?? userDb.fuelConfig,
+          customApps: remote.customApps ?? [],
+          customCategories: remote.customCategories ?? [],
+          appOverrides: remote.appOverrides ?? {},
+        };
+      }
+    }
+
+    setCurrentUser(user);
+    setShowAuthScreen(false);
+    if (!shouldRemember) {
+      setAuthPassword('');
+    }
+    await persistAndEnqueueWorkManager(userDb, user);
+  };
+
+  // 1-Click Quick Login for Remembered Account
+  const handleQuickSavedLogin = async (cred: RememberedCredentials) => {
+    setAuthError(null);
+    setAuthSuccess(null);
+    setAuthEmail(cred.email);
+    setAuthPassword(cred.password);
+    setRememberMe(true);
+    setIsAuthLoading(true);
+
+    const res = await loginPilotAccount({
+      email: cred.email,
+      password: cred.password,
+    });
+
+    if (!res.ok || !res.user) {
+      setIsAuthLoading(false);
+      setAuthError(
+        res.error || 'A senha desta conta foi alterada. Digite sua senha atual ou clique em Redefinir Senha.'
+      );
+      return;
+    }
+
+    await completeUserSessionLogin(res.user, cred.password, true);
+    setIsAuthLoading(false);
+  };
+
   // ================= LOGIN, CADASTRO & RECOVERY HANDLERS =================
-  const handleAuthSubmit = async (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent, autoLoginOnRecover = true) => {
     e.preventDefault();
     setAuthError(null);
     setAuthSuccess(null);
@@ -405,36 +508,13 @@ export default function App() {
         return;
       }
 
-      // Load this user's own isolated database (or fetch from Supabase cloud if empty locally)
-      let userDb = loadDatabaseForUser(res.user);
-      if (userDb.entries.length === 0 && userDb.expenses.length === 0) {
-        const remote = await fetchRemoteCloudData(res.user.email);
-        if (remote) {
-          userDb = {
-            ...userDb,
-            entries: remote.entries ?? [],
-            expenses: remote.expenses ?? [],
-            dailyGoal: remote.dailyGoal ?? userDb.dailyGoal,
-            weeklyGoal: remote.weeklyGoal ?? userDb.weeklyGoal,
-            maintenanceItems: remote.maintenanceItems ?? userDb.maintenanceItems,
-            fuelConfig: remote.fuelConfig ?? userDb.fuelConfig,
-            customApps: remote.customApps ?? [],
-            customCategories: remote.customCategories ?? [],
-            appOverrides: remote.appOverrides ?? {},
-          };
-        }
-      }
-
+      await completeUserSessionLogin(res.user, authPassword, rememberMe);
       setIsAuthLoading(false);
-      setCurrentUser(res.user);
-      setShowAuthScreen(false);
-      setAuthPassword('');
-      await persistAndEnqueueWorkManager(userDb, res.user);
       return;
     }
 
     if (authMode === 'register') {
-      if (authPassword !== authConfirmPassword) {
+      if (authPassword.trim() !== authConfirmPassword.trim()) {
         setAuthError('As senhas digitadas não coincidem.');
         return;
       }
@@ -452,6 +532,20 @@ export default function App() {
         return;
       }
 
+      if (rememberMe) {
+        saveRememberedCredentials({
+          email: res.user.email,
+          password: authPassword.trim(),
+          name: res.user.name,
+          bikeModel: res.user.bikeModel,
+          rememberMe: true,
+          updatedAt: new Date().toISOString(),
+        });
+      } else {
+        saveRememberedCredentials(null);
+      }
+      setSavedAccounts(getSavedLoginAccounts());
+
       // Brand-new account ALWAYS starts 100% clean (zero entries, zero expenses, zero demo data)
       const freshUserDb = createCleanDatabaseState(res.user.bikeModel);
       setCurrentUser(res.user);
@@ -459,7 +553,9 @@ export default function App() {
       setAuthName('');
       setAuthPhone('');
       setAuthBikeModel('');
-      setAuthPassword('');
+      if (!rememberMe) {
+        setAuthPassword('');
+      }
       setAuthConfirmPassword('');
       await clearRemoteCloudData(res.user.email);
       await persistAndEnqueueWorkManager(freshUserDb, res.user);
@@ -467,21 +563,45 @@ export default function App() {
     }
 
     if (authMode === 'recover') {
-      if (authPassword !== authConfirmPassword) {
+      if (authPassword.trim() !== authConfirmPassword.trim()) {
         setAuthError('As senhas digitadas não coincidem.');
         return;
       }
-      const res = resetPilotPassword({
+      setIsAuthLoading(true);
+      const res = await resetPilotPassword({
         email: authEmail,
         newPassword: authPassword,
       });
       if (!res.ok) {
+        setIsAuthLoading(false);
         setAuthError(res.error || 'Erro ao redefinir a senha.');
         return;
       }
-      setAuthSuccess(res.message || 'Senha redefinida com sucesso!');
-      setAuthPassword('');
+
+      const newPassClean = authPassword.trim();
       setAuthConfirmPassword('');
+
+      if (autoLoginOnRecover && res.user) {
+        await completeUserSessionLogin(res.user, newPassClean, rememberMe);
+        setIsAuthLoading(false);
+        return;
+      }
+
+      if (rememberMe && res.user) {
+        saveRememberedCredentials({
+          email: res.user.email,
+          password: newPassClean,
+          name: res.user.name,
+          bikeModel: res.user.bikeModel,
+          rememberMe: true,
+          updatedAt: new Date().toISOString(),
+        });
+        setSavedAccounts(getSavedLoginAccounts());
+      }
+
+      setIsAuthLoading(false);
+      setAuthSuccess(res.message || 'Senha redefinida com sucesso! Você já pode entrar.');
+      setAuthPassword(rememberMe ? newPassClean : '');
       setAuthMode('login');
     }
   };
@@ -492,7 +612,15 @@ export default function App() {
     setDbState(createCleanDatabaseState());
     setAuthError(null);
     setAuthSuccess(null);
-    setAuthPassword('');
+    const rem = getRememberedCredentials();
+    setSavedAccounts(getSavedLoginAccounts());
+    if (rem && rem.rememberMe) {
+      setAuthEmail(rem.email);
+      setAuthPassword(rem.password);
+      setRememberMe(true);
+    } else {
+      setAuthPassword('');
+    }
     setAuthConfirmPassword('');
     setAuthMode('login');
     setShowAuthScreen(true);
@@ -1965,6 +2093,44 @@ export default function App() {
       },
     ];
 
+    // Last 30 days daily earnings evolution for Recharts LineChart
+    const last30DaysEvolution: {
+      date: string;
+      fullDateLabel: string;
+      label: string;
+      ganhos: number;
+      metaDiaria: number;
+      km: number;
+      hours: number;
+      metGoal: boolean;
+    }[] = [];
+
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      const [yyyy, mm, dd] = iso.split('-');
+      const dayEntries = dbState.entries.filter(e => e.date === iso);
+      const rev = dayEntries.reduce((s, e) => s + Number(e.revenue || 0), 0);
+      const km = dayEntries.reduce((s, e) => s + Number(e.km || 0), 0);
+      const hours = dayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
+      last30DaysEvolution.push({
+        date: iso,
+        fullDateLabel: `${dd}/${mm}/${yyyy}`,
+        label: `${dd}/${mm}`,
+        ganhos: Math.round(rev * 100) / 100,
+        metaDiaria: dailyGoal,
+        km: Math.round(km * 10) / 10,
+        hours: Math.round(hours * 10) / 10,
+        metGoal: rev >= dailyGoal,
+      });
+    }
+
+    const total30DaysRev = last30DaysEvolution.reduce((s, d) => s + d.ganhos, 0);
+    const activeDaysIn30 = last30DaysEvolution.filter(d => d.ganhos > 0 || d.km > 0).length;
+    const avg30DaysActiveRev = activeDaysIn30 > 0 ? total30DaysRev / activeDaysIn30 : 0;
+    const daysMetGoalIn30 = last30DaysEvolution.filter(d => d.metGoal).length;
+
     const unlockedCount = achievements.filter(a => a.unlocked).length;
 
     return {
@@ -2017,6 +2183,11 @@ export default function App() {
       healthyMaintCount,
       totalMaintHistorySpent,
       last7DaysDetailed,
+      last30DaysEvolution,
+      total30DaysRev,
+      activeDaysIn30,
+      avg30DaysActiveRev,
+      daysMetGoalIn30,
       achievements,
       unlockedCount,
     };
@@ -2130,11 +2301,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Column: Login & Cadastro Card */}
+          {/* Right Column: Login, Cadastro & Redefinir Senha Card */}
           <div className="lg:col-span-6 w-full max-w-md mx-auto lg:max-w-none">
             <div className={`rounded-3xl p-5 sm:p-8 ${surfaceCard}`}>
-              {/* Segmented Tab Switcher (Entrar vs Criar Conta) */}
-              {authMode !== 'recover' ? (
+              {/* 2-Tab Segmented Switcher (Entrar | Criar Conta) */}
+              {authMode !== 'recover' && (
                 <div className={`grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl mb-6 ${surfaceSubtle}`}>
                   <button
                     type="button"
@@ -2149,7 +2320,7 @@ export default function App() {
                         : `${mutedText} hover:text-current`
                     }`}
                   >
-                    <LogIn className="w-4 h-4" />
+                    <LogIn className="w-4 h-4 shrink-0" />
                     <span>Entrar</span>
                   </button>
                   <button
@@ -2165,34 +2336,120 @@ export default function App() {
                         : `${mutedText} hover:text-current`
                     }`}
                   >
-                    <UserPlus className="w-4 h-4" />
+                    <UserPlus className="w-4 h-4 shrink-0" />
                     <span>Criar Conta</span>
                   </button>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between mb-5 pb-3 border-b border-slate-800/40">
-                  <div>
-                    <h2 className="text-base sm:text-lg font-black text-[#FF6A1A]">Recuperar Senha</h2>
-                    <p className={`text-xs ${mutedText}`}>Defina uma nova senha para o seu e-mail cadastrado</p>
+              )}
+
+              {/* Contextual Header for Redefinir Senha Mode */}
+              {authMode === 'recover' && (
+                <div className={`mb-5 p-3.5 rounded-2xl border ${
+                  isDark ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30' : 'bg-orange-50 border-orange-200'
+                }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs sm:text-sm font-black text-[#FF6A1A] flex items-center gap-1.5">
+                      <RotateCcw className="w-4 h-4" />
+                      Redefinição de Senha Sincronizada
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode('login');
+                        setAuthError(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${surfaceSubtle}`}
+                    >
+                      Voltar ao Login
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('login');
-                      setAuthError(null);
-                    }}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
-                  >
-                    Voltar
-                  </button>
+                  <p className={`text-[11px] mt-1 leading-relaxed ${mutedText}`}>
+                    Informe o e-mail da sua conta e escolha uma nova senha. Ela será atualizada no dispositivo e na nuvem imediatamente.
+                  </p>
+                </div>
+              )}
+
+              {/* Saved Accounts Quick Login ("Lembrar meus dados" active accounts) */}
+              {authMode === 'login' && savedAccounts.length > 0 && (
+                <div className="mb-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A]`}>
+                      Acesso Rápido (Dados Lembrados)
+                    </span>
+                    <span className={`text-[10px] font-semibold ${mutedText}`}>
+                      1 toque para entrar
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {savedAccounts.map(acc => (
+                      <div
+                        key={acc.email}
+                        className={`rounded-2xl p-2.5 flex items-center justify-between gap-2 border transition-colors ${
+                          isDark
+                            ? 'bg-slate-900/90 border-slate-800 hover:border-[#FF6A1A]/50'
+                            : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleQuickSavedLogin(acc)}
+                          className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer"
+                        >
+                          <div className="w-9 h-9 rounded-xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 text-[#FF6A1A] font-black text-xs flex items-center justify-center shrink-0">
+                            {(acc.name || acc.email).slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-black truncate">
+                              {acc.name || acc.email.split('@')[0]}
+                            </div>
+                            <div className={`text-[11px] truncate ${mutedText}`}>
+                              {acc.email}
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-lg bg-[#FF6A1A] text-black text-[11px] font-black shrink-0">
+                            Entrar
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            removeSavedLoginAccount(acc.email);
+                            setSavedAccounts(getSavedLoginAccounts());
+                          }}
+                          title="Esquecer esta conta salva"
+                          className={`p-2 rounded-lg cursor-pointer hover:text-rose-400 ${mutedText}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Feedback Banners */}
               {authError && (
-                <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <span>{authError}</span>
+                <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex flex-col gap-2">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span>{authError}</span>
+                  </div>
+                  {authMode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode('recover');
+                        setAuthError(null);
+                        setAuthSuccess(null);
+                        setAuthPassword('');
+                        setAuthConfirmPassword('');
+                      }}
+                      className="self-start px-3 py-1.5 rounded-xl bg-rose-500/25 hover:bg-rose-500/35 text-rose-200 text-[11px] font-black cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Redefinir Senha Agora</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2203,7 +2460,7 @@ export default function App() {
                 </div>
               )}
 
-              <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
+              <form onSubmit={e => handleAuthSubmit(e, true)} className="flex flex-col gap-4">
                 {authMode === 'register' && (
                   <div>
                     <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
@@ -2225,7 +2482,7 @@ export default function App() {
 
                 <div>
                   <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
-                    E-mail
+                    E-mail da Conta
                   </label>
                   <div className="relative">
                     <Mail className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${mutedText}`} />
@@ -2302,7 +2559,7 @@ export default function App() {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className={`text-xs font-bold ${mutedText}`}>
-                      {authMode === 'recover' ? 'Nova Senha' : 'Senha'}
+                      {authMode === 'recover' ? 'Nova Senha (mín. 4 caracteres)' : 'Senha'}
                     </label>
                     {authMode === 'login' && (
                       <button
@@ -2311,10 +2568,13 @@ export default function App() {
                           setAuthMode('recover');
                           setAuthError(null);
                           setAuthSuccess(null);
+                          setAuthPassword('');
+                          setAuthConfirmPassword('');
                         }}
-                        className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer"
+                        className="text-xs font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
                       >
-                        Esqueceu a senha?
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Redefinir Senha</span>
                       </button>
                     )}
                   </div>
@@ -2358,19 +2618,69 @@ export default function App() {
                   </div>
                 )}
 
+                {/* MODO "LEMBRAR MEUS DADOS" */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !rememberMe;
+                    setRememberMe(nextVal);
+                    if (!nextVal) {
+                      saveRememberedCredentials(null);
+                    }
+                  }}
+                  className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                    rememberMe
+                      ? isDark
+                        ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/50'
+                        : 'bg-orange-50 border-orange-300'
+                      : surfaceSubtle
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                        rememberMe
+                          ? 'bg-[#FF6A1A] text-black'
+                          : isDark
+                          ? 'bg-slate-800 border border-slate-700'
+                          : 'bg-white border border-slate-300'
+                      }`}
+                    >
+                      {rememberMe && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-black">Lembrar meus dados</div>
+                      <div className={`text-[11px] truncate ${mutedText}`}>
+                        Facilitar o próximo acesso mantendo e-mail e senha salvos
+                      </div>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                      rememberMe
+                        ? 'bg-[#FF6A1A]/20 text-[#FF6A1A]'
+                        : isDark
+                        ? 'bg-slate-800 text-slate-400'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {rememberMe ? 'Ativo' : 'Off'}
+                  </span>
+                </button>
+
                 <button
                   type="submit"
                   disabled={isAuthLoading}
-                  className="mt-2 w-full py-3.5 px-5 rounded-2xl bg-[#FF6A1A] text-black font-black text-sm hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
+                  className="mt-1 w-full py-3.5 px-5 rounded-2xl bg-[#FF6A1A] text-black font-black text-sm hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
                 >
                   <span>
                     {isAuthLoading
                       ? 'Autenticando...'
                       : authMode === 'login'
-                      ? 'Entrar no CopilotRider'
+                      ? 'Entrar'
                       : authMode === 'register'
                       ? 'Criar Conta de Piloto'
-                      : 'Salvar Nova Senha'}
+                      : 'Redefinir Senha e Entrar Agora'}
                   </span>
                   <ArrowRight className="w-4 h-4 stroke-[2.5]" />
                 </button>
@@ -5046,7 +5356,137 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECTION 5: EVOLUÇÃO DOS ÚLTIMOS 7 DIAS VS META DIÁRIA */}
+            {/* SECTION 5: GRÁFICO DE LINHA (RECHARTS) - EVOLUÇÃO DOS GANHOS DIÁRIOS NOS ÚLTIMOS 30 DIAS */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-sm sm:text-base font-black">
+                      Evolução dos Ganhos Diários (Últimos 30 Dias)
+                    </h2>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                      Gráfico de Linha · 30 Dias
+                    </span>
+                  </div>
+                  <p className={`text-xs mt-0.5 ${mutedText}`}>
+                    Curva diária de faturamento bruto comparada com a sua Meta Diária ({fmtMoney(progressAnalytics.dailyGoal)})
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:gap-3">
+                  <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Total 30 Dias</div>
+                    <div className="text-xs sm:text-sm font-black tabular-nums text-[#FF6A1A]">
+                      {fmtCurrencyExact(progressAnalytics.total30DaysRev)}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Média / Dia Ativo</div>
+                    <div className="text-xs sm:text-sm font-black tabular-nums text-emerald-400">
+                      {fmtCurrencyExact(progressAnalytics.avg30DaysActiveRev)}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                    <div className={`text-[10px] font-semibold ${mutedText}`}>Metas Batidas (30d)</div>
+                    <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400">
+                      {progressAnalytics.daysMetGoalIn30} dia(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full h-72 sm:h-80 mt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={progressAnalytics.last30DaysEvolution}
+                    margin={{ top: 12, right: 16, left: 0, bottom: 4 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke={isDark ? '#1e293b' : '#e2e8f0'}
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="label"
+                      stroke={isDark ? '#94a3b8' : '#64748b'}
+                      tick={{ fontSize: 11, fontWeight: 700 }}
+                      tickLine={false}
+                      axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
+                      minTickGap={16}
+                    />
+                    <YAxis
+                      stroke={isDark ? '#94a3b8' : '#64748b'}
+                      tick={{ fontSize: 11, fontWeight: 700 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(val: number) => `R$ ${val}`}
+                      width={68}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const point = payload[0].payload;
+                        return (
+                          <div
+                            className={`rounded-2xl p-3 shadow-xl border text-xs ${
+                              isDark
+                                ? 'bg-[#12141C] border-slate-700 text-slate-100'
+                                : 'bg-white border-slate-200 text-slate-900'
+                            }`}
+                          >
+                            <div className="font-black text-[#FF6A1A] mb-1">
+                              Data: {point.fullDateLabel}
+                            </div>
+                            <div className="flex items-center justify-between gap-4 font-bold">
+                              <span className={mutedText}>Ganhos do Dia:</span>
+                              <span className="text-emerald-400 font-black tabular-nums">
+                                {fmtCurrencyExact(point.ganhos)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4 mt-0.5">
+                              <span className={mutedText}>Meta Diária:</span>
+                              <span className="font-bold tabular-nums">
+                                {fmtCurrencyExact(point.metaDiaria)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-4 mt-0.5">
+                              <span className={mutedText}>Rodagem / Horas:</span>
+                              <span className="font-bold tabular-nums">
+                                {point.km} km · {point.hours}h
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <ReferenceLine
+                      y={progressAnalytics.dailyGoal}
+                      stroke="#10b981"
+                      strokeDasharray="4 4"
+                      strokeWidth={1.5}
+                      label={{
+                        value: `Meta: ${fmtMoney(progressAnalytics.dailyGoal)}`,
+                        position: 'insideTopRight',
+                        fill: '#10b981',
+                        fontSize: 11,
+                        fontWeight: 800,
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="ganhos"
+                      name="Ganhos Diários (R$)"
+                      stroke="#FF6A1A"
+                      strokeWidth={3}
+                      dot={{ r: 3, fill: '#FF6A1A', strokeWidth: 0 }}
+                      activeDot={{ r: 6, fill: '#FF6A1A', stroke: '#ffffff', strokeWidth: 2 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* SECTION 5B: EVOLUÇÃO DOS ÚLTIMOS 7 DIAS VS META DIÁRIA */}
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                 <div>
@@ -5211,6 +5651,22 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthEmail(currentUser.email);
+                    setAuthPassword('');
+                    setAuthConfirmPassword('');
+                    setAuthError(null);
+                    setAuthSuccess(null);
+                    setAuthMode('recover');
+                    setShowAuthScreen(true);
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-[#FF6A1A]" />
+                  <span>Redefinir Senha</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
