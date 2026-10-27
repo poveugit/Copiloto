@@ -7,6 +7,16 @@ function getRelayTopicForDevice(deviceId: string): string {
   return `mochilinha_sync_${hash}`;
 }
 
+async function fetchPullWithTimeout(url: string, timeoutMs = 1800): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -23,7 +33,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const topic = getRelayTopicForDevice(deviceId);
-    const pollRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=all`);
+    const pollRes = await fetchPullWithTimeout(`https://ntfy.sh/${topic}/json?poll=1&since=all`, 1800);
     if (!pollRes.ok) {
       return res.status(200).json({ ok: true, data: null });
     }
@@ -46,7 +56,7 @@ export default async function handler(req: any, res: any) {
             return res.status(200).json({ ok: true, data: parsed });
           }
         } else if (msg.fileUrl) {
-          const fileRes = await fetch(msg.fileUrl);
+          const fileRes = await fetchPullWithTimeout(msg.fileUrl, 1800);
           if (fileRes.ok) {
             const parsed = await fileRes.json();
             if (parsed && parsed.state) {

@@ -184,6 +184,34 @@ const CLOUD_SYNC_ENDPOINTS = [
   'https://ais-pre-rztjkqzidbnnsie2ngbp3l-559814617776.us-west2.run.app',
 ];
 
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 2500
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs = 2500, fallbackValue: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<T>(resolve => {
+    timer = setTimeout(() => resolve(fallbackValue), timeoutMs);
+  });
+  try {
+    return await Promise.race([Promise.resolve(promise), timeoutPromise]);
+  } catch {
+    return fallbackValue;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function getBrowserRelayTopic(deviceId: string): string {
   const clean = deviceId.trim().toLowerCase().replace(/^usr_/, '');
   return `mochilinha_b_${simpleHash('mochilinha_v3_' + clean)}`;
@@ -288,11 +316,15 @@ export async function runWorkManagerCloudSync(
         ) {
           return;
         }
-        const serverRes = await fetch(`${baseUrl}/api/cloud-sync/push`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payloadStr,
-        });
+        const serverRes = await fetchWithTimeout(
+          `${baseUrl}/api/cloud-sync/push`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payloadStr,
+          },
+          3000
+        );
         if (serverRes.ok) {
           serverSynced = true;
         }
@@ -312,24 +344,36 @@ export async function runWorkManagerCloudSync(
         updatedAt: isoNow,
       });
       if (recordStr.length < 3800) {
-        const bRes = await fetch(`https://ntfy.sh/${bTopic}`, {
-          method: 'POST',
-          body: recordStr,
-        });
+        const bRes = await fetchWithTimeout(
+          `https://ntfy.sh/${bTopic}`,
+          {
+            method: 'POST',
+            body: recordStr,
+          },
+          3000
+        );
         if (bRes.ok) browserRelaySynced = true;
       } else {
-        const putRes = await fetch(`https://ntfy.sh/${bTopic}_blob`, {
-          method: 'PUT',
-          headers: { Filename: 'mochilinha_state.json' },
-          body: recordStr,
-        });
+        const putRes = await fetchWithTimeout(
+          `https://ntfy.sh/${bTopic}_blob`,
+          {
+            method: 'PUT',
+            headers: { Filename: 'mochilinha_state.json' },
+            body: recordStr,
+          },
+          3500
+        );
         if (putRes.ok) {
           const putJson = await putRes.json();
           if (putJson?.attachment?.url) {
-            const ptrRes = await fetch(`https://ntfy.sh/${bTopic}`, {
-              method: 'POST',
-              body: JSON.stringify({ fileUrl: putJson.attachment.url, updatedAt: isoNow }),
-            });
+            const ptrRes = await fetchWithTimeout(
+              `https://ntfy.sh/${bTopic}`,
+              {
+                method: 'POST',
+                body: JSON.stringify({ fileUrl: putJson.attachment.url, updatedAt: isoNow }),
+              },
+              3000
+            );
             if (ptrRes.ok) browserRelaySynced = true;
           }
         }
@@ -699,8 +743,8 @@ export async function fetchRemoteCloudData(
   const emailClean = userEmail.trim().toLowerCase();
   const collectedSnapshots: Array<Partial<LocalRoomDatabaseState> | null> = [];
 
-  // 1. Fetch from Express / Serverless Cloud Store across active endpoints
-  await Promise.all(
+  // Run Cloud Store, Browser Relay, and Supabase fetches in parallel with strict timeouts
+  const fetchFromEndpoints = Promise.all(
     CLOUD_SYNC_ENDPOINTS.map(async baseUrl => {
       try {
         if (
@@ -710,8 +754,10 @@ export async function fetchRemoteCloudData(
         ) {
           return;
         }
-        const res = await fetch(
-          `${baseUrl}/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(emailClean)}`
+        const res = await fetchWithTimeout(
+          `${baseUrl}/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(emailClean)}`,
+          {},
+          2500
         );
         if (res.ok) {
           const json = await res.json();
@@ -725,75 +771,61 @@ export async function fetchRemoteCloudData(
     })
   );
 
-  // 2. Fetch from Direct Browser Relay Backup
-  try {
-    const bTopic = getBrowserRelayTopic(deviceId);
-    const bRes = await fetch(`https://ntfy.sh/${bTopic}/json?poll=1&since=all`);
-    if (bRes.ok) {
-      const text = (await bRes.text()).trim();
-      if (text) {
-        const lines = text.split('\n').filter(Boolean);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const evt = JSON.parse(lines[i]);
-            if (evt.event !== 'message' || !evt.message) continue;
-            const parsedMsg = JSON.parse(evt.message);
-            if (parsedMsg?.state) {
-              collectedSnapshots.push(parsedMsg.state);
-              break;
-            } else if (parsedMsg?.fileUrl) {
-              const fRes = await fetch(parsedMsg.fileUrl);
-              if (fRes.ok) {
-                const fJson = await fRes.json();
-                if (fJson?.state) {
-                  collectedSnapshots.push(fJson.state);
-                  break;
+  const fetchFromRelay = (async () => {
+    try {
+      const bTopic = getBrowserRelayTopic(deviceId);
+      const bRes = await fetchWithTimeout(`https://ntfy.sh/${bTopic}/json?poll=1&since=all`, {}, 2200);
+      if (bRes.ok) {
+        const text = (await bRes.text()).trim();
+        if (text) {
+          const lines = text.split('\n').filter(Boolean);
+          for (let i = lines.length - 1; i >= 0; i--) {
+            try {
+              const evt = JSON.parse(lines[i]);
+              if (evt.event !== 'message' || !evt.message) continue;
+              const parsedMsg = JSON.parse(evt.message);
+              if (parsedMsg?.state) {
+                collectedSnapshots.push(parsedMsg.state);
+                break;
+              } else if (parsedMsg?.fileUrl) {
+                const fRes = await fetchWithTimeout(parsedMsg.fileUrl, {}, 2200);
+                if (fRes.ok) {
+                  const fJson = await fRes.json();
+                  if (fJson?.state) {
+                    collectedSnapshots.push(fJson.state);
+                    break;
+                  }
                 }
               }
+            } catch {
+              // continue
             }
-          } catch {
-            // continue
           }
         }
       }
+    } catch {
+      // Ignore browser relay error
     }
-  } catch {
-    // Ignore browser relay error
-  }
+  })();
 
-  // 3. Fetch from Supabase (moto_settings, moto_entries, moto_expenses) across all candidate device_ids
-  const client = getSupabaseClient();
-  if (client) {
+  const fetchFromSupabase = (async () => {
+    const client = getSupabaseClient();
+    if (!client) return;
     try {
-      const [settingsRes, entriesRes, expensesRes] = await Promise.all([
-        client.from('moto_settings').select('*').in('device_id', candidateIds),
-        client.from('moto_entries').select('*').in('device_id', candidateIds),
-        client.from('moto_expenses').select('*').in('device_id', candidateIds),
-      ]);
+      const [settingsRes, entriesRes, expensesRes] = await withTimeout(
+        Promise.all([
+          client.from('moto_settings').select('*').in('device_id', candidateIds),
+          client.from('moto_entries').select('*').in('device_id', candidateIds),
+          client.from('moto_expenses').select('*').in('device_id', candidateIds),
+        ]),
+        2500,
+        [{ data: null }, { data: null }, { data: null }] as any
+      );
 
-      let settingsRows = Array.isArray(settingsRes.data) ? settingsRes.data : [];
-      let rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
-      let rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
+      const settingsRows = Array.isArray(settingsRes?.data) ? settingsRes.data : [];
+      const rawEntries = Array.isArray(entriesRes?.data) ? entriesRes.data : [];
+      const rawExpenses = Array.isArray(expensesRes?.data) ? expensesRes.data : [];
 
-      // If no rows matched candidateIds, check if the user saved data under an earlier guest device_id in this database
-      if (settingsRows.length === 0 && rawEntries.length === 0 && rawExpenses.length === 0) {
-        const [allSettingsRes, allEntriesRes, allExpensesRes] = await Promise.all([
-          client.from('moto_settings').select('*').order('updated_at', { ascending: false }).limit(5),
-          client.from('moto_entries').select('*').limit(200),
-          client.from('moto_expenses').select('*').limit(200),
-        ]);
-        if (Array.isArray(allSettingsRes.data) && allSettingsRes.data.length > 0) {
-          settingsRows = allSettingsRes.data;
-        }
-        if (Array.isArray(allEntriesRes.data) && allEntriesRes.data.length > 0) {
-          rawEntries = allEntriesRes.data;
-        }
-        if (Array.isArray(allExpensesRes.data) && allExpensesRes.data.length > 0) {
-          rawExpenses = allExpensesRes.data;
-        }
-      }
-
-      // Pick the most recent / most populated settings row
       const settings =
         settingsRows.sort((a: any, b: any) => {
           const tA = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
@@ -978,7 +1010,9 @@ export async function fetchRemoteCloudData(
     } catch {
       // Ignore Supabase fetch error if other cloud sources succeeded
     }
-  }
+  })();
+
+  await Promise.allSettled([fetchFromEndpoints, fetchFromRelay, fetchFromSupabase]);
 
   return combineSnapshotsList(collectedSnapshots);
 }
@@ -1400,11 +1434,11 @@ export async function registerPilotAccount(params: {
     passwordHash: simpleHash(passwordClean),
   };
 
-  // Attempt cloud registration with Supabase Auth in background if online
+  // Attempt cloud registration with Supabase Auth in background (non-blocking)
   const client = getSupabaseClient();
   if (client && typeof navigator !== 'undefined' && navigator.onLine) {
-    try {
-      await client.auth.signUp({
+    void Promise.resolve(
+      client.auth.signUp({
         email: emailClean,
         password: passwordClean.length >= 6 ? passwordClean : passwordClean + '_cr26',
         options: {
@@ -1414,10 +1448,10 @@ export async function registerPilotAccount(params: {
             bike_model: bikeClean,
           },
         },
-      });
-    } catch {
+      })
+    ).catch(() => {
       // Fallback to Room local auth seamlessly
-    }
+    });
   }
 
   saveLocalAccounts([...accounts, newAccount]);
@@ -1448,7 +1482,8 @@ export async function loginPilotAccount(params: {
   const localIdx = accounts.findIndex(a => a.email.toLowerCase() === emailClean);
   const localMatch = localIdx >= 0 ? accounts[localIdx] : undefined;
 
-  if (localMatch) {
+  // 1. Fast Local Verification (Instant 0ms login when password matches local account)
+  if (localMatch && localMatch.passwordHash) {
     if (localMatch.passwordHash === hashRaw || localMatch.passwordHash === hashTrimmed) {
       const { passwordHash: _, ...publicProfile } = localMatch;
       saveActiveSessionUser(publicProfile);
@@ -1456,36 +1491,47 @@ export async function loginPilotAccount(params: {
     }
   }
 
-  // Check remote Supabase data (moto_settings / moto_entries / Supabase Auth) for cross-device or recovered login
-  const client = getSupabaseClient();
-  const isKnownRecoveredEmail = emailClean === 'swamijunior346.sj@gmail.com';
-
-  if (client && typeof navigator !== 'undefined' && navigator.onLine) {
+  // 2. Check Cloud Profile (with strict 1.8s timeout) for cross-device login or password updated on another device
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
     try {
       const deviceId = getUserDeviceId(emailClean);
-      const [settingsRes, entriesRes] = await Promise.all([
-        client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
-        client.from('moto_entries').select('id').eq('device_id', deviceId).limit(1),
+      const client = getSupabaseClient();
+
+      // Check local/remote server store and Supabase moto_settings in parallel with a fast 1.8s timeout
+      const [serverPullRes, supabaseSettingsRes] = await Promise.all([
+        fetchWithTimeout(
+          `/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(emailClean)}`,
+          {},
+          1500
+        )
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null),
+        client
+          ? withTimeout(
+              client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
+              1800,
+              { data: null } as any
+            )
+          : Promise.resolve({ data: null }),
       ]);
 
-      const remoteSettings = settingsRes.data;
-      const hasRemoteEntries = Array.isArray(entriesRes.data) && entriesRes.data.length > 0;
+      const serverPilotProfile = serverPullRes?.data?.pilotProfile || null;
+      const remoteSettings = supabaseSettingsRes?.data || null;
       const remoteMaint = remoteSettings?.maintenance || {};
-      const remotePilotProfile = remoteMaint.pilotProfile;
+      const remotePilotProfile = remoteMaint.pilotProfile || serverPilotProfile || null;
 
-      // Case A: Cloud profile has a stored passwordHash
+      // STRICT PASSWORD CHECK: If cloud profile has a stored passwordHash, verify it strictly
       if (remotePilotProfile && remotePilotProfile.passwordHash) {
         if (
           remotePilotProfile.passwordHash === hashRaw ||
-          remotePilotProfile.passwordHash === hashTrimmed ||
-          isKnownRecoveredEmail
+          remotePilotProfile.passwordHash === hashTrimmed
         ) {
           const syncedAccount: StoredLocalAccount = {
             id: remotePilotProfile.id || localMatch?.id || 'usr_' + Date.now(),
             name:
               remotePilotProfile.name ||
               localMatch?.name ||
-              (isKnownRecoveredEmail ? 'Swami Junior' : emailClean.split('@')[0]),
+              emailClean.split('@')[0],
             email: emailClean,
             phone: remotePilotProfile.phone || localMatch?.phone || '',
             bikeModel:
@@ -1495,7 +1541,7 @@ export async function loginPilotAccount(params: {
               'Minha Moto',
             createdAt: remotePilotProfile.createdAt || localMatch?.createdAt || new Date().toISOString(),
             isGuest: false,
-            passwordHash: hashTrimmed,
+            passwordHash: remotePilotProfile.passwordHash,
           };
           const updatedAccounts =
             localIdx >= 0
@@ -1505,131 +1551,78 @@ export async function loginPilotAccount(params: {
           const { passwordHash: _, ...publicProfile } = syncedAccount;
           saveActiveSessionUser(publicProfile);
           return { ok: true, user: publicProfile };
+        } else {
+          // Password does NOT match remotePilotProfile.passwordHash -> Reject immediately!
+          return {
+            ok: false,
+            error: 'Senha incorreta. Confira a senha digitada ou clique em "Redefinir Senha".',
+          };
         }
       }
 
-      // Case B: Cloud data exists in moto_settings / moto_entries (created before pilotProfile was synced)
-      // or account is swamijunior346.sj@gmail.com
-      if ((remoteSettings && !remotePilotProfile?.passwordHash) || hasRemoteEntries || isKnownRecoveredEmail) {
-        const defaultName = isKnownRecoveredEmail
-          ? 'Swami Junior'
-          : localMatch?.name ||
-            emailClean
-              .split('@')[0]
-              .replace(/[._-]+/g, ' ')
-              .replace(/\b\w/g, l => l.toUpperCase());
-
-        const recoveredAccount: StoredLocalAccount = {
-          id: localMatch?.id || 'usr_' + Date.now(),
-          name: remotePilotProfile?.name || defaultName,
-          email: emailClean,
-          phone: remotePilotProfile?.phone || localMatch?.phone || '',
-          bikeModel: remoteMaint.bikeModelName || localMatch?.bikeModel || 'Minha Moto',
-          createdAt: localMatch?.createdAt || new Date().toISOString(),
-          isGuest: false,
-          passwordHash: hashTrimmed,
+      // If local account exists and its passwordHash did NOT match, reject immediately (do not fall through)
+      if (localMatch && localMatch.passwordHash) {
+        return {
+          ok: false,
+          error: 'Senha incorreta. Confira a senha digitada ou clique em "Redefinir Senha".',
         };
-
-        const updatedAccounts =
-          localIdx >= 0
-            ? accounts.map((a, i) => (i === localIdx ? recoveredAccount : a))
-            : [...accounts, recoveredAccount];
-        saveLocalAccounts(updatedAccounts);
-
-        // Also persist pilotProfile back to moto_settings so future logins are synced
-        await client.from('moto_settings').upsert(
-          {
-            device_id: deviceId,
-            daily_goal: remoteSettings?.daily_goal ?? 150,
-            maintenance: {
-              ...remoteMaint,
-              pilotProfile: {
-                id: recoveredAccount.id,
-                name: recoveredAccount.name,
-                email: recoveredAccount.email,
-                phone: recoveredAccount.phone,
-                bikeModel: recoveredAccount.bikeModel,
-                createdAt: recoveredAccount.createdAt,
-                passwordHash: recoveredAccount.passwordHash,
-              },
-            },
-            app_overrides: remoteSettings?.app_overrides || {},
-            custom_apps: remoteSettings?.custom_apps || [],
-            custom_categories: remoteSettings?.custom_categories || [],
-            custom_maints: remoteSettings?.custom_maints || [],
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'device_id' }
-        );
-
-        const { passwordHash: _, ...publicProfile } = recoveredAccount;
-        saveActiveSessionUser(publicProfile);
-        return { ok: true, user: publicProfile };
       }
 
-      // Case C: Try Supabase Auth signInWithPassword fallback
-      const { data, error } = await client.auth.signInWithPassword({
-        email: emailClean,
-        password: trimmedPassword.length >= 6 ? trimmedPassword : trimmedPassword + '_cr26',
-      });
-      if (!error && data?.user) {
-        const meta = data.user.user_metadata || {};
-        const importedAccount: StoredLocalAccount = {
-          id: data.user.id || 'usr_' + Date.now(),
-          name: meta.full_name || emailClean.split('@')[0],
-          email: emailClean,
-          phone: meta.phone || '',
-          bikeModel: meta.bike_model || 'Minha Moto',
-          createdAt: data.user.created_at || new Date().toISOString(),
-          isGuest: false,
-          passwordHash: hashTrimmed,
+      // Only if no local/cloud passwordHash exists yet, check Supabase Auth with strict 1.8s timeout
+      if (client) {
+        const authRes = await withTimeout(
+          client.auth.signInWithPassword({
+            email: emailClean,
+            password: trimmedPassword.length >= 6 ? trimmedPassword : trimmedPassword + '_cr26',
+          }),
+          1800,
+          { data: { user: null }, error: { message: 'timeout' } } as any
+        );
+        if (!authRes.error && authRes.data?.user) {
+          const meta = authRes.data.user.user_metadata || {};
+          const importedAccount: StoredLocalAccount = {
+            id: authRes.data.user.id || 'usr_' + Date.now(),
+            name: meta.full_name || emailClean.split('@')[0],
+            email: emailClean,
+            phone: meta.phone || '',
+            bikeModel: meta.bike_model || 'Minha Moto',
+            createdAt: authRes.data.user.created_at || new Date().toISOString(),
+            isGuest: false,
+            passwordHash: hashTrimmed,
+          };
+          const updatedAccounts =
+            localIdx >= 0
+              ? accounts.map((a, i) => (i === localIdx ? importedAccount : a))
+              : [...accounts, importedAccount];
+          saveLocalAccounts(updatedAccounts);
+          const { passwordHash: _, ...publicProfile } = importedAccount;
+          saveActiveSessionUser(publicProfile);
+          return { ok: true, user: publicProfile };
+        }
+      }
+
+      if (remoteSettings || serverPullRes?.data?.state) {
+        return {
+          ok: false,
+          error:
+            'Senha incorreta ou ainda não configurada neste aparelho. Clique em "Redefinir Senha" para definir sua senha de acesso.',
         };
-        const updatedAccounts =
-          localIdx >= 0
-            ? accounts.map((a, i) => (i === localIdx ? importedAccount : a))
-            : [...accounts, importedAccount];
-        saveLocalAccounts(updatedAccounts);
-        const { passwordHash: _, ...publicProfile } = importedAccount;
-        saveActiveSessionUser(publicProfile);
-        return { ok: true, user: publicProfile };
       }
     } catch {
-      // Ignore network error and fallback to local check
+      // Ignore network error and fall through to strict rejection
     }
-  }
-
-  // Offline fallback for swamijunior346.sj@gmail.com if offline or Supabase unreachable
-  if (isKnownRecoveredEmail) {
-    const recoveredOffline: StoredLocalAccount = {
-      id: localMatch?.id || 'usr_swamijunior346',
-      name: localMatch?.name || 'Swami Junior',
-      email: emailClean,
-      phone: localMatch?.phone || '',
-      bikeModel: localMatch?.bikeModel || 'Minha Moto',
-      createdAt: localMatch?.createdAt || new Date().toISOString(),
-      isGuest: false,
-      passwordHash: hashTrimmed,
-    };
-    const updatedAccounts =
-      localIdx >= 0
-        ? accounts.map((a, i) => (i === localIdx ? recoveredOffline : a))
-        : [...accounts, recoveredOffline];
-    saveLocalAccounts(updatedAccounts);
-    const { passwordHash: _, ...publicProfile } = recoveredOffline;
-    saveActiveSessionUser(publicProfile);
-    return { ok: true, user: publicProfile };
   }
 
   if (localMatch) {
     return {
       ok: false,
-      error: 'Senha incorreta. Confira os dados ou clique em "Redefinir Senha" para criar uma nova senha.',
+      error: 'Senha incorreta. Confira a senha digitada ou clique em "Redefinir Senha".',
     };
   }
 
   return {
     ok: false,
-    error: 'Conta não encontrada para este e-mail. Crie sua conta na aba "Criar Conta" ou use "Redefinir Senha".',
+    error: 'Conta não encontrada ou senha inválida. Crie sua conta na aba "Criar Conta" ou use "Redefinir Senha".',
   };
 }
 
@@ -1682,60 +1675,65 @@ export async function resetPilotPassword(params: {
     saveLocalAccounts([...accounts, updatedAccount]);
   }
 
-  // Sync updated passwordHash to Supabase moto_settings if online
+  // Sync updated passwordHash to Supabase moto_settings in background (non-blocking)
   const client = getSupabaseClient();
   if (client && typeof navigator !== 'undefined' && navigator.onLine) {
-    try {
-      const deviceId = getUserDeviceId(emailClean);
-      const { data: existingSettings } = await client
-        .from('moto_settings')
-        .select('*')
-        .eq('device_id', deviceId)
-        .maybeSingle();
+    void (async () => {
+      try {
+        const deviceId = getUserDeviceId(emailClean);
+        const { data: existingSettings } = await withTimeout(
+          client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
+          2000,
+          { data: null } as any
+        );
 
-      const existingMaint = existingSettings?.maintenance || {};
-      const existingPilot = existingMaint.pilotProfile || {};
+        const existingMaint = existingSettings?.maintenance || {};
+        const existingPilot = existingMaint.pilotProfile || {};
 
-      if (existingPilot.name && idx === -1) {
-        updatedAccount.name = existingPilot.name;
-      }
-      if (existingMaint.bikeModelName && idx === -1) {
-        updatedAccount.bikeModel = existingMaint.bikeModelName;
-      }
+        if (existingPilot.name && idx === -1) {
+          updatedAccount.name = existingPilot.name;
+        }
+        if (existingMaint.bikeModelName && idx === -1) {
+          updatedAccount.bikeModel = existingMaint.bikeModelName;
+        }
 
-      // Re-save local account if enriched from remote settings
-      const latestAccounts = getLocalAccounts().map(a =>
-        a.email.toLowerCase() === emailClean ? updatedAccount : a
-      );
-      saveLocalAccounts(latestAccounts);
+        const latestAccounts = getLocalAccounts().map(a =>
+          a.email.toLowerCase() === emailClean ? updatedAccount : a
+        );
+        saveLocalAccounts(latestAccounts);
 
-      await client.from('moto_settings').upsert(
-        {
-          device_id: deviceId,
-          daily_goal: existingSettings?.daily_goal ?? 150,
-          maintenance: {
-            ...existingMaint,
-            pilotProfile: {
-              id: updatedAccount.id,
-              name: updatedAccount.name,
-              email: updatedAccount.email,
-              phone: updatedAccount.phone || existingPilot.phone || '',
-              bikeModel: updatedAccount.bikeModel || existingMaint.bikeModelName || 'Minha Moto',
-              createdAt: updatedAccount.createdAt,
-              passwordHash: newHash,
+        await withTimeout(
+          client.from('moto_settings').upsert(
+            {
+              device_id: deviceId,
+              daily_goal: existingSettings?.daily_goal ?? 150,
+              maintenance: {
+                ...existingMaint,
+                pilotProfile: {
+                  id: updatedAccount.id,
+                  name: updatedAccount.name,
+                  email: updatedAccount.email,
+                  phone: updatedAccount.phone || existingPilot.phone || '',
+                  bikeModel: updatedAccount.bikeModel || existingMaint.bikeModelName || 'Minha Moto',
+                  createdAt: updatedAccount.createdAt,
+                  passwordHash: newHash,
+                },
+              },
+              app_overrides: existingSettings?.app_overrides || {},
+              custom_apps: existingSettings?.custom_apps || [],
+              custom_categories: existingSettings?.custom_categories || [],
+              custom_maints: existingSettings?.custom_maints || [],
+              updated_at: new Date().toISOString(),
             },
-          },
-          app_overrides: existingSettings?.app_overrides || {},
-          custom_apps: existingSettings?.custom_apps || [],
-          custom_categories: existingSettings?.custom_categories || [],
-          custom_maints: existingSettings?.custom_maints || [],
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'device_id' }
-      );
-    } catch {
-      // Offline / local fallback already succeeded
-    }
+            { onConflict: 'device_id' }
+          ),
+          2000,
+          null as any
+        );
+      } catch {
+        // Offline / local fallback already succeeded
+      }
+    })();
   }
 
   // Update remembered credentials if this email is remembered
@@ -1753,6 +1751,7 @@ export async function resetPilotPassword(params: {
   }
 
   const { passwordHash: _, ...publicProfile } = updatedAccount;
+  saveActiveSessionUser(publicProfile);
   return {
     ok: true,
     user: publicProfile,

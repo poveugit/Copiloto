@@ -553,7 +553,7 @@ export default function App() {
     };
   }, [currentUser]);
 
-  // Helper to complete login and download user database from Cloud + Room
+  // Helper to complete login immediately and download user database from Cloud in background
   const completeUserSessionLogin = async (
     user: UserProfile,
     plainPassword: string,
@@ -573,19 +573,33 @@ export default function App() {
     }
     setSavedAccounts(getSavedLoginAccounts());
 
+    // Transition into the app immediately using local state
     const localUserDb = loadDatabaseForUser(user);
-    const downRes = await downloadCloudDataToLocal(localUserDb, user.email);
-    const finalState = downRes.foundRemoteData ? downRes.mergedState : localUserDb;
-
     setCurrentUser(user);
     setShowAuthScreen(false);
+    setIsAuthLoading(false);
     if (!shouldRemember) {
       setAuthPassword('');
     }
-    setDbState(finalState);
-    localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(finalState));
-    setLastSyncTime(downRes.timestamp);
-    setWorkManagerStatus(downRes.foundRemoteData ? downRes.status : 'Banco Local Carregado');
+    setDbState(localUserDb);
+    localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(localUserDb));
+    setWorkManagerStatus('Sincronizando nuvem em segundo plano...');
+
+    // Sync cloud data non-blockingly in the background
+    void downloadCloudDataToLocal(localUserDb, user.email)
+      .then((downRes) => {
+        if (downRes.foundRemoteData) {
+          setDbState(downRes.mergedState);
+          localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(downRes.mergedState));
+          setLastSyncTime(downRes.timestamp);
+          setWorkManagerStatus(downRes.status);
+        } else {
+          setWorkManagerStatus('Banco Local Carregado');
+        }
+      })
+      .catch(() => {
+        setWorkManagerStatus('Banco Local Carregado');
+      });
   };
 
   // 1-Click Quick Login for Remembered Account
@@ -605,13 +619,12 @@ export default function App() {
     if (!res.ok || !res.user) {
       setIsAuthLoading(false);
       setAuthError(
-        res.error || 'A senha desta conta foi alterada. Digite sua senha atual ou clique em Redefinir Senha.'
+        res.error || 'A senha desta conta foi alterada ou está incorreta. Digite sua senha atual ou clique em Redefinir Senha.'
       );
       return;
     }
 
     await completeUserSessionLogin(res.user, cred.password, true);
-    setIsAuthLoading(false);
   };
 
   // ================= LOGIN, CADASTRO & RECOVERY HANDLERS =================
@@ -628,12 +641,11 @@ export default function App() {
       });
       if (!res.ok || !res.user) {
         setIsAuthLoading(false);
-        setAuthError(res.error || 'Não foi possível entrar na conta.');
+        setAuthError(res.error || 'E-mail ou senha incorretos.');
         return;
       }
 
       await completeUserSessionLogin(res.user, authPassword, rememberMe);
-      setIsAuthLoading(false);
       return;
     }
 
@@ -681,8 +693,10 @@ export default function App() {
         setAuthPassword('');
       }
       setAuthConfirmPassword('');
-      await clearRemoteCloudData(res.user.email);
-      await persistAndEnqueueWorkManager(freshUserDb, res.user);
+      const createdUser = res.user;
+      void clearRemoteCloudData(createdUser.email).then(() =>
+        persistAndEnqueueWorkManager(freshUserDb, createdUser)
+      );
       return;
     }
 

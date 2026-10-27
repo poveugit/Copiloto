@@ -48,31 +48,41 @@ function isStatePopulated(state: any): boolean {
   return entriesLen > 0 || expensesLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
 }
 
+async function fetchServerWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 2000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function pushToGlobalCloudRelay(deviceId: string, record: any): Promise<boolean> {
   try {
     const topic = getRelayTopicForDevice(deviceId);
     const jsonStr = JSON.stringify(record);
     const gzBase64 = zlib.gzipSync(Buffer.from(jsonStr, 'utf-8')).toString('base64');
     if (gzBase64.length < 3600) {
-      const res = await fetch(`https://ntfy.sh/${topic}`, {
+      const res = await fetchServerWithTimeout(`https://ntfy.sh/${topic}`, {
         method: 'POST',
         body: JSON.stringify({ gz: gzBase64, updatedAt: record.updatedAt }),
-      });
+      }, 2200);
       return res.ok;
     } else {
-      const putRes = await fetch(`https://ntfy.sh/${topic}_blob`, {
+      const putRes = await fetchServerWithTimeout(`https://ntfy.sh/${topic}_blob`, {
         method: 'PUT',
         headers: { Filename: 'mochilinha_sync.json' },
         body: jsonStr,
-      });
+      }, 2500);
       if (putRes.ok) {
         const putJson: any = await putRes.json();
         const fileUrl = putJson?.attachment?.url;
         if (fileUrl) {
-          const ptrRes = await fetch(`https://ntfy.sh/${topic}`, {
+          const ptrRes = await fetchServerWithTimeout(`https://ntfy.sh/${topic}`, {
             method: 'POST',
             body: JSON.stringify({ fileUrl, updatedAt: record.updatedAt }),
-          });
+          }, 2000);
           return ptrRes.ok;
         }
       }
@@ -86,7 +96,7 @@ async function pushToGlobalCloudRelay(deviceId: string, record: any): Promise<bo
 async function pullFromGlobalCloudRelay(deviceId: string): Promise<any | null> {
   try {
     const topic = getRelayTopicForDevice(deviceId);
-    const res = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=all`);
+    const res = await fetchServerWithTimeout(`https://ntfy.sh/${topic}/json?poll=1&since=all`, {}, 1800);
     if (!res.ok) return null;
     const text = (await res.text()).trim();
     if (!text) return null;
@@ -101,7 +111,7 @@ async function pullFromGlobalCloudRelay(deviceId: string): Promise<any | null> {
           const parsed = JSON.parse(unzipped);
           if (parsed && parsed.state) return parsed;
         } else if (msg.fileUrl) {
-          const fileRes = await fetch(msg.fileUrl);
+          const fileRes = await fetchServerWithTimeout(msg.fileUrl, {}, 1800);
           if (fileRes.ok) {
             const parsed = await fileRes.json();
             if (parsed && parsed.state) return parsed;
