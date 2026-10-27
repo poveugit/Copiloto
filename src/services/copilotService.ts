@@ -169,3 +169,48 @@ export async function askCopilotAssistant(question: string, context: any): Promi
 
   return `Analisando seus dados locais (Room Offline-First):\n• Ganhos Hoje: R$ ${context.todayRev || 0} (${context.todayHours || 0}h)\n• Média: R$ ${context.revPerHour || '0.00'}/h\n• Custo Combustível: R$ ${costPerKm}/km\n\nFoque nos turnos de Almoço (11h-15h) e Jantar (18h-23h) e mantenha todos os cards da aba Moto atualizados para proteger seu lucro líquido!`;
 }
+
+export async function askFinancialAdvisorAI(prompt: string, financialContext: any): Promise<string> {
+  try {
+    const res = await fetch('/api/gemini/financial-advisor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, financialContext }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.fallback && data.answer) {
+        return data.answer;
+      }
+    }
+  } catch {
+    // Fallback to deterministic intelligent financial engine
+  }
+
+  const fc = financialContext || {};
+  const dailyGross = Number(fc.dailyGross || 150);
+  const dailyNet = Number(fc.dailyNetProfit || 0);
+  const monthlyNet = Number(fc.monthlyNetProfit || 0);
+  const dailyFuel = Number(fc.dailyFuelCost || 0);
+  const dailyMaint = Number(fc.dailyMaintReserve || 0);
+  const dailyFood = Number(fc.dailyFoodCost || 0);
+  const dailyDocs = Number(fc.dailyDocsReserve || 0);
+  const dailyEmerg = Number(fc.dailyEmergencyReserve || 0);
+  const margin = Number(fc.netMarginPct || 0);
+
+  return [
+    `📊 1. Diagnóstico do Seu Lucro Líquido Real (${margin}% de margem livre):`,
+    `• De cada R$ ${dailyGross.toFixed(2)} faturados no dia, sobram R$ ${dailyNet.toFixed(2)} limpos no seu bolso após descontar gasolina (R$ ${dailyFuel.toFixed(2)}), manutenção da moto (R$ ${dailyMaint.toFixed(2)}), alimentação (R$ ${dailyFood.toFixed(2)}), documentação IPVA/Licenciamento (R$ ${dailyDocs.toFixed(2)}) e reserva de emergência (R$ ${dailyEmerg.toFixed(2)}).`,
+    `• Projeção de ganho livre mensal (${fc.workDaysPerMonth || 24} dias): R$ ${monthlyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`,
+    ``,
+    `🛠️ 2. Blindagem da Moto & Manutenção Preventiva:`,
+    `• Seu custo de desgaste das peças é de R$ ${Number(fc.maintCostPerKm || 0).toFixed(2)} por KM. Separando R$ ${dailyMaint.toFixed(2)} por dia em uma conta separada, você terá o valor à vista quando precisar trocar óleo, pneu, relação ou pastilha.`,
+    ``,
+    `📄 3. Documentos em Dia (IPVA, Licenciamento e MEI/Seguro):`,
+    `• Guardando R$ ${dailyDocs.toFixed(2)} por dia trabalhado (ou R$ ${(dailyDocs * 6).toFixed(2)} por semana), você quita IPVA (R$ ${Number(fc.ipvaAnnual || 0).toFixed(0)}) e Licenciamento (R$ ${Number(fc.licensingAnnual || 0).toFixed(0)}) à vista e com desconto, sem comprometer o orçamento da família.`,
+    ``,
+    `🍱 4. Alimentação & Reserva de Emergência:`,
+    `• Seu orçamento diário de rua (Almoço R$ ${Number(fc.dailyLunch || 0).toFixed(2)} + Lanche R$ ${Number(fc.dailySnack || 0).toFixed(2)}) representa ${dailyGross > 0 ? Math.round((dailyFood / dailyGross) * 100) : 0}% do seu bruto. Guardando R$ ${dailyEmerg.toFixed(2)}/dia de emergência, em 6 meses você acumula R$ ${Math.round(dailyEmerg * (fc.workDaysPerMonth || 24) * 6).toLocaleString('pt-BR')} de proteção financeira.`,
+  ].join('\n');
+}
+

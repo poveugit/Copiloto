@@ -73,6 +73,38 @@ export interface ShiftDefinition {
   name: string;
 }
 
+export interface FinancialPlanningConfig {
+  workDaysPerMonth: number;
+  dailyLunchBudget: number;
+  dailySnackBudget: number;
+  emergencyReservePct: number;
+  maintenanceExtraBufferPct: number;
+  ipvaAnnual: number;
+  licensingAnnual: number;
+  insuranceOrMeiMonthly: number;
+  otherDocsAnnual: number;
+  docsTargetMonths: number;
+  revenueBaseMode: 'actual_or_goal' | 'daily_goal' | 'custom_daily';
+  customDailyGrossBase?: number;
+  customDailyKmBase?: number;
+}
+
+export const DEFAULT_FINANCIAL_PLAN: FinancialPlanningConfig = {
+  workDaysPerMonth: 24,
+  dailyLunchBudget: 22,
+  dailySnackBudget: 10,
+  emergencyReservePct: 10,
+  maintenanceExtraBufferPct: 5,
+  ipvaAnnual: 480,
+  licensingAnnual: 160,
+  insuranceOrMeiMonthly: 75,
+  otherDocsAnnual: 120,
+  docsTargetMonths: 12,
+  revenueBaseMode: 'actual_or_goal',
+  customDailyGrossBase: 180,
+  customDailyKmBase: 110,
+};
+
 export interface LocalRoomDatabaseState {
   entries: RideEntry[];
   expenses: ExpenseEntry[];
@@ -84,6 +116,7 @@ export interface LocalRoomDatabaseState {
   maintenanceNotificationsEnabled?: boolean;
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
+  financialPlan?: FinancialPlanningConfig;
   customApps: AppDefinition[];
   customCategories: CategoryDefinition[];
   appOverrides: Record<string, { name: string; icon: string }>;
@@ -91,6 +124,8 @@ export interface LocalRoomDatabaseState {
   shiftOverrides?: Record<string, { name: string }>;
   deletedShiftIds?: string[];
   deletedAppIds?: string[];
+  deletedEntryIds?: number[];
+  deletedExpenseIds?: number[];
   lastSyncedAt?: string;
 }
 
@@ -111,7 +146,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 
 export function getUserDeviceId(userEmail?: string | null): string {
   if (userEmail) {
-    return 'usr_' + userEmail.toLowerCase().replace(/[^a-z0-9_.-]/g, '_');
+    return 'usr_' + userEmail.trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '_');
   }
   let id = localStorage.getItem('moto-dash-device-id');
   if (!id) {
@@ -127,6 +162,7 @@ export async function runWorkManagerCloudSync(
   simulateOffline = false
 ): Promise<{ success: boolean; status: string; timestamp: string }> {
   const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const isoNow = new Date().toISOString();
 
   if (simulateOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
     return {
@@ -136,109 +172,191 @@ export async function runWorkManagerCloudSync(
     };
   }
 
-  const client = getSupabaseClient();
-  if (!client) {
-    return {
-      success: false,
-      status: 'Salvo no Room DB Local',
-      timestamp: nowStr,
-    };
+  const deviceId = getUserDeviceId(userEmail);
+  const localAcc = userEmail
+    ? getLocalAccounts().find(a => a.email.toLowerCase() === userEmail.trim().toLowerCase())
+    : undefined;
+
+  const pilotProfileObj = localAcc
+    ? {
+        id: localAcc.id,
+        name: localAcc.name,
+        email: localAcc.email,
+        phone: localAcc.phone || '',
+        bikeModel: localAcc.bikeModel || state.fuelConfig.bikeModelName || 'Minha Moto',
+        createdAt: localAcc.createdAt,
+        passwordHash: localAcc.passwordHash,
+      }
+    : undefined;
+
+  const cleanEntries = (state.entries || []).filter(e => !isLegacyDemoEntry(e));
+  const cleanExpenses = (state.expenses || []).filter(e => !isLegacyDemoExpense(e));
+
+  const cloudSnapshot = {
+    entries: cleanEntries,
+    expenses: cleanExpenses,
+    dailyGoal: state.dailyGoal,
+    weeklyGoal: state.weeklyGoal || 900,
+    customGoalTarget: state.customGoalTarget || 3000,
+    customGoalDays: state.customGoalDays || 20,
+    customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
+    maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
+    maintenanceItems: state.maintenanceItems || [],
+    fuelConfig: state.fuelConfig,
+    financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
+    customApps: state.customApps || [],
+    customCategories: state.customCategories || [],
+    appOverrides: state.appOverrides || {},
+    customShifts: state.customShifts || [],
+    shiftOverrides: state.shiftOverrides || {},
+    deletedShiftIds: state.deletedShiftIds || [],
+    deletedAppIds: state.deletedAppIds || [],
+    deletedEntryIds: state.deletedEntryIds || [],
+    deletedExpenseIds: state.deletedExpenseIds || [],
+    lastSyncedAt: state.lastSyncedAt || isoNow,
+  };
+
+  let serverSynced = false;
+  let supabaseSynced = false;
+
+  // 1. Push to Express Server Cloud Store (/api/cloud-sync/push)
+  try {
+    const serverRes = await fetch('/api/cloud-sync/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId,
+        state: cloudSnapshot,
+        pilotProfile: pilotProfileObj,
+      }),
+    });
+    if (serverRes.ok) {
+      serverSynced = true;
+    }
+  } catch {
+    // Ignore if server endpoint unreachable
   }
 
-  try {
-    const deviceId = getUserDeviceId(userEmail);
+  // 2. Push to Supabase (moto_settings + moto_entries + moto_expenses)
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const legacyMaintenance = {
+        lastOilChangeKm: state.maintenanceItems.find(m => m.id === 'oil')?.lastChangeKm ?? 0,
+        oilIntervalKm: state.maintenanceItems.find(m => m.id === 'oil')?.intervalKm ?? 1000,
+        lastTireChangeKm: state.maintenanceItems.find(m => m.id === 'tire')?.lastChangeKm ?? 0,
+        tireIntervalKm: state.maintenanceItems.find(m => m.id === 'tire')?.intervalKm ?? 10000,
+        lastChainChangeKm: state.maintenanceItems.find(m => m.id === 'chain')?.lastChangeKm ?? 0,
+        chainIntervalKm: state.maintenanceItems.find(m => m.id === 'chain')?.intervalKm ?? 8000,
+        lastBrakeChangeKm: state.maintenanceItems.find(m => m.id === 'brake')?.lastChangeKm ?? 0,
+        brakeIntervalKm: state.maintenanceItems.find(m => m.id === 'brake')?.intervalKm ?? 5000,
+        kmPerLiter: state.fuelConfig.kmPerLiter,
+        fuelPrice: state.fuelConfig.fuelPrice,
+        tankCapacityLiters: state.fuelConfig.tankCapacityLiters,
+        bikeModelName: state.fuelConfig.bikeModelName,
+        odometerBaseKm: state.fuelConfig.odometerBaseKm,
+        weeklyGoal: state.weeklyGoal || 900,
+        customGoalTarget: state.customGoalTarget || 3000,
+        customGoalDays: state.customGoalDays || 20,
+        customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
+        maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
+        financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
+        cloudSnapshot,
+        ...(pilotProfileObj ? { pilotProfile: pilotProfileObj } : {}),
+      };
 
-    const localAcc = userEmail
-      ? getLocalAccounts().find(a => a.email.toLowerCase() === userEmail.trim().toLowerCase())
-      : undefined;
+      // Try full upsert first; if optional columns don't exist in Supabase schema, fallback to core columns
+      const { error: fullUpsertErr } = await client.from('moto_settings').upsert(
+        {
+          device_id: deviceId,
+          daily_goal: state.dailyGoal,
+          maintenance: legacyMaintenance,
+          app_overrides: state.appOverrides || {},
+          custom_apps: state.customApps || [],
+          custom_categories: state.customCategories || [],
+          custom_maints: state.maintenanceItems || [],
+          updated_at: isoNow,
+        },
+        { onConflict: 'device_id' }
+      );
 
-    const legacyMaintenance = {
-      lastOilChangeKm: state.maintenanceItems.find(m => m.id === 'oil')?.lastChangeKm ?? 0,
-      oilIntervalKm: state.maintenanceItems.find(m => m.id === 'oil')?.intervalKm ?? 1000,
-      lastTireChangeKm: state.maintenanceItems.find(m => m.id === 'tire')?.lastChangeKm ?? 0,
-      tireIntervalKm: state.maintenanceItems.find(m => m.id === 'tire')?.intervalKm ?? 10000,
-      lastChainChangeKm: state.maintenanceItems.find(m => m.id === 'chain')?.lastChangeKm ?? 0,
-      chainIntervalKm: state.maintenanceItems.find(m => m.id === 'chain')?.intervalKm ?? 8000,
-      lastBrakeChangeKm: state.maintenanceItems.find(m => m.id === 'brake')?.lastChangeKm ?? 0,
-      brakeIntervalKm: state.maintenanceItems.find(m => m.id === 'brake')?.intervalKm ?? 5000,
-      kmPerLiter: state.fuelConfig.kmPerLiter,
-      fuelPrice: state.fuelConfig.fuelPrice,
-      tankCapacityLiters: state.fuelConfig.tankCapacityLiters,
-      bikeModelName: state.fuelConfig.bikeModelName,
-      odometerBaseKm: state.fuelConfig.odometerBaseKm,
-      weeklyGoal: state.weeklyGoal || 900,
-      customGoalTarget: state.customGoalTarget || 3000,
-      customGoalDays: state.customGoalDays || 20,
-      customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
-      maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
-      ...(localAcc
-        ? {
-            pilotProfile: {
-              id: localAcc.id,
-              name: localAcc.name,
-              email: localAcc.email,
-              phone: localAcc.phone || '',
-              bikeModel: localAcc.bikeModel || state.fuelConfig.bikeModelName || 'Minha Moto',
-              createdAt: localAcc.createdAt,
-              passwordHash: localAcc.passwordHash,
-            },
-          }
-        : {}),
-    };
+      if (fullUpsertErr) {
+        const { error: coreUpsertErr } = await client.from('moto_settings').upsert(
+          {
+            device_id: deviceId,
+            daily_goal: state.dailyGoal,
+            maintenance: legacyMaintenance,
+            updated_at: isoNow,
+          },
+          { onConflict: 'device_id' }
+        );
+        if (!coreUpsertErr) {
+          supabaseSynced = true;
+        }
+      } else {
+        supabaseSynced = true;
+      }
 
-    await client.from('moto_settings').upsert(
-      {
-        device_id: deviceId,
-        daily_goal: state.dailyGoal,
-        maintenance: legacyMaintenance,
-        app_overrides: state.appOverrides || {},
-        custom_apps: state.customApps || [],
-        custom_categories: state.customCategories || [],
-        custom_maints: state.maintenanceItems || [],
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'device_id' }
-    );
+      if (state.deletedEntryIds && state.deletedEntryIds.length > 0) {
+        await client
+          .from('moto_entries')
+          .delete()
+          .eq('device_id', deviceId)
+          .in('id', state.deletedEntryIds.map(String));
+      }
 
-    if (state.entries.length > 0) {
-      const entriesPayload = state.entries.map(e => ({
-        id: String(e.id),
-        device_id: deviceId,
-        entry_date: e.date,
-        app: e.app,
-        shift: e.shift || 'almoco',
-        km: Number(e.km || 0),
-        revenue: Number(e.revenue || 0),
-        hours: Number(e.hours || 0),
-        updated_at: new Date().toISOString(),
-      }));
-      await client.from('moto_entries').upsert(entriesPayload, { onConflict: 'id' });
+      if (state.deletedExpenseIds && state.deletedExpenseIds.length > 0) {
+        await client
+          .from('moto_expenses')
+          .delete()
+          .eq('device_id', deviceId)
+          .in('id', state.deletedExpenseIds.map(String));
+      }
+
+      if (cleanEntries.length > 0) {
+        const entriesPayload = cleanEntries.map(e => ({
+          id: String(e.id),
+          device_id: deviceId,
+          entry_date: e.date,
+          app: e.app,
+          shift: e.shift || 'almoco',
+          km: Number(e.km || 0),
+          revenue: Number(e.revenue || 0),
+          hours: Number(e.hours || 0),
+          updated_at: isoNow,
+        }));
+        await client.from('moto_entries').upsert(entriesPayload, { onConflict: 'id' });
+      }
+
+      if (cleanExpenses.length > 0) {
+        const expensesPayload = cleanExpenses.map(e => ({
+          id: String(e.id),
+          device_id: deviceId,
+          expense_date: e.date,
+          category: e.category,
+          amount: Number(e.amount || 0),
+          updated_at: isoNow,
+        }));
+        await client.from('moto_expenses').upsert(expensesPayload, { onConflict: 'id' });
+      }
+    } catch {
+      // Handled by serverSynced or Room local fallback
     }
+  }
 
-    if (state.expenses.length > 0) {
-      const expensesPayload = state.expenses.map(e => ({
-        id: String(e.id),
-        device_id: deviceId,
-        expense_date: e.date,
-        category: e.category,
-        amount: Number(e.amount || 0),
-        updated_at: new Date().toISOString(),
-      }));
-      await client.from('moto_expenses').upsert(expensesPayload, { onConflict: 'id' });
-    }
-
+  if (supabaseSynced || serverSynced) {
     return {
       success: true,
-      status: 'Sincronizado via WorkManager + Room',
-      timestamp: nowStr,
-    };
-  } catch {
-    return {
-      success: false,
-      status: 'Room Local Ativo (Retry agendado)',
+      status: 'Sincronizado na Nuvem + Room DB',
       timestamp: nowStr,
     };
   }
+
+  return {
+    success: false,
+    status: 'Room Local Ativo (Retry agendado)',
+    timestamp: nowStr,
+  };
 }
 
 export interface UserProfile {
@@ -392,96 +510,403 @@ export async function fetchRemoteCloudData(
   userEmail?: string | null
 ): Promise<Partial<LocalRoomDatabaseState> | null> {
   if (!userEmail) return null;
-  const client = getSupabaseClient();
-  if (!client || (typeof navigator !== 'undefined' && !navigator.onLine)) return null;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
 
+  const deviceId = getUserDeviceId(userEmail);
+  let serverSnap: Partial<LocalRoomDatabaseState> | null = null;
+
+  // 1. Fetch from Express Server Cloud Store (/api/cloud-sync/pull)
   try {
-    const deviceId = getUserDeviceId(userEmail);
-    const [settingsRes, entriesRes, expensesRes] = await Promise.all([
-      client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
-      client.from('moto_entries').select('*').eq('device_id', deviceId),
-      client.from('moto_expenses').select('*').eq('device_id', deviceId),
-    ]);
-
-    const settings = settingsRes.data;
-    const rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
-    const rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
-
-    // Filter out any legacy demo rows that might have been synced earlier
-    const demoEntryIdsToDelete: string[] = [];
-    const entries: RideEntry[] = [];
-    for (const row of rawEntries) {
-      const mapped: RideEntry = {
-        id: Number(row.id) || Date.now(),
-        date: row.entry_date,
-        app: row.app,
-        shift: row.shift || 'almoco',
-        km: Number(row.km || 0),
-        revenue: Number(row.revenue || 0),
-        hours: Number(row.hours || 0),
-      };
-      if (isLegacyDemoEntry(mapped)) {
-        demoEntryIdsToDelete.push(String(row.id));
-      } else {
-        entries.push(mapped);
+    const res = await fetch(`/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.ok && json?.data?.state) {
+        serverSnap = json.data.state;
       }
     }
-
-    const demoExpenseIdsToDelete: string[] = [];
-    const expenses: ExpenseEntry[] = [];
-    for (const row of rawExpenses) {
-      const mapped: ExpenseEntry = {
-        id: Number(row.id) || Date.now(),
-        date: row.expense_date,
-        category: row.category,
-        amount: Number(row.amount || 0),
-      };
-      if (isLegacyDemoExpense(mapped)) {
-        demoExpenseIdsToDelete.push(String(row.id));
-      } else {
-        expenses.push(mapped);
-      }
-    }
-
-    if (demoEntryIdsToDelete.length > 0) {
-      client.from('moto_entries').delete().eq('device_id', deviceId).in('id', demoEntryIdsToDelete).then(() => {});
-    }
-    if (demoExpenseIdsToDelete.length > 0) {
-      client.from('moto_expenses').delete().eq('device_id', deviceId).in('id', demoExpenseIdsToDelete).then(() => {});
-    }
-
-    if (!settings && entries.length === 0 && expenses.length === 0) {
-      return null;
-    }
-
-    const m = settings?.maintenance || {};
-    return {
-      entries,
-      expenses,
-      dailyGoal: Number(settings?.daily_goal) || 150,
-      weeklyGoal: Number(m.weeklyGoal) || 900,
-      customGoalTarget: Number(m.customGoalTarget) || 3000,
-      customGoalDays: Number(m.customGoalDays) || 20,
-      customGoalTitle: m.customGoalTitle || 'Meta Personalizada de Ganhos',
-      maintenanceNotificationsEnabled:
-        typeof m.maintenanceNotificationsEnabled === 'boolean' ? m.maintenanceNotificationsEnabled : true,
-      maintenanceItems: Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
-        ? settings.custom_maints
-        : undefined,
-      fuelConfig: {
-        kmPerLiter: Number(m.kmPerLiter) || 35,
-        fuelPrice: Number(m.fuelPrice) || 5.8,
-        tankCapacityLiters: Number(m.tankCapacityLiters) || 16.1,
-        bikeModelName: m.bikeModelName || 'Minha Moto',
-        odometerBaseKm: Number(m.odometerBaseKm) || 0,
-      },
-      customApps: Array.isArray(settings?.custom_apps) ? settings.custom_apps : [],
-      customCategories: Array.isArray(settings?.custom_categories) ? settings.custom_categories : [],
-      appOverrides: settings?.app_overrides || {},
-    };
   } catch {
+    // Ignore if server endpoint unavailable
+  }
+
+  // 2. Fetch from Supabase (moto_settings, moto_entries, moto_expenses)
+  const client = getSupabaseClient();
+  let supabaseSnap: Partial<LocalRoomDatabaseState> | null = null;
+
+  if (client) {
+    try {
+      const [settingsRes, entriesRes, expensesRes] = await Promise.all([
+        client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
+        client.from('moto_entries').select('*').eq('device_id', deviceId),
+        client.from('moto_expenses').select('*').eq('device_id', deviceId),
+      ]);
+
+      const settings = settingsRes.data;
+      const rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
+      const rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
+
+      const demoEntryIdsToDelete: string[] = [];
+      const tableEntries: RideEntry[] = [];
+      for (const row of rawEntries) {
+        const mapped: RideEntry = {
+          id: Number(row.id) || Date.now(),
+          date: row.entry_date,
+          app: row.app,
+          shift: row.shift || 'almoco',
+          km: Number(row.km || 0),
+          revenue: Number(row.revenue || 0),
+          hours: Number(row.hours || 0),
+        };
+        if (isLegacyDemoEntry(mapped)) {
+          demoEntryIdsToDelete.push(String(row.id));
+        } else {
+          tableEntries.push(mapped);
+        }
+      }
+
+      const demoExpenseIdsToDelete: string[] = [];
+      const tableExpenses: ExpenseEntry[] = [];
+      for (const row of rawExpenses) {
+        const mapped: ExpenseEntry = {
+          id: Number(row.id) || Date.now(),
+          date: row.expense_date,
+          category: row.category,
+          amount: Number(row.amount || 0),
+        };
+        if (isLegacyDemoExpense(mapped)) {
+          demoExpenseIdsToDelete.push(String(row.id));
+        } else {
+          tableExpenses.push(mapped);
+        }
+      }
+
+      if (demoEntryIdsToDelete.length > 0) {
+        client.from('moto_entries').delete().eq('device_id', deviceId).in('id', demoEntryIdsToDelete).then(() => {});
+      }
+      if (demoExpenseIdsToDelete.length > 0) {
+        client.from('moto_expenses').delete().eq('device_id', deviceId).in('id', demoExpenseIdsToDelete).then(() => {});
+      }
+
+      if (settings || tableEntries.length > 0 || tableExpenses.length > 0) {
+        const m = settings?.maintenance || {};
+        const snap = m.cloudSnapshot || {};
+
+        const deletedEntrySet = new Set<number>(
+          Array.isArray(snap.deletedEntryIds) ? snap.deletedEntryIds.map(Number) : []
+        );
+        const deletedExpenseSet = new Set<number>(
+          Array.isArray(snap.deletedExpenseIds) ? snap.deletedExpenseIds.map(Number) : []
+        );
+
+        // Merge entries from table and JSONB cloudSnapshot
+        const entryMap = new Map<number, RideEntry>();
+        for (const e of tableEntries) {
+          if (!deletedEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+            entryMap.set(Number(e.id), e);
+          }
+        }
+        if (Array.isArray(snap.entries)) {
+          for (const e of snap.entries) {
+            if (e && !deletedEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+              entryMap.set(Number(e.id), e);
+            }
+          }
+        }
+
+        // Merge expenses from table and JSONB cloudSnapshot
+        const expenseMap = new Map<number, ExpenseEntry>();
+        for (const ex of tableExpenses) {
+          if (!deletedExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+            expenseMap.set(Number(ex.id), ex);
+          }
+        }
+        if (Array.isArray(snap.expenses)) {
+          for (const ex of snap.expenses) {
+            if (ex && !deletedExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+              expenseMap.set(Number(ex.id), ex);
+            }
+          }
+        }
+
+        const maintItems =
+          Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
+            ? settings.custom_maints
+            : Array.isArray(snap.maintenanceItems) && snap.maintenanceItems.length > 0
+            ? snap.maintenanceItems
+            : undefined;
+
+        supabaseSnap = {
+          entries: Array.from(entryMap.values()),
+          expenses: Array.from(expenseMap.values()),
+          dailyGoal: Number(settings?.daily_goal || snap.dailyGoal) || 150,
+          weeklyGoal: Number(m.weeklyGoal || snap.weeklyGoal) || 900,
+          customGoalTarget: Number(m.customGoalTarget || snap.customGoalTarget) || 3000,
+          customGoalDays: Number(m.customGoalDays || snap.customGoalDays) || 20,
+          customGoalTitle: m.customGoalTitle || snap.customGoalTitle || 'Meta Personalizada de Ganhos',
+          maintenanceNotificationsEnabled:
+            typeof m.maintenanceNotificationsEnabled === 'boolean'
+              ? m.maintenanceNotificationsEnabled
+              : typeof snap.maintenanceNotificationsEnabled === 'boolean'
+              ? snap.maintenanceNotificationsEnabled
+              : true,
+          maintenanceItems: maintItems,
+          fuelConfig: snap.fuelConfig || {
+            kmPerLiter: Number(m.kmPerLiter) || 35,
+            fuelPrice: Number(m.fuelPrice) || 5.8,
+            tankCapacityLiters: Number(m.tankCapacityLiters) || 16.1,
+            bikeModelName: m.bikeModelName || 'Minha Moto',
+            odometerBaseKm: Number(m.odometerBaseKm) || 0,
+          },
+          financialPlan: m.financialPlan || snap.financialPlan || DEFAULT_FINANCIAL_PLAN,
+          customApps: Array.isArray(settings?.custom_apps)
+            ? settings.custom_apps
+            : Array.isArray(snap.customApps)
+            ? snap.customApps
+            : [],
+          customCategories: Array.isArray(settings?.custom_categories)
+            ? settings.custom_categories
+            : Array.isArray(snap.customCategories)
+            ? snap.customCategories
+            : [],
+          appOverrides: settings?.app_overrides || snap.appOverrides || {},
+          deletedEntryIds: Array.from(deletedEntrySet),
+          deletedExpenseIds: Array.from(deletedExpenseSet),
+          lastSyncedAt: snap.lastSyncedAt || settings?.updated_at,
+        };
+      }
+    } catch {
+      // Ignore Supabase fetch error if serverSnap succeeded
+    }
+  }
+
+  if (!supabaseSnap && !serverSnap) {
     return null;
   }
+
+  if (supabaseSnap && !serverSnap) return supabaseSnap;
+  if (!supabaseSnap && serverSnap) return serverSnap;
+
+  // Combine both remote sources (Supabase + Server Store)
+  const delEntries = new Set<number>([
+    ...(supabaseSnap?.deletedEntryIds || []),
+    ...(serverSnap?.deletedEntryIds || []),
+  ]);
+  const delExpenses = new Set<number>([
+    ...(supabaseSnap?.deletedExpenseIds || []),
+    ...(serverSnap?.deletedExpenseIds || []),
+  ]);
+
+  const combinedEntries = new Map<number, RideEntry>();
+  for (const e of [...(supabaseSnap?.entries || []), ...(serverSnap?.entries || [])]) {
+    if (e && !delEntries.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      combinedEntries.set(Number(e.id), e);
+    }
+  }
+
+  const combinedExpenses = new Map<number, ExpenseEntry>();
+  for (const ex of [...(supabaseSnap?.expenses || []), ...(serverSnap?.expenses || [])]) {
+    if (ex && !delExpenses.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      combinedExpenses.set(Number(ex.id), ex);
+    }
+  }
+
+  const supaTime = supabaseSnap?.lastSyncedAt ? new Date(supabaseSnap.lastSyncedAt).getTime() : 0;
+  const srvTime = serverSnap?.lastSyncedAt ? new Date(serverSnap.lastSyncedAt).getTime() : 0;
+  const newer = srvTime > supaTime ? serverSnap! : supabaseSnap!;
+  const older = srvTime > supaTime ? supabaseSnap! : serverSnap!;
+
+  return {
+    ...older,
+    ...newer,
+    entries: Array.from(combinedEntries.values()),
+    expenses: Array.from(combinedExpenses.values()),
+    deletedEntryIds: Array.from(delEntries),
+    deletedExpenseIds: Array.from(delExpenses),
+  };
+}
+
+export async function syncBidirectionalWithCloud(
+  localState: LocalRoomDatabaseState,
+  userEmail?: string | null,
+  simulateOffline = false,
+  preferRemoteScalars = false
+): Promise<{
+  success: boolean;
+  status: string;
+  timestamp: string;
+  mergedState: LocalRoomDatabaseState;
+  stats: { entries: number; expenses: number; maintCards: number };
+}> {
+  const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const isoNow = new Date().toISOString();
+
+  if (simulateOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+    return {
+      success: false,
+      status: 'Offline (Room SQLite Local · WorkManager em fila)',
+      timestamp: nowStr,
+      mergedState: localState,
+      stats: {
+        entries: localState.entries.length,
+        expenses: localState.expenses.length,
+        maintCards: localState.maintenanceItems.length,
+      },
+    };
+  }
+
+  const remote = await fetchRemoteCloudData(userEmail);
+
+  if (!remote) {
+    const stampedLocal: LocalRoomDatabaseState = {
+      ...localState,
+      lastSyncedAt: isoNow,
+    };
+    const pushRes = await runWorkManagerCloudSync(stampedLocal, userEmail, false);
+    return {
+      success: pushRes.success,
+      status: pushRes.status,
+      timestamp: pushRes.timestamp,
+      mergedState: stampedLocal,
+      stats: {
+        entries: stampedLocal.entries.length,
+        expenses: stampedLocal.expenses.length,
+        maintCards: stampedLocal.maintenanceItems.length,
+      },
+    };
+  }
+
+  // Merge deleted IDs
+  const deletedEntryIds = Array.from(
+    new Set<number>([...(localState.deletedEntryIds || []), ...(remote.deletedEntryIds || [])])
+  );
+  const deletedExpenseIds = Array.from(
+    new Set<number>([...(localState.deletedExpenseIds || []), ...(remote.deletedExpenseIds || [])])
+  );
+  const delEntrySet = new Set(deletedEntryIds);
+  const delExpenseSet = new Set(deletedExpenseIds);
+
+  // Merge Entries by ID (Remote first, then Local so local edits win unless deleted)
+  const entriesMap = new Map<number, RideEntry>();
+  for (const e of remote.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
+    }
+  }
+  for (const e of localState.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
+    }
+  }
+  const mergedEntries = Array.from(entriesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
+
+  // Merge Expenses by ID
+  const expensesMap = new Map<number, ExpenseEntry>();
+  for (const ex of remote.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  for (const ex of localState.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  const mergedExpenses = Array.from(expensesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
+
+  // Merge Maintenance Items by ID (comparing updatedAt and history length)
+  const maintMap = new Map<string, MaintenanceItem>();
+  for (const item of localState.maintenanceItems || []) {
+    maintMap.set(item.id, item);
+  }
+  if (Array.isArray(remote.maintenanceItems) && remote.maintenanceItems.length > 0) {
+    for (const rItem of remote.maintenanceItems) {
+      const lItem = maintMap.get(rItem.id);
+      if (!lItem) {
+        maintMap.set(rItem.id, rItem);
+      } else {
+        const rTime = rItem.updatedAt || 0;
+        const lTime = lItem.updatedAt || 0;
+        const rHistLen = (rItem.history || []).length;
+        const lHistLen = (lItem.history || []).length;
+        if (
+          preferRemoteScalars ||
+          rTime > lTime ||
+          rHistLen > lHistLen ||
+          (rTime === lTime && rItem.lastChangeKm > lItem.lastChangeKm)
+        ) {
+          // Merge history records from both
+          const histMap = new Map<string, MaintenanceHistoryRecord>();
+          for (const h of [...(lItem.history || []), ...(rItem.history || [])]) {
+            if (h && h.id) histMap.set(h.id, h);
+          }
+          maintMap.set(rItem.id, {
+            ...lItem,
+            ...rItem,
+            history: Array.from(histMap.values()).sort((a, b) => b.date.localeCompare(a.date)),
+          });
+        }
+      }
+    }
+  }
+  const mergedMaintItems = Array.from(maintMap.values());
+
+  const localTime = localState.lastSyncedAt ? new Date(localState.lastSyncedAt).getTime() : 0;
+  const remoteTime = remote.lastSyncedAt ? new Date(remote.lastSyncedAt).getTime() : 0;
+  const useRemoteConfig = preferRemoteScalars || (remoteTime > localTime && localTime === 0);
+
+  const mergedState: LocalRoomDatabaseState = {
+    ...localState,
+    entries: mergedEntries,
+    expenses: mergedExpenses,
+    maintenanceItems: mergedMaintItems,
+    dailyGoal: useRemoteConfig ? remote.dailyGoal ?? localState.dailyGoal : localState.dailyGoal,
+    weeklyGoal: useRemoteConfig ? remote.weeklyGoal ?? localState.weeklyGoal : localState.weeklyGoal,
+    customGoalTarget: useRemoteConfig
+      ? remote.customGoalTarget ?? localState.customGoalTarget
+      : localState.customGoalTarget,
+    customGoalDays: useRemoteConfig
+      ? remote.customGoalDays ?? localState.customGoalDays
+      : localState.customGoalDays,
+    customGoalTitle: useRemoteConfig
+      ? remote.customGoalTitle ?? localState.customGoalTitle
+      : localState.customGoalTitle,
+    maintenanceNotificationsEnabled: useRemoteConfig
+      ? remote.maintenanceNotificationsEnabled ?? localState.maintenanceNotificationsEnabled
+      : localState.maintenanceNotificationsEnabled,
+    fuelConfig: useRemoteConfig ? remote.fuelConfig ?? localState.fuelConfig : localState.fuelConfig,
+    financialPlan: useRemoteConfig
+      ? remote.financialPlan ?? localState.financialPlan ?? DEFAULT_FINANCIAL_PLAN
+      : localState.financialPlan ?? remote.financialPlan ?? DEFAULT_FINANCIAL_PLAN,
+    customApps:
+      (remote.customApps || []).length > (localState.customApps || []).length
+        ? remote.customApps!
+        : localState.customApps,
+    customCategories:
+      (remote.customCategories || []).length > (localState.customCategories || []).length
+        ? remote.customCategories!
+        : localState.customCategories,
+    appOverrides: { ...(remote.appOverrides || {}), ...(localState.appOverrides || {}) },
+    deletedEntryIds,
+    deletedExpenseIds,
+    lastSyncedAt: isoNow,
+  };
+
+  const pushRes = await runWorkManagerCloudSync(mergedState, userEmail, false);
+
+  return {
+    success: pushRes.success,
+    status: pushRes.status,
+    timestamp: pushRes.timestamp,
+    mergedState,
+    stats: {
+      entries: mergedState.entries.length,
+      expenses: mergedState.expenses.length,
+      maintCards: mergedState.maintenanceItems.length,
+    },
+  };
 }
 
 export async function registerPilotAccount(params: {

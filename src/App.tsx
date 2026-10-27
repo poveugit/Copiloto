@@ -61,6 +61,8 @@ import {
   MaintenanceItem,
   MaintenanceHistoryRecord,
   FuelDiagnosticsConfig,
+  FinancialPlanningConfig,
+  DEFAULT_FINANCIAL_PLAN,
   AppDefinition,
   CategoryDefinition,
   ShiftDefinition,
@@ -77,6 +79,7 @@ import {
   loginPilotAccount,
   resetPilotPassword,
   runWorkManagerCloudSync,
+  syncBidirectionalWithCloud,
   clearRemoteCloudData,
   fetchRemoteCloudData,
   isLegacyDemoEntry,
@@ -86,6 +89,7 @@ import {
   evaluateShiftWorthiness,
   evaluateBikeDiagnostics,
   askCopilotAssistant,
+  askFinancialAdvisorAI,
 } from './services/copilotService';
 import { KOTLIN_NATIVE_FILES } from './data/kotlinSourceCode';
 
@@ -203,6 +207,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
       ...DEFAULT_FUEL_CONFIG,
       bikeModelName: cleanBike,
     },
+    financialPlan: { ...DEFAULT_FINANCIAL_PLAN },
     customApps: [],
     customCategories: [],
     appOverrides: {},
@@ -210,6 +215,8 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     shiftOverrides: {},
     deletedShiftIds: [],
     deletedAppIds: [],
+    deletedEntryIds: [],
+    deletedExpenseIds: [],
   };
 }
 
@@ -255,6 +262,10 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
             : true,
         maintenanceItems: maintItems,
         fuelConfig: fuelCfg,
+        financialPlan: {
+          ...DEFAULT_FINANCIAL_PLAN,
+          ...(parsed.financialPlan || {}),
+        },
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
         appOverrides: parsed.appOverrides || {},
@@ -262,6 +273,9 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         shiftOverrides: parsed.shiftOverrides || {},
         deletedShiftIds: Array.isArray(parsed.deletedShiftIds) ? parsed.deletedShiftIds : [],
         deletedAppIds: Array.isArray(parsed.deletedAppIds) ? parsed.deletedAppIds : [],
+        deletedEntryIds: Array.isArray(parsed.deletedEntryIds) ? parsed.deletedEntryIds : [],
+        deletedExpenseIds: Array.isArray(parsed.deletedExpenseIds) ? parsed.deletedExpenseIds : [],
+        lastSyncedAt: parsed.lastSyncedAt,
       };
     }
   } catch {
@@ -297,7 +311,7 @@ export default function App() {
 
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [billingSubTab, setBillingSubTab] = useState<'ganhos' | 'gastos' | 'resumo' | 'produtividade'>('ganhos');
+  const [billingSubTab, setBillingSubTab] = useState<'planejamento' | 'ganhos' | 'gastos'>('planejamento');
   const [showKotlinInspector, setShowKotlinInspector] = useState<boolean>(false);
   const [selectedKotlinFileIndex, setSelectedKotlinFileIndex] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
@@ -330,6 +344,7 @@ export default function App() {
   );
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [syncFeedbackBanner, setSyncFeedbackBanner] = useState<string | null>(null);
 
   // Local Room DB State (isolated per user account, starting 100% clean with zero demo data)
   const [dbState, setDbState] = useState<LocalRoomDatabaseState>(() =>
@@ -340,9 +355,13 @@ export default function App() {
   const persistAndEnqueueWorkManager = useCallback(
     async (nextState: LocalRoomDatabaseState, overrideUser?: UserProfile | null) => {
       const targetUser = overrideUser !== undefined ? overrideUser : currentUser;
-      setDbState(nextState);
+      const stampedState: LocalRoomDatabaseState = {
+        ...nextState,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      setDbState(stampedState);
       const storageKey = getStorageKeyForUser(targetUser);
-      localStorage.setItem(storageKey, JSON.stringify(nextState));
+      localStorage.setItem(storageKey, JSON.stringify(stampedState));
 
       if (simulateOffline) {
         setPendingSyncCount(prev => prev + 1);
@@ -351,7 +370,7 @@ export default function App() {
       }
 
       setIsSyncing(true);
-      const res = await runWorkManagerCloudSync(nextState, targetUser?.email ?? null, simulateOffline);
+      const res = await runWorkManagerCloudSync(stampedState, targetUser?.email ?? null, simulateOffline);
       setIsSyncing(false);
       setLastSyncTime(res.timestamp);
       setWorkManagerStatus(res.status);
@@ -362,47 +381,110 @@ export default function App() {
     [simulateOffline, currentUser]
   );
 
-  // Hydrate from remote cloud on initial mount if user is logged in and local DB is empty
+  // Real Bidirectional Cloud Sync (Pull from Cloud + Merge with Local Room + Push to Cloud)
+  const handleManualCloudSync = useCallback(
+    async (showFeedback = true) => {
+      if (!currentUser || !currentUser.email) return;
+      if (simulateOffline) {
+        if (showFeedback) {
+          setSyncFeedbackBanner('⚠️ Desative o "Modo Offline Ativo" ao lado para sincronizar com o banco na nuvem.');
+        }
+        return;
+      }
+
+      setIsSyncing(true);
+      if (showFeedback) {
+        setSyncFeedbackBanner('Sincronizando dados locais com o banco na nuvem...');
+      }
+
+      const localSnap = loadDatabaseForUser(currentUser);
+      const isLocalBrandNew =
+        localSnap.entries.length === 0 &&
+        localSnap.expenses.length === 0 &&
+        !localSnap.lastSyncedAt;
+
+      const res = await syncBidirectionalWithCloud(
+        dbState,
+        currentUser.email,
+        simulateOffline,
+        isLocalBrandNew
+      );
+
+      setDbState(res.mergedState);
+      localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
+      setIsSyncing(false);
+      setLastSyncTime(res.timestamp);
+      setWorkManagerStatus(res.status);
+      if (res.success) {
+        setPendingSyncCount(0);
+      }
+
+      if (showFeedback) {
+        if (res.success) {
+          setSyncFeedbackBanner(
+            `✅ Sincronizado com o banco às ${res.timestamp}! (${res.stats.entries} corridas, ${res.stats.expenses} gastos e ${res.stats.maintCards} cards de manutenção sincronizados entre seus dispositivos)`
+          );
+        } else {
+          setSyncFeedbackBanner(
+            `⚠️ Salvo no Room Local às ${res.timestamp}. Verifique sua conexão para sincronizar na nuvem.`
+          );
+        }
+      }
+    },
+    [currentUser, dbState, simulateOffline]
+  );
+
+  // Bidirectional cloud sync on initial mount and when window regains focus (multi-device seamless sync)
   useEffect(() => {
     let active = true;
-    if (currentUser && !currentUser.isGuest && currentUser.email) {
-      fetchRemoteCloudData(currentUser.email).then(remote => {
-        if (!active || !remote) return;
-        setDbState(prev => {
-          if (prev.entries.length > 0 || prev.expenses.length > 0) return prev;
-          const merged: LocalRoomDatabaseState = {
-            ...prev,
-            entries: remote.entries ?? prev.entries,
-            expenses: remote.expenses ?? prev.expenses,
-            dailyGoal: remote.dailyGoal ?? prev.dailyGoal,
-            weeklyGoal: remote.weeklyGoal ?? prev.weeklyGoal,
-            customGoalTarget: remote.customGoalTarget ?? prev.customGoalTarget,
-            customGoalDays: remote.customGoalDays ?? prev.customGoalDays,
-            customGoalTitle: remote.customGoalTitle ?? prev.customGoalTitle,
-            maintenanceNotificationsEnabled:
-              remote.maintenanceNotificationsEnabled ?? prev.maintenanceNotificationsEnabled,
-            maintenanceItems: remote.maintenanceItems ?? prev.maintenanceItems,
-            fuelConfig: remote.fuelConfig ?? prev.fuelConfig,
-            customApps: remote.customApps ?? prev.customApps,
-            customCategories: remote.customCategories ?? prev.customCategories,
-            appOverrides: remote.appOverrides ?? prev.appOverrides,
-          };
-          localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(merged));
-          return merged;
-        });
-      });
-    }
+    const syncFromRemoteOnLoad = async () => {
+      if (!currentUser || currentUser.isGuest || !currentUser.email || simulateOffline) return;
+      const currentLocal = loadDatabaseForUser(currentUser);
+      const isLocalUntouched =
+        currentLocal.entries.length === 0 &&
+        currentLocal.expenses.length === 0 &&
+        !currentLocal.lastSyncedAt;
+
+      setIsSyncing(true);
+      const res = await syncBidirectionalWithCloud(
+        currentLocal,
+        currentUser.email,
+        false,
+        isLocalUntouched
+      );
+      if (!active) return;
+      setDbState(res.mergedState);
+      localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
+      setIsSyncing(false);
+      setLastSyncTime(res.timestamp);
+      setWorkManagerStatus(res.status);
+      if (res.success) {
+        setPendingSyncCount(0);
+      }
+    };
+
+    syncFromRemoteOnLoad();
+
+    const onWindowFocus = () => {
+      if (active && currentUser?.email && !simulateOffline) {
+        syncFromRemoteOnLoad();
+      }
+    };
+    window.addEventListener('focus', onWindowFocus);
     return () => {
       active = false;
+      window.removeEventListener('focus', onWindowFocus);
     };
-  }, [currentUser]);
+  }, [currentUser, simulateOffline]);
 
-  // Automatic periodic WorkManager tick every 30s when online
+  // Automatic periodic WorkManager bidirectional tick every 30s when online
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (!simulateOffline && currentUser) {
+      if (!simulateOffline && currentUser && currentUser.email) {
         setIsSyncing(true);
-        const res = await runWorkManagerCloudSync(dbState, currentUser?.email ?? null, false);
+        const res = await syncBidirectionalWithCloud(dbState, currentUser.email, false, false);
+        setDbState(res.mergedState);
+        localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
         setIsSyncing(false);
         setLastSyncTime(res.timestamp);
         setWorkManagerStatus(res.status);
@@ -412,7 +494,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [dbState, simulateOffline, currentUser]);
 
-  // Helper to complete login and hydrate user database from Room or Supabase Cloud
+  // Helper to complete login and hydrate/merge user database from Room + Supabase/Server Cloud
   const completeUserSessionLogin = async (
     user: UserProfile,
     plainPassword: string,
@@ -432,36 +514,28 @@ export default function App() {
     }
     setSavedAccounts(getSavedLoginAccounts());
 
-    let userDb = loadDatabaseForUser(user);
-    if (userDb.entries.length === 0 && userDb.expenses.length === 0) {
-      const remote = await fetchRemoteCloudData(user.email);
-      if (remote) {
-        userDb = {
-          ...userDb,
-          entries: remote.entries ?? [],
-          expenses: remote.expenses ?? [],
-          dailyGoal: remote.dailyGoal ?? userDb.dailyGoal,
-          weeklyGoal: remote.weeklyGoal ?? userDb.weeklyGoal,
-          customGoalTarget: remote.customGoalTarget ?? userDb.customGoalTarget,
-          customGoalDays: remote.customGoalDays ?? userDb.customGoalDays,
-          customGoalTitle: remote.customGoalTitle ?? userDb.customGoalTitle,
-          maintenanceNotificationsEnabled:
-            remote.maintenanceNotificationsEnabled ?? userDb.maintenanceNotificationsEnabled,
-          maintenanceItems: remote.maintenanceItems ?? userDb.maintenanceItems,
-          fuelConfig: remote.fuelConfig ?? userDb.fuelConfig,
-          customApps: remote.customApps ?? [],
-          customCategories: remote.customCategories ?? [],
-          appOverrides: remote.appOverrides ?? {},
-        };
-      }
-    }
+    const localUserDb = loadDatabaseForUser(user);
+    const isLocalUntouched =
+      localUserDb.entries.length === 0 &&
+      localUserDb.expenses.length === 0 &&
+      !localUserDb.lastSyncedAt;
+
+    const syncRes = await syncBidirectionalWithCloud(
+      localUserDb,
+      user.email,
+      simulateOffline,
+      isLocalUntouched
+    );
 
     setCurrentUser(user);
     setShowAuthScreen(false);
     if (!shouldRemember) {
       setAuthPassword('');
     }
-    await persistAndEnqueueWorkManager(userDb, user);
+    setDbState(syncRes.mergedState);
+    localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(syncRes.mergedState));
+    setLastSyncTime(syncRes.timestamp);
+    setWorkManagerStatus(syncRes.status);
   };
 
   // 1-Click Quick Login for Remembered Account
@@ -2228,6 +2302,249 @@ export default function App() {
       .filter(n => n.isOverdue || n.isWarning);
   }, [dbState.maintenanceItems, totals.totalKm]);
 
+  // ================= AI FINANCIAL INTELLIGENCE & MOTOBOY RESERVES ENGINE =================
+  const finPlan: FinancialPlanningConfig = useMemo(
+    () => ({
+      ...DEFAULT_FINANCIAL_PLAN,
+      ...(dbState.financialPlan || {}),
+    }),
+    [dbState.financialPlan]
+  );
+
+  const updateFinancialPlan = (patch: Partial<FinancialPlanningConfig>) => {
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      financialPlan: {
+        ...finPlan,
+        ...patch,
+      },
+    });
+  };
+
+  const financialIntelligence = useMemo(() => {
+    const workDaysPerMonth = Math.max(1, Math.min(31, Number(finPlan.workDaysPerMonth) || 24));
+    const hasLoggedDays = progressAnalytics.uniqueWorkDays > 0;
+
+    let dailyGross = Number(dbState.dailyGoal) || 150;
+    let dailyKm = Math.max(20, Math.round(dailyGross / 1.65));
+    let baseLabel = 'Meta Diária Configurada';
+
+    if (finPlan.revenueBaseMode === 'actual_or_goal') {
+      if (hasLoggedDays && progressAnalytics.avgRevPerDay > 0) {
+        dailyGross = progressAnalytics.avgRevPerDay;
+        dailyKm = progressAnalytics.avgKmPerDay > 0 ? progressAnalytics.avgKmPerDay : Math.max(30, Math.round(dailyGross / 1.65));
+        baseLabel = `Sua Média Real (${progressAnalytics.uniqueWorkDays} dias registrados)`;
+      } else {
+        dailyGross = Number(dbState.dailyGoal) || 150;
+        dailyKm = Math.max(30, Math.round(dailyGross / 1.65));
+        baseLabel = 'Sua Meta Diária (Sem corridas salvas ainda)';
+      }
+    } else if (finPlan.revenueBaseMode === 'daily_goal') {
+      dailyGross = Number(dbState.dailyGoal) || 150;
+      dailyKm = progressAnalytics.avgKmPerDay > 0 ? progressAnalytics.avgKmPerDay : Math.max(30, Math.round(dailyGross / 1.65));
+      baseLabel = 'Meta Diária do Painel';
+    } else if (finPlan.revenueBaseMode === 'custom_daily') {
+      dailyGross = Math.max(20, Number(finPlan.customDailyGrossBase) || Number(dbState.dailyGoal) || 180);
+      dailyKm = Math.max(10, Number(finPlan.customDailyKmBase) || 110);
+      baseLabel = 'Simulação Personalizada';
+    }
+
+    const monthlyGross = dailyGross * workDaysPerMonth;
+    const weeklyGross = dailyGross * Math.min(7, Math.round(workDaysPerMonth / 4));
+
+    // 1. Combustível Diário
+    const kmPerLiter = Math.max(5, Number(dbState.fuelConfig.kmPerLiter) || 35);
+    const fuelPrice = Math.max(1, Number(dbState.fuelConfig.fuelPrice) || 5.8);
+    const fuelCostPerKm = fuelPrice / kmPerLiter;
+    const dailyFuelCost = dailyKm * fuelCostPerKm;
+    const monthlyFuelCost = dailyFuelCost * workDaysPerMonth;
+    const fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
+
+    // 2. Reserva Diária para Manutenção da Moto (Desgaste real por KM de cada peça + margem preventiva)
+    const maintBreakdown = dbState.maintenanceItems.map(item => {
+      const interval = Math.max(100, Number(item.intervalKm) || 1000);
+      const cost = Math.max(0, Number(item.costEstimate) || 0);
+      const costPerKm = cost / interval;
+      const dailyReserve = costPerKm * dailyKm;
+      const monthlyReserve = dailyReserve * workDaysPerMonth;
+      return {
+        id: item.id,
+        name: item.name,
+        icon: item.icon,
+        intervalKm: interval,
+        costEstimate: cost,
+        costPerKm,
+        dailyReserve,
+        monthlyReserve,
+      };
+    });
+
+    const baseMaintCostPerKm = maintBreakdown.reduce((s, m) => s + m.costPerKm, 0);
+    const baseDailyMaintWear = baseMaintCostPerKm * dailyKm;
+    const extraBufferPct = Math.max(0, Math.min(25, Number(finPlan.maintenanceExtraBufferPct) ?? 3));
+    const extraDailyMaintBuffer = dailyGross * (extraBufferPct / 100);
+    const dailyMaintReserve = baseDailyMaintWear + extraDailyMaintBuffer;
+    const monthlyMaintReserve = dailyMaintReserve * workDaysPerMonth;
+    const maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
+
+    // 3. Alimentação na Rua (Almoço + Lanche / Água / Café)
+    const dailyLunch = Math.max(0, Number(finPlan.dailyLunchBudget) ?? 22);
+    const dailySnack = Math.max(0, Number(finPlan.dailySnackBudget) ?? 10);
+    const dailyFoodCost = dailyLunch + dailySnack;
+    const monthlyFoodCost = dailyFoodCost * workDaysPerMonth;
+    const foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
+
+    // 4. Documentação da Moto (IPVA, Licenciamento, MEI/Seguro, CNH/Taxas)
+    const ipvaAnnual = Math.max(0, Number(finPlan.ipvaAnnual) ?? 480);
+    const licensingAnnual = Math.max(0, Number(finPlan.licensingAnnual) ?? 160);
+    const otherDocsAnnual = Math.max(0, Number(finPlan.otherDocsAnnual) ?? 120);
+    const insuranceMonthly = Math.max(0, Number(finPlan.insuranceOrMeiMonthly) ?? 75);
+    const docsTargetMonths = Math.max(1, Math.min(12, Number(finPlan.docsTargetMonths) || 12));
+
+    const annualStateDocsTotal = ipvaAnnual + licensingAnnual + otherDocsAnnual;
+    const workDaysUntilDocsDue = Math.max(1, docsTargetMonths * workDaysPerMonth);
+
+    const dailyIpvaReserve = ipvaAnnual / workDaysUntilDocsDue;
+    const dailyLicensingReserve = licensingAnnual / workDaysUntilDocsDue;
+    const dailyOtherDocsReserve = otherDocsAnnual / workDaysUntilDocsDue;
+    const dailyMeiInsuranceReserve = insuranceMonthly / workDaysPerMonth;
+
+    const dailyDocsReserve =
+      dailyIpvaReserve + dailyLicensingReserve + dailyOtherDocsReserve + dailyMeiInsuranceReserve;
+    const weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+    const monthlyDocsReserve = dailyDocsReserve * workDaysPerMonth;
+    const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
+    const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
+
+    // 5. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
+    const emergencyPct = Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) ?? 10));
+    const dailyEmergencyReserve = dailyGross * (emergencyPct / 100);
+    const monthlyEmergencyReserve = dailyEmergencyReserve * workDaysPerMonth;
+    const emergencyIn6Months = monthlyEmergencyReserve * 6;
+    const emergencyIn12Months = monthlyEmergencyReserve * 12;
+
+    // 6. Lucro Líquido Real (O Que Sobra de Fato no Bolso do Motoboy)
+    const totalDailyCostsAndReserves =
+      dailyFuelCost + dailyMaintReserve + dailyFoodCost + dailyDocsReserve + dailyEmergencyReserve;
+    const dailyNetProfit = dailyGross - totalDailyCostsAndReserves;
+    const weeklyNetProfit = dailyNetProfit * Math.min(7, Math.round(workDaysPerMonth / 4));
+    const monthlyNetProfit = dailyNetProfit * workDaysPerMonth;
+    const netMarginPct = dailyGross > 0 ? Math.round((dailyNetProfit / dailyGross) * 100) : 0;
+
+    const avgDailyHours = progressAnalytics.avgHoursPerDay > 0 ? progressAnalytics.avgHoursPerDay : 8;
+    const realNetPerHour = avgDailyHours > 0 ? dailyNetProfit / avgDailyHours : 0;
+    const realNetPerKm = dailyKm > 0 ? dailyNetProfit / dailyKm : 0;
+
+    // Quando o usuário também tem gastos reais lançados no histórico, comparativo real
+    const totalRealLoggedRev = totals.totalRevenue;
+    const totalRealLoggedExp = totals.totalExpense;
+    const totalRealLoggedProfit = totals.lucro;
+
+    return {
+      workDaysPerMonth,
+      baseLabel,
+      dailyGross,
+      weeklyGross,
+      monthlyGross,
+      dailyKm,
+      kmPerLiter,
+      fuelPrice,
+      fuelCostPerKm,
+      dailyFuelCost,
+      monthlyFuelCost,
+      fuelPctOfGross,
+      maintBreakdown,
+      baseMaintCostPerKm,
+      baseDailyMaintWear,
+      extraBufferPct,
+      extraDailyMaintBuffer,
+      dailyMaintReserve,
+      monthlyMaintReserve,
+      maintPctOfGross,
+      dailyLunch,
+      dailySnack,
+      dailyFoodCost,
+      monthlyFoodCost,
+      foodPctOfGross,
+      ipvaAnnual,
+      licensingAnnual,
+      otherDocsAnnual,
+      insuranceMonthly,
+      docsTargetMonths,
+      annualStateDocsTotal,
+      totalAnnualDocsWithInsurance,
+      dailyIpvaReserve,
+      dailyLicensingReserve,
+      dailyOtherDocsReserve,
+      dailyMeiInsuranceReserve,
+      dailyDocsReserve,
+      weeklyDocsReserve,
+      monthlyDocsReserve,
+      docsPctOfGross,
+      emergencyPct,
+      dailyEmergencyReserve,
+      monthlyEmergencyReserve,
+      emergencyIn6Months,
+      emergencyIn12Months,
+      totalDailyCostsAndReserves,
+      dailyNetProfit,
+      weeklyNetProfit,
+      monthlyNetProfit,
+      netMarginPct,
+      avgDailyHours,
+      realNetPerHour,
+      realNetPerKm,
+      totalRealLoggedRev,
+      totalRealLoggedExp,
+      totalRealLoggedProfit,
+    };
+  }, [dbState, finPlan, progressAnalytics, totals]);
+
+  const [aiFinancialAdvice, setAiFinancialAdvice] = useState<string>('');
+  const [isAiFinancialLoading, setIsAiFinancialLoading] = useState<boolean>(false);
+  const [aiFinancialPrompt, setAiFinancialPrompt] = useState<string>('');
+
+  const handleAskFinancialAI = useCallback(
+    async (customPrompt?: string) => {
+      const promptToUse = (customPrompt ?? aiFinancialPrompt).trim();
+      setIsAiFinancialLoading(true);
+      const answer = await askFinancialAdvisorAI(promptToUse, {
+        bikeModel: dbState.fuelConfig.bikeModelName,
+        kmPerLiter: financialIntelligence.kmPerLiter,
+        fuelPrice: financialIntelligence.fuelPrice,
+        workDaysPerMonth: financialIntelligence.workDaysPerMonth,
+        dailyGross: financialIntelligence.dailyGross,
+        monthlyGross: financialIntelligence.monthlyGross,
+        dailyKm: financialIntelligence.dailyKm,
+        dailyFuelCost: financialIntelligence.dailyFuelCost,
+        dailyMaintReserve: financialIntelligence.dailyMaintReserve,
+        maintCostPerKm: financialIntelligence.baseMaintCostPerKm,
+        dailyLunch: financialIntelligence.dailyLunch,
+        dailySnack: financialIntelligence.dailySnack,
+        dailyFoodCost: financialIntelligence.dailyFoodCost,
+        ipvaAnnual: financialIntelligence.ipvaAnnual,
+        licensingAnnual: financialIntelligence.licensingAnnual,
+        insuranceMonthly: financialIntelligence.insuranceMonthly,
+        dailyDocsReserve: financialIntelligence.dailyDocsReserve,
+        emergencyPct: financialIntelligence.emergencyPct,
+        dailyEmergencyReserve: financialIntelligence.dailyEmergencyReserve,
+        dailyNetProfit: financialIntelligence.dailyNetProfit,
+        monthlyNetProfit: financialIntelligence.monthlyNetProfit,
+        netMarginPct: financialIntelligence.netMarginPct,
+      });
+      setAiFinancialAdvice(answer);
+      setIsAiFinancialLoading(false);
+    },
+    [aiFinancialPrompt, dbState.fuelConfig.bikeModelName, financialIntelligence]
+  );
+
+  // Auto-generate initial AI financial diagnosis when opening Financeiro tab if empty
+  useEffect(() => {
+    if (activeTab === 'billing' && !aiFinancialAdvice && !isAiFinancialLoading) {
+      handleAskFinancialAI('Faça um diagnóstico completo das minhas reservas diárias, gastos com almoço/lanche, documentação (IPVA e Licenciamento) e meu lucro líquido real.');
+    }
+  }, [activeTab, aiFinancialAdvice, isAiFinancialLoading, handleAskFinancialAI]);
+
   // ================= DEDICATED LOGIN & CADASTRO SCREEN =================
   if (showAuthScreen || !currentUser) {
     return (
@@ -3755,44 +4072,6 @@ export default function App() {
 
             {/* ALL MAINTENANCE CARDS GRID (100% EDITABLE INLINE) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
-              {/* SELETOR DE ORDENAÇÃO DOS CARDS DE MANUTENÇÃO (Scrollable chips on mobile, no layout squish) */}
-              <div
-                className={`col-span-1 md:col-span-2 rounded-xl sm:rounded-2xl px-3.5 sm:px-5 py-3 sm:py-3.5 ${surfaceCard} flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3`}
-              >
-                <div className="flex items-center gap-2">
-                  <SlidersHorizontal className="w-4 h-4 text-[#FF6A1A] shrink-0" />
-                  <span className="text-xs sm:text-sm font-extrabold whitespace-nowrap">
-                    Ordenar manutenções por:
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 overflow-x-auto max-w-full no-scrollbar py-0.5">
-                  {(
-                    [
-                      { id: 'urgency', label: 'Mais urgente (Desgaste)' },
-                      { id: 'name', label: 'Nome' },
-                      { id: 'updatedAt', label: 'Data de atualização' },
-                    ] as const
-                  ).map(opt => {
-                    const active = maintSortBy === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setMaintSortBy(opt.id)}
-                        className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                          active
-                            ? 'bg-[#FF6A1A] text-black shadow-xs'
-                            : `${surfaceSubtle} hover:border-[#FF6A1A]/60`
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
               {sortedMaintenanceItems.map(item => {
                 const isEditingThis = editingMaintId === item.id && !isAddingNewMaint && maintDraft !== null;
                 const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
@@ -4430,17 +4709,24 @@ export default function App() {
           </div>
         )}
 
-        {/* ================= ABA 3: FINANCEIRO ================= */}
+        {/* ================= ABA 3: FINANCEIRO (INTELIGÊNCIA FINANCEIRA COM IA, RESERVAS & DOCUMENTAÇÃO) ================= */}
         {activeTab === 'billing' && (
           <div className="flex flex-col gap-4 sm:gap-6">
+            {/* TOP HEADER + SUB-NAVIGATION (Sem Resumo e Sem Produtividade) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h1 className="text-xl sm:text-2xl font-black">Relatório Financeiro & Produtividade</h1>
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
+                  Gestão Inteligente para Motoboys · IA Copilot
+                </span>
+                <h1 className="text-xl sm:text-2xl font-black mt-0.5">
+                  Central de Finanças, Reservas Diárias & Lucro Real
+                </h1>
+              </div>
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
-                  { id: 'ganhos', label: 'Ganhos' },
-                  { id: 'gastos', label: 'Gastos' },
-                  { id: 'resumo', label: 'Resumo' },
-                  { id: 'produtividade', label: 'Produtividade' },
+                  { id: 'planejamento', label: 'Planejamento & IA' },
+                  { id: 'ganhos', label: 'Ganhos por App' },
+                  { id: 'gastos', label: 'Gastos por Categoria' },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -4454,6 +4740,697 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            {billingSubTab === 'planejamento' && (
+              <>
+                {/* SELETOR DE BASE DE CÁLCULO + PARÂMETROS RÁPIDOS DE DIAS TRABALHADOS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/50">
+                    <div>
+                      <h2 className="text-sm sm:text-base font-black flex items-center gap-2">
+                        <span>Base do Cálculo Financeiro Diário</span>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                          {financialIntelligence.baseLabel}
+                        </span>
+                      </h2>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Escolha se deseja calcular suas reservas diárias pela sua média real de corridas, pela sua meta diária ou por um valor simulado
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[
+                        { id: 'actual_or_goal', label: 'Média Real / Automático' },
+                        { id: 'daily_goal', label: `Meta Diária (${fmtMoney(dbState.dailyGoal)})` },
+                        { id: 'custom_daily', label: 'Simular Valor' },
+                      ].map(mode => (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          onClick={() => updateFinancialPlan({ revenueBaseMode: mode.id as any })}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                            finPlan.revenueBaseMode === mode.id
+                              ? 'bg-[#FF6A1A] text-black'
+                              : `${surfaceSubtle} hover:border-[#FF6A1A]`
+                          }`}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-4">
+                    <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                        Faturamento Bruto Base / Dia (R$)
+                      </label>
+                      {finPlan.revenueBaseMode === 'custom_daily' ? (
+                        <input
+                          type="number"
+                          min="20"
+                          step="10"
+                          value={finPlan.customDailyGrossBase ?? 180}
+                          onChange={e =>
+                            updateFinancialPlan({ customDailyGrossBase: Math.max(20, Number(e.target.value) || 0) })
+                          }
+                          className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      ) : (
+                        <div className="text-lg sm:text-xl font-black text-[#FF6A1A] tabular-nums">
+                          {fmtCurrencyExact(financialIntelligence.dailyGross)}
+                        </div>
+                      )}
+                      <div className={`text-[10px] mt-1 ${mutedText}`}>
+                        Bruto mensal est.: {fmtMoney(financialIntelligence.monthlyGross)}
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                        Rodagem Média / Dia (KM)
+                      </label>
+                      {finPlan.revenueBaseMode === 'custom_daily' ? (
+                        <input
+                          type="number"
+                          min="10"
+                          step="5"
+                          value={finPlan.customDailyKmBase ?? 110}
+                          onChange={e =>
+                            updateFinancialPlan({ customDailyKmBase: Math.max(10, Number(e.target.value) || 0) })
+                          }
+                          className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      ) : (
+                        <div className="text-lg sm:text-xl font-black tabular-nums">
+                          {Math.round(financialIntelligence.dailyKm).toLocaleString('pt-BR')} km/dia
+                        </div>
+                      )}
+                      <div className={`text-[10px] mt-1 ${mutedText}`}>
+                        Consumo: {financialIntelligence.kmPerLiter} km/L · Gasolina R$ {financialIntelligence.fuelPrice.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                        Dias Trabalhados por Mês
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={finPlan.workDaysPerMonth}
+                          onChange={e =>
+                            updateFinancialPlan({
+                              workDaysPerMonth: Math.max(1, Math.min(31, Number(e.target.value) || 24)),
+                            })
+                          }
+                          className={`w-20 px-3 py-1.5 rounded-xl text-sm font-black tabular-nums text-center outline-none ${inputSurface}`}
+                        />
+                        <span className="text-xs font-bold">dias/mês</span>
+                      </div>
+                      <div className={`text-[10px] mt-1 ${mutedText}`}>
+                        Ex: 24 dias = 6 dias por semana
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-3.5 border ${
+                      financialIntelligence.dailyNetProfit >= 0
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : 'bg-rose-500/10 border-rose-500/30'
+                    }`}>
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400">
+                        Sobra Limpa no Bolso (Líquido Real)
+                      </div>
+                      <div className={`text-lg sm:text-xl font-black tabular-nums mt-0.5 ${
+                        financialIntelligence.dailyNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}>
+                        {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} / dia
+                      </div>
+                      <div className={`text-[11px] font-bold mt-1 ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.monthlyNetProfit)}/mês livre ({financialIntelligence.netMarginPct}%)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* HERO WATERFALL: O QUE SOBRA DE FATO PARA O MOTOBOY APÓS TODOS OS CUSTOS E RESERVAS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                    <div>
+                      <h2 className="text-base sm:text-lg font-black">
+                        Raio-X do Faturamento Diário: Para Onde Vai Seu Dinheiro?
+                      </h2>
+                      <p className={`text-xs ${mutedText}`}>
+                        Divisão inteligente de cada dia rodado descontando combustível, desgaste da moto, almoço/lanche, documentos e emergência
+                      </p>
+                    </div>
+                    <span className="text-xs font-black px-3 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 self-start sm:self-center">
+                      Margem Real Livre: {financialIntelligence.netMarginPct}%
+                    </span>
+                  </div>
+
+                  {/* Barra Visual Proporcional de Alocação do Faturamento Diário */}
+                  <div className="w-full h-4 rounded-full bg-slate-800 overflow-hidden flex mb-4 p-0.5 gap-0.5">
+                    <div
+                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.fuelPctOfGross))}%` }}
+                      className="h-full bg-rose-500 rounded-l-full"
+                      title={`Combustível: ${financialIntelligence.fuelPctOfGross}%`}
+                    />
+                    <div
+                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.maintPctOfGross))}%` }}
+                      className="h-full bg-amber-500"
+                      title={`Reserva Manutenção: ${financialIntelligence.maintPctOfGross}%`}
+                    />
+                    <div
+                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.foodPctOfGross))}%` }}
+                      className="h-full bg-orange-400"
+                      title={`Almoço e Lanche: ${financialIntelligence.foodPctOfGross}%`}
+                    />
+                    <div
+                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.docsPctOfGross))}%` }}
+                      className="h-full bg-sky-400"
+                      title={`Documentos (IPVA/Licenciamento/MEI): ${financialIntelligence.docsPctOfGross}%`}
+                    />
+                    <div
+                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.emergencyPct))}%` }}
+                      className="h-full bg-purple-400"
+                      title={`Reserva de Emergência: ${financialIntelligence.emergencyPct}%`}
+                    />
+                    <div
+                      style={{ width: `${Math.max(0, Math.min(100, financialIntelligence.netMarginPct))}%` }}
+                      className="h-full bg-emerald-400 rounded-r-full"
+                      title={`Lucro Líquido Real Livre: ${financialIntelligence.netMarginPct}%`}
+                    />
+                  </div>
+
+                  {/* Cards do Raio-X Diário e Mensal */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {/* 1. Combustível */}
+                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-rose-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span>⛽ Combustível do Dia</span>
+                        <span className="text-rose-400 font-black">{financialIntelligence.fuelPctOfGross}%</span>
+                      </div>
+                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-rose-400">
+                        - {fmtCurrencyExact(financialIntelligence.dailyFuelCost)} / dia
+                      </div>
+                      <div className={`text-[11px] mt-1 ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}/mês · R$ {financialIntelligence.fuelCostPerKm.toFixed(2)}/km
+                      </div>
+                    </div>
+
+                    {/* 2. Manutenção da Moto */}
+                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span>🛠️ Reserva Manutenção Moto</span>
+                        <span className="text-amber-400 font-black">{financialIntelligence.maintPctOfGross}%</span>
+                      </div>
+                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-amber-400">
+                        - {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)} / dia
+                      </div>
+                      <div className={`text-[11px] mt-1 ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês · Desgaste R$ {financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km
+                      </div>
+                    </div>
+
+                    {/* 3. Almoço, Lanche e Água */}
+                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span>🍱 Almoço, Lanche & Água</span>
+                        <span className="text-orange-400 font-black">{financialIntelligence.foodPctOfGross}%</span>
+                      </div>
+                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-orange-400">
+                        - {fmtCurrencyExact(financialIntelligence.dailyFoodCost)} / dia
+                      </div>
+                      <div className={`text-[11px] mt-1 ${mutedText}`}>
+                        Almoço {fmtCurrencyExact(financialIntelligence.dailyLunch)} + Lanche {fmtCurrencyExact(financialIntelligence.dailySnack)} ({fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês)
+                      </div>
+                    </div>
+
+                    {/* 4. Documentos (IPVA + Licenciamento + MEI/Seguro) */}
+                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span>📄 Reserva Documentos & IPVA</span>
+                        <span className="text-sky-400 font-black">{financialIntelligence.docsPctOfGross}%</span>
+                      </div>
+                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-sky-400">
+                        - {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} / dia
+                      </div>
+                      <div className={`text-[11px] mt-1 ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês (IPVA, Licenciamento, MEI/Seguro)
+                      </div>
+                    </div>
+
+                    {/* 5. Reserva de Emergência */}
+                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-purple-400 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span>🛡️ Reserva de Emergência ({financialIntelligence.emergencyPct}%)</span>
+                        <span className="text-purple-400 font-black">{financialIntelligence.emergencyPct}%</span>
+                      </div>
+                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-purple-400">
+                        - {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)} / dia
+                      </div>
+                      <div className={`text-[11px] mt-1 ${mutedText}`}>
+                        Acumula {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês · {fmtMoney(financialIntelligence.emergencyIn6Months)} em 6 meses
+                      </div>
+                    </div>
+
+                    {/* 6. LUCRO LÍQUIDO REAL (O QUE SOBRA DE FATO) */}
+                    <div className={`rounded-2xl p-3.5 border-2 ${
+                      financialIntelligence.dailyNetProfit >= 0
+                        ? 'border-emerald-500/60 bg-emerald-500/10'
+                        : 'border-rose-500/60 bg-rose-500/10'
+                    }`}>
+                      <div className="flex items-center justify-between text-xs font-black">
+                        <span className="text-emerald-400">💰 LUCRO LÍQUIDO REAL</span>
+                        <span className="text-emerald-400">{financialIntelligence.netMarginPct}% livre</span>
+                      </div>
+                      <div className={`text-lg sm:text-xl font-black tabular-nums mt-1 ${
+                        financialIntelligence.dailyNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}>
+                        = {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} / dia
+                      </div>
+                      <div className={`text-[11px] font-bold mt-1 ${mutedText}`}>
+                        Semana: {fmtCurrencyExact(financialIntelligence.weeklyNetProfit)} · Mês: {fmtCurrencyExact(financialIntelligence.monthlyNetProfit)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SEÇÃO DUPLA: (1) ALIMENTAÇÃO, MANUTENÇÃO & EMERGÊNCIA | (2) DOCUMENTO DA MOTO, IPVA & LICENCIAMENTO */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                  {/* CARD ESQUERDO: CONFIGURAR RESERVAS DE ALMOÇO, LANCHE, MANUTENÇÃO E EMERGÊNCIA */}
+                  <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col justify-between gap-4 ${surfaceCard}`}>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
+                        <div>
+                          <h2 className="text-sm sm:text-base font-black text-[#FF6A1A]">
+                            🍱 Alimentação na Rua, Manutenção & Emergência
+                          </h2>
+                          <p className={`text-xs ${mutedText}`}>
+                            Ajuste quanto você gasta com almoço/lanche e o percentual das suas caixinhas diárias
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Almoço / Marmita por Dia (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={finPlan.dailyLunchBudget}
+                            onChange={e =>
+                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Lanche / Café / Água por Dia (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={finPlan.dailySnackBudget}
+                            onChange={e =>
+                              updateFinancialPlan({ dailySnackBudget: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Reserva de Emergência (% do Bruto)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              max="40"
+                              step="1"
+                              value={finPlan.emergencyReservePct}
+                              onChange={e =>
+                                updateFinancialPlan({
+                                  emergencyReservePct: Math.max(0, Math.min(40, Number(e.target.value) || 0)),
+                                })
+                              }
+                              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                            <span className="text-xs font-black text-purple-400">
+                              = {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Margem Extra Imprevisto Mecânico (%)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              max="25"
+                              step="1"
+                              value={finPlan.maintenanceExtraBufferPct}
+                              onChange={e =>
+                                updateFinancialPlan({
+                                  maintenanceExtraBufferPct: Math.max(0, Math.min(25, Number(e.target.value) || 0)),
+                                })
+                              }
+                              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                            <span className="text-xs font-black text-amber-400">
+                              +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Detalhamento Automático da Reserva de Manutenção por Peça da Aba Moto */}
+                      <div className={`mt-4 rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-extrabold text-amber-400">
+                            🛠️ Detalhamento da Reserva de Manutenção por Peça
+                          </span>
+                          <span className="text-xs font-black tabular-nums">
+                            Total: {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}/dia
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {financialIntelligence.maintBreakdown.map(m => (
+                            <div
+                              key={m.id}
+                              className={`rounded-xl px-3 py-2 flex items-center justify-between text-xs ${
+                                isDark ? 'bg-slate-900/70' : 'bg-white'
+                              }`}
+                            >
+                              <span className="truncate font-semibold flex items-center gap-1.5">
+                                <span>{m.icon}</span>
+                                <span className="truncate">{m.name}</span>
+                              </span>
+                              <span className="font-black text-amber-400 tabular-nums shrink-0 ml-2">
+                                {fmtCurrencyExact(m.dailyReserve)}/dia
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-3.5 flex items-center justify-between text-xs ${
+                      isDark ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-purple-50 border border-purple-200'
+                    }`}>
+                      <div>
+                        <div className="font-black text-purple-400">
+                          🛡️ Fundo de Emergência Pessoal (Doença / Chuva / Moto Parada)
+                        </div>
+                        <div className={`text-[11px] mt-0.5 ${mutedText}`}>
+                          Guardando {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia você acumula{' '}
+                          <strong className="text-current">{fmtCurrencyExact(financialIntelligence.emergencyIn6Months)}</strong> em 6 meses e{' '}
+                          <strong className="text-current">{fmtCurrencyExact(financialIntelligence.emergencyIn12Months)}</strong> em 1 ano.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CARD DIREITO: DOCUMENTO DA MOTO, IPVA, LICENCIAMENTO, MEI & TAXAS */}
+                  <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col justify-between gap-4 ${surfaceCard}`}>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
+                        <div>
+                          <h2 className="text-sm sm:text-base font-black text-sky-400">
+                            📄 Documento da Moto: IPVA, Licenciamento & MEI/Seguro
+                          </h2>
+                          <p className={`text-xs ${mutedText}`}>
+                            Descubra exatamente quanto separar por dia trabalhado para pagar IPVA e Licenciamento à vista sem sufoco
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            IPVA Anual da Moto (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="10"
+                            value={finPlan.ipvaAnnual}
+                            onChange={e =>
+                              updateFinancialPlan({ ipvaAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Licenciamento Anual CRLV-e (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="5"
+                            value={finPlan.licensingAnnual}
+                            onChange={e =>
+                              updateFinancialPlan({ licensingAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            DAS MEI / Seguro / Rastreador Mensal (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="5"
+                            value={finPlan.insuranceOrMeiMonthly}
+                            onChange={e =>
+                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Outras Taxas Anuais / CNH / Detran (R$)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="10"
+                            value={finPlan.otherDocsAnnual}
+                            onChange={e =>
+                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, Number(e.target.value) || 0) })
+                            }
+                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <label className={`text-xs font-bold ${mutedText}`}>
+                              Meses até o vencimento do IPVA / Licenciamento:
+                            </label>
+                            <span className="text-xs font-black text-sky-400">
+                              {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[1, 2, 3, 6, 9, 12].map(mVal => (
+                              <button
+                                key={mVal}
+                                type="button"
+                                onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
+                                  finPlan.docsTargetMonths === mVal
+                                    ? 'bg-sky-400 text-black'
+                                    : `${surfaceSubtle} hover:border-sky-400`
+                                }`}
+                              >
+                                {mVal} {mVal === 1 ? 'mês' : 'meses'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Resumo de Quanto Guardar por Dia para Cada Documento */}
+                      <div className={`mt-4 rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                        <div className="text-xs font-extrabold text-sky-400 mb-2">
+                          Quanto separar por dia trabalhado para cada obrigação:
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                            <div className={`text-[10px] font-bold ${mutedText}`}>IPVA / dia</div>
+                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
+                              {fmtCurrencyExact(financialIntelligence.dailyIpvaReserve)}
+                            </div>
+                          </div>
+                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                            <div className={`text-[10px] font-bold ${mutedText}`}>Licenciam. / dia</div>
+                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
+                              {fmtCurrencyExact(financialIntelligence.dailyLicensingReserve)}
+                            </div>
+                          </div>
+                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                            <div className={`text-[10px] font-bold ${mutedText}`}>MEI & Seguro / dia</div>
+                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
+                              {fmtCurrencyExact(financialIntelligence.dailyMeiInsuranceReserve)}
+                            </div>
+                          </div>
+                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                            <div className={`text-[10px] font-bold ${mutedText}`}>CNH & Taxas / dia</div>
+                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
+                              {fmtCurrencyExact(financialIntelligence.dailyOtherDocsReserve)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                      isDark ? 'bg-sky-500/10 border border-sky-500/30' : 'bg-sky-50 border border-sky-200'
+                    }`}>
+                      <div>
+                        <div className="text-xs font-black text-sky-400">
+                          Total a Guardar p/ Documentação & Proteção
+                        </div>
+                        <div className={`text-[11px] ${mutedText}`}>
+                          Custo anual total: {fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)}/ano
+                        </div>
+                      </div>
+                      <div className="text-left sm:text-right">
+                        <div className="text-base sm:text-lg font-black text-sky-400 tabular-nums">
+                          {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} / dia
+                        </div>
+                        <div className={`text-[11px] font-bold ${mutedText}`}>
+                          {fmtCurrencyExact(financialIntelligence.weeklyDocsReserve)}/sem · {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CONSULTOR FINANCEIRO COM INTELIGÊNCIA ARTIFICIAL (GEMINI AI) */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border ${
+                  isDark ? 'bg-[#12141C] border-[#FF6A1A]/40' : 'bg-white border-orange-300 shadow-sm'
+                }`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
+                    <div className="flex items-start sm:items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center font-black text-lg shrink-0">
+                        IA
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-base sm:text-lg font-black">
+                            Consultor Financeiro Inteligente (IA do Motoboy)
+                          </h2>
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                            Análise em Tempo Real
+                          </span>
+                        </div>
+                        <p className={`text-xs mt-0.5 ${mutedText}`}>
+                          A IA analisa seu faturamento, gastos de rua, desgaste da {dbState.fuelConfig.bikeModelName} e documentação para orientar seu bolso
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isAiFinancialLoading}
+                      onClick={() =>
+                        handleAskFinancialAI(
+                          'Atualize meu diagnóstico financeiro completo com foco em reserva diária de manutenção, almoço, IPVA/Licenciamento e lucro líquido real.'
+                        )
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-[#FF6A1A] text-black font-black text-xs hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shrink-0 min-h-[42px]"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isAiFinancialLoading ? 'animate-spin' : ''}`} />
+                      <span>{isAiFinancialLoading ? 'Analisando Finanças...' : 'Atualizar Análise com IA'}</span>
+                    </button>
+                  </div>
+
+                  {/* Atalhos de Perguntas Financeiras Inteligentes */}
+                  <div className="flex flex-wrap gap-1.5 my-3.5">
+                    {[
+                      'Quanto devo guardar por dia para manutenção, IPVA e emergência?',
+                      'Como aumentar meu lucro líquido real diário?',
+                      'Meu gasto com almoço, lanche e gasolina está saudável?',
+                      'Quanto preciso faturar bruto por dia para tirar R$ 4.000 limpos no mês?',
+                    ].map(presetQ => (
+                      <button
+                        key={presetQ}
+                        type="button"
+                        disabled={isAiFinancialLoading}
+                        onClick={() => {
+                          setAiFinancialPrompt(presetQ);
+                          handleAskFinancialAI(presetQ);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
+                      >
+                        {presetQ}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Resposta da IA Financeira */}
+                  <div className={`rounded-2xl p-4 sm:p-5 text-xs sm:text-sm leading-relaxed whitespace-pre-line font-medium ${surfaceSubtle}`}>
+                    {isAiFinancialLoading ? (
+                      <div className="flex items-center gap-2.5 text-[#FF6A1A] font-bold py-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Calculando projeções de reservas, documentação e lucro líquido real com IA...</span>
+                      </div>
+                    ) : (
+                      aiFinancialAdvice ||
+                      'Clique em "Atualizar Análise com IA" ou selecione uma pergunta acima para receber seu plano financeiro personalizado.'
+                    )}
+                  </div>
+
+                  {/* Campo para Pergunta Financeira Personalizada */}
+                  <form
+                    onSubmit={e => {
+                      e.preventDefault();
+                      if (!aiFinancialPrompt.trim()) return;
+                      handleAskFinancialAI(aiFinancialPrompt);
+                    }}
+                    className="mt-3.5 flex flex-col sm:flex-row gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={aiFinancialPrompt}
+                      onChange={e => setAiFinancialPrompt(e.target.value)}
+                      placeholder="Pergunte para a IA Financeira (ex: Como juntar R$ 2.000 sem trabalhar domingo?)"
+                      className={`flex-1 px-4 py-3 rounded-xl text-xs sm:text-sm font-semibold outline-none ${inputSurface}`}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isAiFinancialLoading || !aiFinancialPrompt.trim()}
+                      className="px-5 py-3 rounded-xl bg-[#FF6A1A] text-black font-black text-xs sm:text-sm hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0 min-h-[44px]"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Perguntar à IA</span>
+                    </button>
+                  </form>
+                </div>
+              </>
+            )}
 
             {billingSubTab === 'ganhos' && (
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
@@ -4493,7 +5470,7 @@ export default function App() {
             {billingSubTab === 'gastos' && (
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                 <div className="flex items-center justify-between mb-4 sm:mb-5">
-                  <h2 className="text-sm sm:text-base font-extrabold">Despesas por Categoria</h2>
+                  <h2 className="text-sm sm:text-base font-extrabold">Despesas Lançadas por Categoria</h2>
                   <span className="text-base sm:text-lg font-black text-rose-400 tabular-nums">
                     {fmtMoney(totals.totalExpense)}
                   </span>
@@ -4518,101 +5495,6 @@ export default function App() {
                         </div>
                       );
                     })}
-                </div>
-              </div>
-            )}
-
-            {billingSubTab === 'resumo' && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
-                <div className={`rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 ${surfaceCard}`}>
-                  <div className={`text-[10px] sm:text-xs font-bold ${mutedText}`}>Total em Ganhos</div>
-                  <div className="text-base sm:text-2xl font-black mt-1 sm:mt-2 tabular-nums text-sky-400 truncate">
-                    {fmtMoney(totals.totalRevenue)}
-                  </div>
-                </div>
-                <div className={`rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 ${surfaceCard}`}>
-                  <div className={`text-[10px] sm:text-xs font-bold ${mutedText}`}>Total em Gastos</div>
-                  <div className="text-base sm:text-2xl font-black mt-1 sm:mt-2 tabular-nums text-rose-400 truncate">
-                    {fmtMoney(totals.totalExpense)}
-                  </div>
-                </div>
-                <div className={`rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 ${surfaceCard}`}>
-                  <div className="text-[10px] sm:text-xs font-bold text-[#FF6A1A]">Lucro Líquido</div>
-                  <div className="text-base sm:text-2xl font-black mt-1 sm:mt-2 tabular-nums text-[#FF6A1A] truncate">
-                    {fmtMoney(totals.lucro)}
-                  </div>
-                </div>
-                <div className={`rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 ${surfaceCard}`}>
-                  <div className={`text-[10px] sm:text-xs font-bold ${mutedText}`}>Custo Real / KM</div>
-                  <div className="text-base sm:text-2xl font-black mt-1 sm:mt-2 tabular-nums truncate">
-                    {fmtCurrencyExact(totals.ridesKm > 0 ? totals.totalExpense / totals.ridesKm : 0)}
-                  </div>
-                </div>
-                <div className={`rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 ${surfaceCard} col-span-2 sm:col-span-1`}>
-                  <div className={`text-[10px] sm:text-xs font-bold ${mutedText}`}>Margem Líquida</div>
-                  <div className="text-base sm:text-2xl font-black mt-1 sm:mt-2 tabular-nums text-emerald-400 truncate">
-                    {totals.totalRevenue > 0 ? Math.round((totals.lucro / totals.totalRevenue) * 100) : 0}%
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {billingSubTab === 'produtividade' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <h2 className="text-sm sm:text-base font-extrabold mb-3 sm:mb-4">Eficiência por App (R$/KM e R$/Hora)</h2>
-                  <div className="flex flex-col gap-2.5 sm:gap-3">
-                    {allApps.map(app => {
-                      const entries = dbState.entries.filter(e => e.app === app.id);
-                      const rev = entries.reduce((s, e) => s + Number(e.revenue || 0), 0);
-                      const km = entries.reduce((s, e) => s + Number(e.km || 0), 0);
-                      const h = entries.reduce((s, e) => s + Number(e.hours || 0), 0);
-                      return (
-                        <div key={app.id} className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-                          <div className="flex items-center justify-between font-bold text-xs sm:text-sm mb-1 sm:mb-2">
-                            <span className="flex items-center gap-1.5 truncate">
-                              <span>{app.icon}</span>
-                              <span className="truncate">{app.name}</span>
-                            </span>
-                            <span className="text-[#FF6A1A] tabular-nums whitespace-nowrap">{fmtMoney(rev)}</span>
-                          </div>
-                          <div className={`flex flex-wrap items-center gap-1.5 sm:gap-3 text-[11px] sm:text-xs tabular-nums ${mutedText}`}>
-                            <span>Rentabilidade: {fmtCurrencyExact(km > 0 ? rev / km : 0)}/km</span>
-                            <span aria-hidden="true">·</span>
-                            <span>Média: {fmtCurrencyExact(h > 0 ? rev / h : 0)}/h</span>
-                            <span aria-hidden="true">·</span>
-                            <span>{km} km</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <h2 className="text-sm sm:text-base font-extrabold mb-3 sm:mb-4">Rentabilidade por Turno</h2>
-                  <div className="flex flex-col gap-2.5 sm:gap-3">
-                    {allShifts.map(shift => {
-                      const entries = dbState.entries.filter(e => e.shift === shift.id);
-                      const rev = entries.reduce((s, e) => s + Number(e.revenue || 0), 0);
-                      const h = entries.reduce((s, e) => s + Number(e.hours || 0), 0);
-                      return (
-                        <div key={shift.id} className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-                          <div className="flex items-center justify-between font-bold text-xs sm:text-sm mb-1">
-                            <span className="truncate">{shift.name}</span>
-                            <span className="text-emerald-400 tabular-nums whitespace-nowrap">
-                              {fmtCurrencyExact(h > 0 ? rev / h : 0)}/h
-                            </span>
-                          </div>
-                          <div className={`flex flex-wrap items-center gap-1.5 sm:gap-3 text-[11px] sm:text-xs tabular-nums ${mutedText}`}>
-                            <span>Faturamento: {fmtMoney(rev)}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>Trabalho: {h}h</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
               </div>
             )}
@@ -4718,6 +5600,9 @@ export default function App() {
                                 persistAndEnqueueWorkManager({
                                   ...dbState,
                                   entries: dbState.entries.filter(e => e.id !== item.id),
+                                  deletedEntryIds: Array.from(
+                                    new Set([...(dbState.deletedEntryIds || []), Number(item.id)])
+                                  ),
                                 })
                               }
                               className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl ${surfaceSubtle} hover:border-rose-500 cursor-pointer`}
@@ -4761,6 +5646,9 @@ export default function App() {
                                 persistAndEnqueueWorkManager({
                                   ...dbState,
                                   expenses: dbState.expenses.filter(e => e.id !== item.id),
+                                  deletedExpenseIds: Array.from(
+                                    new Set([...(dbState.deletedExpenseIds || []), Number(item.id)])
+                                  ),
                                 })
                               }
                               className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl ${surfaceSubtle} hover:border-rose-500 cursor-pointer`}
@@ -5734,21 +6622,37 @@ export default function App() {
                     <span>{simulateOffline ? 'Modo Offline Ativo' : 'Online (WorkManager)'}</span>
                   </button>
 
-                  {/* Manual WorkManager Sync Trigger */}
+                  {/* Manual Bidirectional Cloud Sync Trigger */}
                   <button
-                    onClick={() => persistAndEnqueueWorkManager(dbState)}
+                    type="button"
+                    onClick={() => handleManualCloudSync(true)}
                     disabled={isSyncing}
-                    className={`flex-1 sm:flex-initial justify-center px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap min-h-[40px] ${
-                      isDark
-                        ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                        : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200'
-                    }`}
+                    className="flex-1 sm:flex-initial justify-center px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap min-h-[40px] bg-[#FF6A1A] text-black hover:bg-[#ff7b33]"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-[#FF6A1A]' : ''}`} />
-                    <span>Sincronizar</span>
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}</span>
                   </button>
                 </div>
               </div>
+
+              {syncFeedbackBanner && (
+                <div
+                  className={`rounded-xl px-3.5 py-2.5 text-xs font-bold flex items-center justify-between gap-2 ${
+                    syncFeedbackBanner.startsWith('✅')
+                      ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
+                      : 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                  }`}
+                >
+                  <span>{syncFeedbackBanner}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSyncFeedbackBanner(null)}
+                    className="p-1 rounded-lg hover:bg-black/20 cursor-pointer shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 ${surfaceCard}`}>
