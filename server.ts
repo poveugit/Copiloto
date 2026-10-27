@@ -4,6 +4,8 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
+import zlib from 'zlib';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,41 +32,196 @@ function writeServerCloudStore(store: Record<string, any>): void {
   }
 }
 
+function getRelayTopicForDevice(deviceId: string): string {
+  const clean = deviceId.trim().toLowerCase().replace(/^usr_/, '');
+  const hash = crypto.createHash('sha256').update('mochilinha_v3_' + clean).digest('hex').slice(0, 20);
+  return `mochilinha_sync_${hash}`;
+}
+
+function isStatePopulated(state: any): boolean {
+  if (!state) return false;
+  const entriesLen = Array.isArray(state.entries) ? state.entries.length : 0;
+  const expensesLen = Array.isArray(state.expenses) ? state.expenses.length : 0;
+  const odo = Number(state.fuelConfig?.odometerBaseKm || 0);
+  const customBike = state.fuelConfig?.bikeModelName && state.fuelConfig.bikeModelName !== 'Minha Moto';
+  const hasMaintChanges = Array.isArray(state.maintenanceItems) && state.maintenanceItems.some((m: any) => Number(m.lastChangeKm) > 0 || (Array.isArray(m.history) && m.history.length > 0));
+  return entriesLen > 0 || expensesLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
+}
+
+async function pushToGlobalCloudRelay(deviceId: string, record: any): Promise<boolean> {
+  try {
+    const topic = getRelayTopicForDevice(deviceId);
+    const jsonStr = JSON.stringify(record);
+    const gzBase64 = zlib.gzipSync(Buffer.from(jsonStr, 'utf-8')).toString('base64');
+    if (gzBase64.length < 3600) {
+      const res = await fetch(`https://ntfy.sh/${topic}`, {
+        method: 'POST',
+        body: JSON.stringify({ gz: gzBase64, updatedAt: record.updatedAt }),
+      });
+      return res.ok;
+    } else {
+      const putRes = await fetch(`https://ntfy.sh/${topic}_blob`, {
+        method: 'PUT',
+        headers: { Filename: 'mochilinha_sync.json' },
+        body: jsonStr,
+      });
+      if (putRes.ok) {
+        const putJson: any = await putRes.json();
+        const fileUrl = putJson?.attachment?.url;
+        if (fileUrl) {
+          const ptrRes = await fetch(`https://ntfy.sh/${topic}`, {
+            method: 'POST',
+            body: JSON.stringify({ fileUrl, updatedAt: record.updatedAt }),
+          });
+          return ptrRes.ok;
+        }
+      }
+    }
+  } catch {
+    // ignore relay error
+  }
+  return false;
+}
+
+async function pullFromGlobalCloudRelay(deviceId: string): Promise<any | null> {
+  try {
+    const topic = getRelayTopicForDevice(deviceId);
+    const res = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=all`);
+    if (!res.ok) return null;
+    const text = (await res.text()).trim();
+    if (!text) return null;
+    const lines = text.split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const evt = JSON.parse(lines[i]);
+        if (evt.event !== 'message' || !evt.message) continue;
+        const msg = JSON.parse(evt.message);
+        if (msg.gz) {
+          const unzipped = zlib.gunzipSync(Buffer.from(msg.gz, 'base64')).toString('utf-8');
+          const parsed = JSON.parse(unzipped);
+          if (parsed && parsed.state) return parsed;
+        } else if (msg.fileUrl) {
+          const fileRes = await fetch(msg.fileUrl);
+          if (fileRes.ok) {
+            const parsed = await fileRes.json();
+            if (parsed && parsed.state) return parsed;
+          }
+        }
+      } catch {
+        // continue checking older messages
+      }
+    }
+  } catch {
+    // ignore relay error
+  }
+  return null;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Enable CORS so Production (ais-pre / Vercel) and Test (ais-dev) can communicate directly
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '10mb' }));
 
-  // Cloud Sync Server Endpoints (Multi-device sync guarantee alongside Supabase)
-  app.get('/api/cloud-sync/pull', (req, res) => {
+  // Cloud Sync Server Endpoints (Multi-device & Cross-Environment Sync)
+  app.get('/api/cloud-sync/pull', async (req, res) => {
     try {
       const deviceId = String(req.query.deviceId || '').trim();
+      const userEmail = String(req.query.email || '').trim().toLowerCase();
       if (!deviceId) {
         return res.status(400).json({ ok: false, error: 'Missing deviceId' });
       }
       const store = readServerCloudStore();
-      const record = store[deviceId] || null;
-      return res.json({ ok: true, data: record });
+      let localRecord = store[deviceId] || null;
+
+      // Also check matching email or populated fallback in store
+      if ((!localRecord || !isStatePopulated(localRecord.state)) && userEmail) {
+        for (const key of Object.keys(store)) {
+          const candidate = store[key];
+          if (
+            candidate?.pilotProfile?.email?.toLowerCase() === userEmail &&
+            isStatePopulated(candidate.state)
+          ) {
+            localRecord = candidate;
+            break;
+          }
+        }
+      }
+
+      // Check global cloud relay to bridge Production <-> Test environments
+      const relayRecord = await pullFromGlobalCloudRelay(deviceId);
+
+      let chosenRecord = localRecord;
+      if (relayRecord && relayRecord.state) {
+        const localPop = isStatePopulated(localRecord?.state);
+        const relayPop = isStatePopulated(relayRecord.state);
+        const localEntries = localRecord?.state?.entries?.length || 0;
+        const relayEntries = relayRecord.state?.entries?.length || 0;
+        const localTime = localRecord?.updatedAt ? new Date(localRecord.updatedAt).getTime() : 0;
+        const relayTime = relayRecord.updatedAt ? new Date(relayRecord.updatedAt).getTime() : 0;
+
+        if (!localRecord || (relayPop && !localPop) || relayEntries > localEntries || relayTime > localTime) {
+          chosenRecord = relayRecord;
+          store[deviceId] = relayRecord;
+          writeServerCloudStore(store);
+        }
+      }
+
+      return res.json({ ok: true, data: chosenRecord });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message });
     }
   });
 
-  app.post('/api/cloud-sync/push', (req, res) => {
+  app.post('/api/cloud-sync/push', async (req, res) => {
     try {
-      const { deviceId, state, pilotProfile } = req.body || {};
+      const { deviceId, state, pilotProfile, explicitPush, forceReset } = req.body || {};
       if (!deviceId || !state) {
         return res.status(400).json({ ok: false, error: 'Missing deviceId or state' });
       }
       const store = readServerCloudStore();
-      store[deviceId] = {
+      const existing = store[deviceId];
+
+      // Prevent an empty test device from overwriting populated cloud data unless forceReset or explicitPush with data
+      if (
+        !forceReset &&
+        !explicitPush &&
+        existing &&
+        isStatePopulated(existing.state) &&
+        !isStatePopulated(state)
+      ) {
+        return res.json({
+          ok: true,
+          protectedExisting: true,
+          updatedAt: existing.updatedAt,
+          data: existing,
+        });
+      }
+
+      const record = {
         state,
-        pilotProfile: pilotProfile || store[deviceId]?.pilotProfile || null,
+        pilotProfile: pilotProfile || existing?.pilotProfile || null,
         updatedAt: new Date().toISOString(),
       };
+      store[deviceId] = record;
       writeServerCloudStore(store);
-      return res.json({ ok: true, updatedAt: store[deviceId].updatedAt });
+
+      if (explicitPush || isStatePopulated(state)) {
+        await pushToGlobalCloudRelay(deviceId, record);
+      }
+
+      return res.json({ ok: true, updatedAt: record.updatedAt });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message });
     }
@@ -88,7 +245,7 @@ async function startServer() {
         },
       });
 
-      const systemPrompt = `Você é o Moto Copilot, o assistente virtual inteligente e especialista para motoboys e entregadores de aplicativo (iFood, Uber, 99, Rappi, Keeta).
+      const systemPrompt = `Você é o Assistente Mochilinha, o assistente virtual inteligente e especialista para motoboys e entregadores de aplicativo (iFood, Uber, 99, Rappi, Keeta).
 Responda de forma direta, amigável, motivadora e focada na realidade da rua em português do Brasil.
 
 Dados do Entregador Hoje:
@@ -134,7 +291,7 @@ Pergunta do Entregador: "${question}"`;
       });
 
       const fc = financialContext || {};
-      const fullPrompt = `Você é um Consultor Financeiro Especialista em Motoboys e Entregadores de App no Brasil (CopilotRider IA Financeira).
+      const fullPrompt = `Você é um Consultor Financeiro Especialista em Motoboys e Entregadores de App no Brasil (Mochilinha IA Financeira).
 Analise os dados reais abaixo do piloto e forneça um diagnóstico financeiro prático, direto ao ponto, em português do Brasil, organizado em tópicos curtos e acionáveis.
 
 DADOS FINANCEIROS E OPERACIONAIS DO MOTOBOY:

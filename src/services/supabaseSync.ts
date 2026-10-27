@@ -156,10 +156,60 @@ export function getUserDeviceId(userEmail?: string | null): string {
   return id;
 }
 
+export function getCandidateDeviceIds(userEmail?: string | null): string[] {
+  const ids = new Set<string>();
+  const primary = getUserDeviceId(userEmail);
+  ids.add(primary);
+
+  if (userEmail) {
+    const clean = userEmail.trim().toLowerCase();
+    ids.add(clean);
+    ids.add('usr_' + clean.replace(/[^a-z0-9_.-]/g, '_'));
+    ids.add('usr_' + clean.replace(/[^a-z0-9]/g, '_'));
+  }
+
+  try {
+    const storedGuestId = localStorage.getItem('moto-dash-device-id');
+    if (storedGuestId) ids.add(storedGuestId);
+  } catch {
+    // ignore
+  }
+
+  return Array.from(ids).filter(Boolean);
+}
+
+const CLOUD_SYNC_ENDPOINTS = [
+  '',
+  'https://ais-dev-rztjkqzidbnnsie2ngbp3l-559814617776.us-west2.run.app',
+  'https://ais-pre-rztjkqzidbnnsie2ngbp3l-559814617776.us-west2.run.app',
+];
+
+function getBrowserRelayTopic(deviceId: string): string {
+  const clean = deviceId.trim().toLowerCase().replace(/^usr_/, '');
+  return `mochilinha_b_${simpleHash('mochilinha_v3_' + clean)}`;
+}
+
+function hasPopulatedData(state?: Partial<LocalRoomDatabaseState> | null): boolean {
+  if (!state) return false;
+  const eLen = Array.isArray(state.entries) ? state.entries.length : 0;
+  const xLen = Array.isArray(state.expenses) ? state.expenses.length : 0;
+  const odo = Number(state.fuelConfig?.odometerBaseKm || 0);
+  const customBike =
+    state.fuelConfig?.bikeModelName &&
+    state.fuelConfig.bikeModelName !== 'Minha Moto';
+  const hasMaintChanges =
+    Array.isArray(state.maintenanceItems) &&
+    state.maintenanceItems.some(
+      m => Number(m.lastChangeKm) > 0 || (Array.isArray(m.history) && m.history.length > 0)
+    );
+  return eLen > 0 || xLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
+}
+
 export async function runWorkManagerCloudSync(
   state: LocalRoomDatabaseState,
   userEmail?: string | null,
-  simulateOffline = false
+  simulateOffline = false,
+  explicitPush = false
 ): Promise<{ success: boolean; status: string; timestamp: string }> {
   const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const isoNow = new Date().toISOString();
@@ -167,7 +217,7 @@ export async function runWorkManagerCloudSync(
   if (simulateOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
     return {
       success: false,
-      status: 'Offline (Room SQLite Local · WorkManager em fila)',
+      status: 'Offline (Salvo no banco local)',
       timestamp: nowStr,
     };
   }
@@ -192,7 +242,7 @@ export async function runWorkManagerCloudSync(
   const cleanEntries = (state.entries || []).filter(e => !isLegacyDemoEntry(e));
   const cleanExpenses = (state.expenses || []).filter(e => !isLegacyDemoExpense(e));
 
-  const cloudSnapshot = {
+  const cloudSnapshot: LocalRoomDatabaseState = {
     entries: cleanEntries,
     expenses: cleanExpenses,
     dailyGoal: state.dailyGoal,
@@ -213,31 +263,83 @@ export async function runWorkManagerCloudSync(
     deletedAppIds: state.deletedAppIds || [],
     deletedEntryIds: state.deletedEntryIds || [],
     deletedExpenseIds: state.deletedExpenseIds || [],
-    lastSyncedAt: state.lastSyncedAt || isoNow,
+    lastSyncedAt: isoNow,
   };
 
   let serverSynced = false;
   let supabaseSynced = false;
+  let browserRelaySynced = false;
 
-  // 1. Push to Express Server Cloud Store (/api/cloud-sync/push)
-  try {
-    const serverRes = await fetch('/api/cloud-sync/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        deviceId,
+  // 1. Push to Express / Serverless Cloud Store across active endpoints
+  const payloadStr = JSON.stringify({
+    deviceId,
+    state: cloudSnapshot,
+    pilotProfile: pilotProfileObj,
+    explicitPush,
+  });
+
+  await Promise.all(
+    CLOUD_SYNC_ENDPOINTS.map(async baseUrl => {
+      try {
+        if (
+          baseUrl &&
+          typeof window !== 'undefined' &&
+          window.location.origin === baseUrl
+        ) {
+          return;
+        }
+        const serverRes = await fetch(`${baseUrl}/api/cloud-sync/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payloadStr,
+        });
+        if (serverRes.ok) {
+          serverSynced = true;
+        }
+      } catch {
+        // Ignore if endpoint unreachable
+      }
+    })
+  );
+
+  // 2. Direct Browser Relay Backup on explicit push (bridges static/serverless deployments)
+  if (explicitPush) {
+    try {
+      const bTopic = getBrowserRelayTopic(deviceId);
+      const recordStr = JSON.stringify({
         state: cloudSnapshot,
         pilotProfile: pilotProfileObj,
-      }),
-    });
-    if (serverRes.ok) {
-      serverSynced = true;
+        updatedAt: isoNow,
+      });
+      if (recordStr.length < 3800) {
+        const bRes = await fetch(`https://ntfy.sh/${bTopic}`, {
+          method: 'POST',
+          body: recordStr,
+        });
+        if (bRes.ok) browserRelaySynced = true;
+      } else {
+        const putRes = await fetch(`https://ntfy.sh/${bTopic}_blob`, {
+          method: 'PUT',
+          headers: { Filename: 'mochilinha_state.json' },
+          body: recordStr,
+        });
+        if (putRes.ok) {
+          const putJson = await putRes.json();
+          if (putJson?.attachment?.url) {
+            const ptrRes = await fetch(`https://ntfy.sh/${bTopic}`, {
+              method: 'POST',
+              body: JSON.stringify({ fileUrl: putJson.attachment.url, updatedAt: isoNow }),
+            });
+            if (ptrRes.ok) browserRelaySynced = true;
+          }
+        }
+      }
+    } catch {
+      // Ignore browser relay error
     }
-  } catch {
-    // Ignore if server endpoint unreachable
   }
 
-  // 2. Push to Supabase (moto_settings + moto_entries + moto_expenses)
+  // 3. Push to Supabase (moto_settings + moto_entries + moto_expenses)
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -265,7 +367,6 @@ export async function runWorkManagerCloudSync(
         ...(pilotProfileObj ? { pilotProfile: pilotProfileObj } : {}),
       };
 
-      // Try full upsert first; if optional columns don't exist in Supabase schema, fallback to core columns
       const { error: fullUpsertErr } = await client.from('moto_settings').upsert(
         {
           device_id: deviceId,
@@ -314,7 +415,7 @@ export async function runWorkManagerCloudSync(
       }
 
       if (cleanEntries.length > 0) {
-        const entriesPayload = cleanEntries.map(e => ({
+        const entriesWithTs = cleanEntries.map(e => ({
           id: String(e.id),
           device_id: deviceId,
           entry_date: e.date,
@@ -325,11 +426,26 @@ export async function runWorkManagerCloudSync(
           hours: Number(e.hours || 0),
           updated_at: isoNow,
         }));
-        await client.from('moto_entries').upsert(entriesPayload, { onConflict: 'id' });
+        const { error: entErr } = await client
+          .from('moto_entries')
+          .upsert(entriesWithTs, { onConflict: 'id' });
+        if (entErr) {
+          const entriesCore = cleanEntries.map(e => ({
+            id: String(e.id),
+            device_id: deviceId,
+            entry_date: e.date,
+            app: e.app,
+            shift: e.shift || 'almoco',
+            km: Number(e.km || 0),
+            revenue: Number(e.revenue || 0),
+            hours: Number(e.hours || 0),
+          }));
+          await client.from('moto_entries').upsert(entriesCore, { onConflict: 'id' });
+        }
       }
 
       if (cleanExpenses.length > 0) {
-        const expensesPayload = cleanExpenses.map(e => ({
+        const expensesWithTs = cleanExpenses.map(e => ({
           id: String(e.id),
           device_id: deviceId,
           expense_date: e.date,
@@ -337,24 +453,36 @@ export async function runWorkManagerCloudSync(
           amount: Number(e.amount || 0),
           updated_at: isoNow,
         }));
-        await client.from('moto_expenses').upsert(expensesPayload, { onConflict: 'id' });
+        const { error: expErr } = await client
+          .from('moto_expenses')
+          .upsert(expensesWithTs, { onConflict: 'id' });
+        if (expErr) {
+          const expensesCore = cleanExpenses.map(e => ({
+            id: String(e.id),
+            device_id: deviceId,
+            expense_date: e.date,
+            category: e.category,
+            amount: Number(e.amount || 0),
+          }));
+          await client.from('moto_expenses').upsert(expensesCore, { onConflict: 'id' });
+        }
       }
     } catch {
-      // Handled by serverSynced or Room local fallback
+      // Handled by serverSynced / browserRelaySynced
     }
   }
 
-  if (supabaseSynced || serverSynced) {
+  if (supabaseSynced || serverSynced || browserRelaySynced) {
     return {
       success: true,
-      status: 'Sincronizado na Nuvem + Room DB',
+      status: 'Sincronizado na Nuvem',
       timestamp: nowStr,
     };
   }
 
   return {
     success: false,
-    status: 'Room Local Ativo (Retry agendado)',
+    status: 'Salvo no Dispositivo Local',
     timestamp: nowStr,
   };
 }
@@ -506,6 +634,60 @@ export function isLegacyDemoExpense(e: { id: number | string; category?: string;
   return false;
 }
 
+function combineSnapshotsList(
+  snapshots: Array<Partial<LocalRoomDatabaseState> | null>
+): Partial<LocalRoomDatabaseState> | null {
+  const valid = snapshots.filter((s): s is Partial<LocalRoomDatabaseState> => Boolean(s));
+  if (valid.length === 0) return null;
+  if (valid.length === 1) return valid[0];
+
+  const delEntries = new Set<number>();
+  const delExpenses = new Set<number>();
+  for (const s of valid) {
+    for (const id of s.deletedEntryIds || []) delEntries.add(Number(id));
+    for (const id of s.deletedExpenseIds || []) delExpenses.add(Number(id));
+  }
+
+  const combinedEntries = new Map<number, RideEntry>();
+  const combinedExpenses = new Map<number, ExpenseEntry>();
+
+  for (const s of valid) {
+    for (const e of s.entries || []) {
+      if (e && !delEntries.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+        combinedEntries.set(Number(e.id), e);
+      }
+    }
+    for (const ex of s.expenses || []) {
+      if (ex && !delExpenses.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+        combinedExpenses.set(Number(ex.id), ex);
+      }
+    }
+  }
+
+  // Sort snapshots so the most populated / most recently updated wins for scalar configs
+  const sorted = [...valid].sort((a, b) => {
+    const aPop = hasPopulatedData(a) ? 1 : 0;
+    const bPop = hasPopulatedData(b) ? 1 : 0;
+    if (aPop !== bPop) return bPop - aPop;
+    const aOdo = Number(a.fuelConfig?.odometerBaseKm || 0);
+    const bOdo = Number(b.fuelConfig?.odometerBaseKm || 0);
+    if (aOdo !== bOdo && (aOdo === 0 || bOdo === 0)) return bOdo - aOdo;
+    const aTime = a.lastSyncedAt ? new Date(a.lastSyncedAt).getTime() : 0;
+    const bTime = b.lastSyncedAt ? new Date(b.lastSyncedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  const best = sorted[0];
+
+  return {
+    ...best,
+    entries: Array.from(combinedEntries.values()),
+    expenses: Array.from(combinedExpenses.values()),
+    deletedEntryIds: Array.from(delEntries),
+    deletedExpenseIds: Array.from(delExpenses),
+  };
+}
+
 export async function fetchRemoteCloudData(
   userEmail?: string | null
 ): Promise<Partial<LocalRoomDatabaseState> | null> {
@@ -513,38 +695,112 @@ export async function fetchRemoteCloudData(
   if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
 
   const deviceId = getUserDeviceId(userEmail);
-  let serverSnap: Partial<LocalRoomDatabaseState> | null = null;
+  const candidateIds = getCandidateDeviceIds(userEmail);
+  const emailClean = userEmail.trim().toLowerCase();
+  const collectedSnapshots: Array<Partial<LocalRoomDatabaseState> | null> = [];
 
-  // 1. Fetch from Express Server Cloud Store (/api/cloud-sync/pull)
+  // 1. Fetch from Express / Serverless Cloud Store across active endpoints
+  await Promise.all(
+    CLOUD_SYNC_ENDPOINTS.map(async baseUrl => {
+      try {
+        if (
+          baseUrl &&
+          typeof window !== 'undefined' &&
+          window.location.origin === baseUrl
+        ) {
+          return;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(emailClean)}`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.ok && json?.data?.state) {
+            collectedSnapshots.push(json.data.state);
+          }
+        }
+      } catch {
+        // Ignore if endpoint unavailable
+      }
+    })
+  );
+
+  // 2. Fetch from Direct Browser Relay Backup
   try {
-    const res = await fetch(`/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json?.ok && json?.data?.state) {
-        serverSnap = json.data.state;
+    const bTopic = getBrowserRelayTopic(deviceId);
+    const bRes = await fetch(`https://ntfy.sh/${bTopic}/json?poll=1&since=all`);
+    if (bRes.ok) {
+      const text = (await bRes.text()).trim();
+      if (text) {
+        const lines = text.split('\n').filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const evt = JSON.parse(lines[i]);
+            if (evt.event !== 'message' || !evt.message) continue;
+            const parsedMsg = JSON.parse(evt.message);
+            if (parsedMsg?.state) {
+              collectedSnapshots.push(parsedMsg.state);
+              break;
+            } else if (parsedMsg?.fileUrl) {
+              const fRes = await fetch(parsedMsg.fileUrl);
+              if (fRes.ok) {
+                const fJson = await fRes.json();
+                if (fJson?.state) {
+                  collectedSnapshots.push(fJson.state);
+                  break;
+                }
+              }
+            }
+          } catch {
+            // continue
+          }
+        }
       }
     }
   } catch {
-    // Ignore if server endpoint unavailable
+    // Ignore browser relay error
   }
 
-  // 2. Fetch from Supabase (moto_settings, moto_entries, moto_expenses)
+  // 3. Fetch from Supabase (moto_settings, moto_entries, moto_expenses) across all candidate device_ids
   const client = getSupabaseClient();
-  let supabaseSnap: Partial<LocalRoomDatabaseState> | null = null;
-
   if (client) {
     try {
       const [settingsRes, entriesRes, expensesRes] = await Promise.all([
-        client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
-        client.from('moto_entries').select('*').eq('device_id', deviceId),
-        client.from('moto_expenses').select('*').eq('device_id', deviceId),
+        client.from('moto_settings').select('*').in('device_id', candidateIds),
+        client.from('moto_entries').select('*').in('device_id', candidateIds),
+        client.from('moto_expenses').select('*').in('device_id', candidateIds),
       ]);
 
-      const settings = settingsRes.data;
-      const rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
-      const rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
+      let settingsRows = Array.isArray(settingsRes.data) ? settingsRes.data : [];
+      let rawEntries = Array.isArray(entriesRes.data) ? entriesRes.data : [];
+      let rawExpenses = Array.isArray(expensesRes.data) ? expensesRes.data : [];
 
-      const demoEntryIdsToDelete: string[] = [];
+      // If no rows matched candidateIds, check if the user saved data under an earlier guest device_id in this database
+      if (settingsRows.length === 0 && rawEntries.length === 0 && rawExpenses.length === 0) {
+        const [allSettingsRes, allEntriesRes, allExpensesRes] = await Promise.all([
+          client.from('moto_settings').select('*').order('updated_at', { ascending: false }).limit(5),
+          client.from('moto_entries').select('*').limit(200),
+          client.from('moto_expenses').select('*').limit(200),
+        ]);
+        if (Array.isArray(allSettingsRes.data) && allSettingsRes.data.length > 0) {
+          settingsRows = allSettingsRes.data;
+        }
+        if (Array.isArray(allEntriesRes.data) && allEntriesRes.data.length > 0) {
+          rawEntries = allEntriesRes.data;
+        }
+        if (Array.isArray(allExpensesRes.data) && allExpensesRes.data.length > 0) {
+          rawExpenses = allExpensesRes.data;
+        }
+      }
+
+      // Pick the most recent / most populated settings row
+      const settings =
+        settingsRows.sort((a: any, b: any) => {
+          const tA = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
+          const tB = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
+          return tB - tA;
+        })[0] || null;
+
       const tableEntries: RideEntry[] = [];
       for (const row of rawEntries) {
         const mapped: RideEntry = {
@@ -556,14 +812,11 @@ export async function fetchRemoteCloudData(
           revenue: Number(row.revenue || 0),
           hours: Number(row.hours || 0),
         };
-        if (isLegacyDemoEntry(mapped)) {
-          demoEntryIdsToDelete.push(String(row.id));
-        } else {
+        if (!isLegacyDemoEntry(mapped)) {
           tableEntries.push(mapped);
         }
       }
 
-      const demoExpenseIdsToDelete: string[] = [];
       const tableExpenses: ExpenseEntry[] = [];
       for (const row of rawExpenses) {
         const mapped: ExpenseEntry = {
@@ -572,18 +825,9 @@ export async function fetchRemoteCloudData(
           category: row.category,
           amount: Number(row.amount || 0),
         };
-        if (isLegacyDemoExpense(mapped)) {
-          demoExpenseIdsToDelete.push(String(row.id));
-        } else {
+        if (!isLegacyDemoExpense(mapped)) {
           tableExpenses.push(mapped);
         }
-      }
-
-      if (demoEntryIdsToDelete.length > 0) {
-        client.from('moto_entries').delete().eq('device_id', deviceId).in('id', demoEntryIdsToDelete).then(() => {});
-      }
-      if (demoExpenseIdsToDelete.length > 0) {
-        client.from('moto_expenses').delete().eq('device_id', deviceId).in('id', demoExpenseIdsToDelete).then(() => {});
       }
 
       if (settings || tableEntries.length > 0 || tableExpenses.length > 0) {
@@ -597,7 +841,6 @@ export async function fetchRemoteCloudData(
           Array.isArray(snap.deletedExpenseIds) ? snap.deletedExpenseIds.map(Number) : []
         );
 
-        // Merge entries from table and JSONB cloudSnapshot
         const entryMap = new Map<number, RideEntry>();
         for (const e of tableEntries) {
           if (!deletedEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
@@ -612,7 +855,6 @@ export async function fetchRemoteCloudData(
           }
         }
 
-        // Merge expenses from table and JSONB cloudSnapshot
         const expenseMap = new Map<number, ExpenseEntry>();
         for (const ex of tableExpenses) {
           if (!deletedExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
@@ -627,14 +869,70 @@ export async function fetchRemoteCloudData(
           }
         }
 
-        const maintItems =
+        // Reconstruct maintenance items from custom_maints, cloudSnapshot, or legacy maintenance fields
+        let maintItems: MaintenanceItem[] | undefined =
           Array.isArray(settings?.custom_maints) && settings.custom_maints.length > 0
             ? settings.custom_maints
             : Array.isArray(snap.maintenanceItems) && snap.maintenanceItems.length > 0
             ? snap.maintenanceItems
             : undefined;
 
-        supabaseSnap = {
+        if (
+          !maintItems &&
+          (m.lastOilChangeKm !== undefined ||
+            m.lastTireChangeKm !== undefined ||
+            m.lastChainChangeKm !== undefined ||
+            m.lastBrakeChangeKm !== undefined)
+        ) {
+          maintItems = [
+            {
+              id: 'oil',
+              name: 'Troca de Óleo',
+              icon: '🛢️',
+              lastChangeKm: Number(m.lastOilChangeKm) || 0,
+              intervalKm: Number(m.oilIntervalKm) || 1000,
+              costEstimate: 45,
+              notes: 'Óleo 10W30 Semissintético',
+              isDefault: true,
+              alertThresholdPct: 85,
+            },
+            {
+              id: 'tire',
+              name: 'Pneus Dianteiro/Traseiro',
+              icon: '🛞',
+              lastChangeKm: Number(m.lastTireChangeKm) || 0,
+              intervalKm: Number(m.tireIntervalKm) || 10000,
+              costEstimate: 520,
+              notes: 'Calibrar semanalmente (29/33 PSI)',
+              isDefault: true,
+              alertThresholdPct: 90,
+            },
+            {
+              id: 'chain',
+              name: 'Kit Relação',
+              icon: '⚙️',
+              lastChangeKm: Number(m.lastChainChangeKm) || 0,
+              intervalKm: Number(m.chainIntervalKm) || 8000,
+              costEstimate: 210,
+              notes: 'Lubrificar corrente a cada 500 km',
+              isDefault: true,
+              alertThresholdPct: 80,
+            },
+            {
+              id: 'brake',
+              name: 'Pastilhas de Freio',
+              icon: '🛑',
+              lastChangeKm: Number(m.lastBrakeChangeKm) || 0,
+              intervalKm: Number(m.brakeIntervalKm) || 5000,
+              costEstimate: 75,
+              notes: 'Conferir fluído DOT 4 e disco',
+              isDefault: true,
+              alertThresholdPct: 85,
+            },
+          ];
+        }
+
+        collectedSnapshots.push({
           entries: Array.from(entryMap.values()),
           expenses: Array.from(expenseMap.values()),
           dailyGoal: Number(settings?.daily_goal || snap.dailyGoal) || 150,
@@ -668,59 +966,296 @@ export async function fetchRemoteCloudData(
             ? snap.customCategories
             : [],
           appOverrides: settings?.app_overrides || snap.appOverrides || {},
+          customShifts: Array.isArray(snap.customShifts) ? snap.customShifts : [],
+          shiftOverrides: snap.shiftOverrides || {},
+          deletedShiftIds: Array.isArray(snap.deletedShiftIds) ? snap.deletedShiftIds : [],
+          deletedAppIds: Array.isArray(snap.deletedAppIds) ? snap.deletedAppIds : [],
           deletedEntryIds: Array.from(deletedEntrySet),
           deletedExpenseIds: Array.from(deletedExpenseSet),
           lastSyncedAt: snap.lastSyncedAt || settings?.updated_at,
-        };
+        });
       }
     } catch {
-      // Ignore Supabase fetch error if serverSnap succeeded
+      // Ignore Supabase fetch error if other cloud sources succeeded
     }
   }
 
-  if (!supabaseSnap && !serverSnap) {
-    return null;
-  }
+  return combineSnapshotsList(collectedSnapshots);
+}
 
-  if (supabaseSnap && !serverSnap) return supabaseSnap;
-  if (!supabaseSnap && serverSnap) return serverSnap;
+/**
+ * BOTÃO 1: ENVIAR DADOS PARA A NUVEM (Upload Local -> Cloud)
+ * Envia todos os dados locais (corridas, gastos, KM base do odômetro, manutenções, metas e finanças)
+ * para a nuvem como a versão principal, mantendo também corridas antigas da nuvem que não foram excluídas.
+ */
+export async function uploadLocalDataToCloud(
+  localState: LocalRoomDatabaseState,
+  userEmail?: string | null
+): Promise<{
+  success: boolean;
+  status: string;
+  timestamp: string;
+  mergedState: LocalRoomDatabaseState;
+  stats: { entries: number; expenses: number; maintCards: number; totalKm: number };
+}> {
+  const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const isoNow = new Date().toISOString();
 
-  // Combine both remote sources (Supabase + Server Store)
-  const delEntries = new Set<number>([
-    ...(supabaseSnap?.deletedEntryIds || []),
-    ...(serverSnap?.deletedEntryIds || []),
-  ]);
-  const delExpenses = new Set<number>([
-    ...(supabaseSnap?.deletedExpenseIds || []),
-    ...(serverSnap?.deletedExpenseIds || []),
-  ]);
+  const remote = await fetchRemoteCloudData(userEmail);
 
-  const combinedEntries = new Map<number, RideEntry>();
-  for (const e of [...(supabaseSnap?.entries || []), ...(serverSnap?.entries || [])]) {
-    if (e && !delEntries.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
-      combinedEntries.set(Number(e.id), e);
+  const deletedEntryIds = Array.from(
+    new Set<number>([...(localState.deletedEntryIds || []), ...(remote?.deletedEntryIds || [])])
+  );
+  const deletedExpenseIds = Array.from(
+    new Set<number>([...(localState.deletedExpenseIds || []), ...(remote?.deletedExpenseIds || [])])
+  );
+  const delEntrySet = new Set(deletedEntryIds);
+  const delExpenseSet = new Set(deletedExpenseIds);
+
+  // Preserve remote entries/expenses that aren't deleted, but local entries/expenses override on same ID
+  const entriesMap = new Map<number, RideEntry>();
+  for (const e of remote?.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
     }
   }
-
-  const combinedExpenses = new Map<number, ExpenseEntry>();
-  for (const ex of [...(supabaseSnap?.expenses || []), ...(serverSnap?.expenses || [])]) {
-    if (ex && !delExpenses.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
-      combinedExpenses.set(Number(ex.id), ex);
+  for (const e of localState.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
     }
   }
+  const mergedEntries = Array.from(entriesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
 
-  const supaTime = supabaseSnap?.lastSyncedAt ? new Date(supabaseSnap.lastSyncedAt).getTime() : 0;
-  const srvTime = serverSnap?.lastSyncedAt ? new Date(serverSnap.lastSyncedAt).getTime() : 0;
-  const newer = srvTime > supaTime ? serverSnap! : supabaseSnap!;
-  const older = srvTime > supaTime ? supabaseSnap! : serverSnap!;
+  const expensesMap = new Map<number, ExpenseEntry>();
+  for (const ex of remote?.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  for (const ex of localState.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  const mergedExpenses = Array.from(expensesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
+
+  // Local maintenance items and local fuelConfig / goals take priority when sending to cloud
+  const stateToPush: LocalRoomDatabaseState = {
+    ...localState,
+    entries: mergedEntries,
+    expenses: mergedExpenses,
+    deletedEntryIds,
+    deletedExpenseIds,
+    lastSyncedAt: isoNow,
+  };
+
+  const pushRes = await runWorkManagerCloudSync(stateToPush, userEmail, false, true);
+  const ridesKm = stateToPush.entries.reduce((s, e) => s + Number(e.km || 0), 0);
+  const totalKm = (Number(stateToPush.fuelConfig?.odometerBaseKm) || 0) + ridesKm;
 
   return {
-    ...older,
-    ...newer,
-    entries: Array.from(combinedEntries.values()),
-    expenses: Array.from(combinedExpenses.values()),
-    deletedEntryIds: Array.from(delEntries),
-    deletedExpenseIds: Array.from(delExpenses),
+    success: pushRes.success,
+    status: pushRes.status,
+    timestamp: pushRes.timestamp || nowStr,
+    mergedState: stateToPush,
+    stats: {
+      entries: stateToPush.entries.length,
+      expenses: stateToPush.expenses.length,
+      maintCards: stateToPush.maintenanceItems.length,
+      totalKm,
+    },
+  };
+}
+
+/**
+ * BOTÃO 2: BAIXAR / SINCRONIZAR DA NUVEM (Download Cloud -> Local)
+ * Baixa todos os dados salvos na nuvem (corridas, gastos, KM já rodados/odômetro, modelo da moto,
+ * cards de manutenção, histórico de trocas, metas e planejamento financeiro) e atualiza o dispositivo local.
+ */
+export async function downloadCloudDataToLocal(
+  localState: LocalRoomDatabaseState,
+  userEmail?: string | null
+): Promise<{
+  success: boolean;
+  foundRemoteData: boolean;
+  status: string;
+  timestamp: string;
+  mergedState: LocalRoomDatabaseState;
+  stats: { entries: number; expenses: number; maintCards: number; totalKm: number };
+}> {
+  const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const isoNow = new Date().toISOString();
+
+  const remote = await fetchRemoteCloudData(userEmail);
+
+  if (!remote || (!hasPopulatedData(remote) && (remote.entries || []).length === 0 && (remote.expenses || []).length === 0)) {
+    const ridesKm = localState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
+    const totalKm = (Number(localState.fuelConfig?.odometerBaseKm) || 0) + ridesKm;
+    return {
+      success: false,
+      foundRemoteData: false,
+      status: 'Nenhum dado encontrado na nuvem ainda',
+      timestamp: nowStr,
+      mergedState: localState,
+      stats: {
+        entries: localState.entries.length,
+        expenses: localState.expenses.length,
+        maintCards: localState.maintenanceItems.length,
+        totalKm,
+      },
+    };
+  }
+
+  const deletedEntryIds = Array.from(
+    new Set<number>([...(localState.deletedEntryIds || []), ...(remote.deletedEntryIds || [])])
+  );
+  const deletedExpenseIds = Array.from(
+    new Set<number>([...(localState.deletedExpenseIds || []), ...(remote.deletedExpenseIds || [])])
+  );
+  const delEntrySet = new Set(deletedEntryIds);
+  const delExpenseSet = new Set(deletedExpenseIds);
+
+  // Merge Entries (Local first, then Remote so Remote updates win when downloading from cloud)
+  const entriesMap = new Map<number, RideEntry>();
+  for (const e of localState.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
+    }
+  }
+  for (const e of remote.entries || []) {
+    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
+      entriesMap.set(Number(e.id), e);
+    }
+  }
+  const mergedEntries = Array.from(entriesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
+
+  // Merge Expenses (Local first, then Remote so Remote updates win)
+  const expensesMap = new Map<number, ExpenseEntry>();
+  for (const ex of localState.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  for (const ex of remote.expenses || []) {
+    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
+      expensesMap.set(Number(ex.id), ex);
+    }
+  }
+  const mergedExpenses = Array.from(expensesMap.values()).sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
+  );
+
+  // Merge Maintenance Items (Remote wins for KM/cost/interval, while combining all history records)
+  const maintMap = new Map<string, MaintenanceItem>();
+  for (const item of localState.maintenanceItems || []) {
+    maintMap.set(item.id, item);
+  }
+  if (Array.isArray(remote.maintenanceItems) && remote.maintenanceItems.length > 0) {
+    for (const rItem of remote.maintenanceItems) {
+      const lItem = maintMap.get(rItem.id);
+      if (!lItem) {
+        maintMap.set(rItem.id, rItem);
+      } else {
+        const histMap = new Map<string, MaintenanceHistoryRecord>();
+        for (const h of [...(lItem.history || []), ...(rItem.history || [])]) {
+          if (h && h.id) histMap.set(h.id, h);
+        }
+        maintMap.set(rItem.id, {
+          ...lItem,
+          ...rItem,
+          lastChangeKm:
+            Number(rItem.lastChangeKm) > 0
+              ? Number(rItem.lastChangeKm)
+              : Number(lItem.lastChangeKm) || 0,
+          history: Array.from(histMap.values()).sort((a, b) => b.date.localeCompare(a.date)),
+        });
+      }
+    }
+  }
+  const mergedMaintItems = Array.from(maintMap.values());
+
+  // Merge fuelConfig (preserving remote odometerBaseKm and bikeModelName!)
+  const remoteFuel = remote.fuelConfig;
+  const localFuel = localState.fuelConfig;
+  const mergedFuelConfig: FuelDiagnosticsConfig = {
+    kmPerLiter: Number(remoteFuel?.kmPerLiter || localFuel.kmPerLiter) || 35,
+    fuelPrice: Number(remoteFuel?.fuelPrice || localFuel.fuelPrice) || 5.8,
+    tankCapacityLiters: Number(remoteFuel?.tankCapacityLiters || localFuel.tankCapacityLiters) || 16.1,
+    bikeModelName:
+      remoteFuel?.bikeModelName && remoteFuel.bikeModelName !== 'Minha Moto'
+        ? remoteFuel.bikeModelName
+        : localFuel.bikeModelName || 'Minha Moto',
+    odometerBaseKm:
+      Number(remoteFuel?.odometerBaseKm) > 0
+        ? Number(remoteFuel?.odometerBaseKm)
+        : Number(localFuel.odometerBaseKm) || 0,
+  };
+
+  // Merge customApps, customCategories, customShifts
+  const appMap = new Map<string, AppDefinition>();
+  for (const a of [...(localState.customApps || []), ...(remote.customApps || [])]) {
+    if (a && a.id) appMap.set(a.id, a);
+  }
+  const catMap = new Map<string, CategoryDefinition>();
+  for (const c of [...(localState.customCategories || []), ...(remote.customCategories || [])]) {
+    if (c && c.id) catMap.set(c.id, c);
+  }
+  const shiftMap = new Map<string, ShiftDefinition>();
+  for (const s of [...(localState.customShifts || []), ...(remote.customShifts || [])]) {
+    if (s && s.id) shiftMap.set(s.id, s);
+  }
+
+  const mergedState: LocalRoomDatabaseState = {
+    ...localState,
+    entries: mergedEntries,
+    expenses: mergedExpenses,
+    maintenanceItems: mergedMaintItems,
+    dailyGoal: Number(remote.dailyGoal || localState.dailyGoal) || 150,
+    weeklyGoal: Number(remote.weeklyGoal || localState.weeklyGoal) || 900,
+    customGoalTarget: Number(remote.customGoalTarget || localState.customGoalTarget) || 3000,
+    customGoalDays: Number(remote.customGoalDays || localState.customGoalDays) || 20,
+    customGoalTitle: remote.customGoalTitle || localState.customGoalTitle || 'Meta Personalizada de Ganhos',
+    maintenanceNotificationsEnabled:
+      typeof remote.maintenanceNotificationsEnabled === 'boolean'
+        ? remote.maintenanceNotificationsEnabled
+        : localState.maintenanceNotificationsEnabled ?? true,
+    fuelConfig: mergedFuelConfig,
+    financialPlan: {
+      ...DEFAULT_FINANCIAL_PLAN,
+      ...(localState.financialPlan || {}),
+      ...(remote.financialPlan || {}),
+    },
+    customApps: Array.from(appMap.values()),
+    customCategories: Array.from(catMap.values()),
+    customShifts: Array.from(shiftMap.values()),
+    appOverrides: { ...(localState.appOverrides || {}), ...(remote.appOverrides || {}) },
+    shiftOverrides: { ...(localState.shiftOverrides || {}), ...(remote.shiftOverrides || {}) },
+    deletedEntryIds,
+    deletedExpenseIds,
+    lastSyncedAt: isoNow,
+  };
+
+  const ridesKm = mergedState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
+  const totalKm = (Number(mergedState.fuelConfig?.odometerBaseKm) || 0) + ridesKm;
+
+  return {
+    success: true,
+    foundRemoteData: true,
+    status: 'Dados Baixados e Sincronizados da Nuvem',
+    timestamp: nowStr,
+    mergedState,
+    stats: {
+      entries: mergedState.entries.length,
+      expenses: mergedState.expenses.length,
+      maintCards: mergedState.maintenanceItems.length,
+      totalKm,
+    },
   };
 }
 
@@ -736,177 +1271,94 @@ export async function syncBidirectionalWithCloud(
   mergedState: LocalRoomDatabaseState;
   stats: { entries: number; expenses: number; maintCards: number };
 }> {
-  const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const isoNow = new Date().toISOString();
-
-  if (simulateOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-    return {
-      success: false,
-      status: 'Offline (Room SQLite Local · WorkManager em fila)',
-      timestamp: nowStr,
-      mergedState: localState,
-      stats: {
-        entries: localState.entries.length,
-        expenses: localState.expenses.length,
-        maintCards: localState.maintenanceItems.length,
-      },
-    };
-  }
-
-  const remote = await fetchRemoteCloudData(userEmail);
-
-  if (!remote) {
-    const stampedLocal: LocalRoomDatabaseState = {
-      ...localState,
-      lastSyncedAt: isoNow,
-    };
-    const pushRes = await runWorkManagerCloudSync(stampedLocal, userEmail, false);
-    return {
-      success: pushRes.success,
-      status: pushRes.status,
-      timestamp: pushRes.timestamp,
-      mergedState: stampedLocal,
-      stats: {
-        entries: stampedLocal.entries.length,
-        expenses: stampedLocal.expenses.length,
-        maintCards: stampedLocal.maintenanceItems.length,
-      },
-    };
-  }
-
-  // Merge deleted IDs
-  const deletedEntryIds = Array.from(
-    new Set<number>([...(localState.deletedEntryIds || []), ...(remote.deletedEntryIds || [])])
-  );
-  const deletedExpenseIds = Array.from(
-    new Set<number>([...(localState.deletedExpenseIds || []), ...(remote.deletedExpenseIds || [])])
-  );
-  const delEntrySet = new Set(deletedEntryIds);
-  const delExpenseSet = new Set(deletedExpenseIds);
-
-  // Merge Entries by ID (Remote first, then Local so local edits win unless deleted)
-  const entriesMap = new Map<number, RideEntry>();
-  for (const e of remote.entries || []) {
-    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
-      entriesMap.set(Number(e.id), e);
+  if (preferRemoteScalars || !hasPopulatedData(localState)) {
+    const downRes = await downloadCloudDataToLocal(localState, userEmail);
+    if (downRes.foundRemoteData) {
+      return {
+        success: true,
+        status: downRes.status,
+        timestamp: downRes.timestamp,
+        mergedState: downRes.mergedState,
+        stats: {
+          entries: downRes.stats.entries,
+          expenses: downRes.stats.expenses,
+          maintCards: downRes.stats.maintCards,
+        },
+      };
     }
   }
-  for (const e of localState.entries || []) {
-    if (e && !delEntrySet.has(Number(e.id)) && !isLegacyDemoEntry(e)) {
-      entriesMap.set(Number(e.id), e);
-    }
-  }
-  const mergedEntries = Array.from(entriesMap.values()).sort(
-    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
-  );
 
-  // Merge Expenses by ID
-  const expensesMap = new Map<number, ExpenseEntry>();
-  for (const ex of remote.expenses || []) {
-    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
-      expensesMap.set(Number(ex.id), ex);
-    }
-  }
-  for (const ex of localState.expenses || []) {
-    if (ex && !delExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
-      expensesMap.set(Number(ex.id), ex);
-    }
-  }
-  const mergedExpenses = Array.from(expensesMap.values()).sort(
-    (a, b) => b.date.localeCompare(a.date) || b.id - a.id
-  );
-
-  // Merge Maintenance Items by ID (comparing updatedAt and history length)
-  const maintMap = new Map<string, MaintenanceItem>();
-  for (const item of localState.maintenanceItems || []) {
-    maintMap.set(item.id, item);
-  }
-  if (Array.isArray(remote.maintenanceItems) && remote.maintenanceItems.length > 0) {
-    for (const rItem of remote.maintenanceItems) {
-      const lItem = maintMap.get(rItem.id);
-      if (!lItem) {
-        maintMap.set(rItem.id, rItem);
-      } else {
-        const rTime = rItem.updatedAt || 0;
-        const lTime = lItem.updatedAt || 0;
-        const rHistLen = (rItem.history || []).length;
-        const lHistLen = (lItem.history || []).length;
-        if (
-          preferRemoteScalars ||
-          rTime > lTime ||
-          rHistLen > lHistLen ||
-          (rTime === lTime && rItem.lastChangeKm > lItem.lastChangeKm)
-        ) {
-          // Merge history records from both
-          const histMap = new Map<string, MaintenanceHistoryRecord>();
-          for (const h of [...(lItem.history || []), ...(rItem.history || [])]) {
-            if (h && h.id) histMap.set(h.id, h);
-          }
-          maintMap.set(rItem.id, {
-            ...lItem,
-            ...rItem,
-            history: Array.from(histMap.values()).sort((a, b) => b.date.localeCompare(a.date)),
-          });
-        }
-      }
-    }
-  }
-  const mergedMaintItems = Array.from(maintMap.values());
-
-  const localTime = localState.lastSyncedAt ? new Date(localState.lastSyncedAt).getTime() : 0;
-  const remoteTime = remote.lastSyncedAt ? new Date(remote.lastSyncedAt).getTime() : 0;
-  const useRemoteConfig = preferRemoteScalars || (remoteTime > localTime && localTime === 0);
-
-  const mergedState: LocalRoomDatabaseState = {
-    ...localState,
-    entries: mergedEntries,
-    expenses: mergedExpenses,
-    maintenanceItems: mergedMaintItems,
-    dailyGoal: useRemoteConfig ? remote.dailyGoal ?? localState.dailyGoal : localState.dailyGoal,
-    weeklyGoal: useRemoteConfig ? remote.weeklyGoal ?? localState.weeklyGoal : localState.weeklyGoal,
-    customGoalTarget: useRemoteConfig
-      ? remote.customGoalTarget ?? localState.customGoalTarget
-      : localState.customGoalTarget,
-    customGoalDays: useRemoteConfig
-      ? remote.customGoalDays ?? localState.customGoalDays
-      : localState.customGoalDays,
-    customGoalTitle: useRemoteConfig
-      ? remote.customGoalTitle ?? localState.customGoalTitle
-      : localState.customGoalTitle,
-    maintenanceNotificationsEnabled: useRemoteConfig
-      ? remote.maintenanceNotificationsEnabled ?? localState.maintenanceNotificationsEnabled
-      : localState.maintenanceNotificationsEnabled,
-    fuelConfig: useRemoteConfig ? remote.fuelConfig ?? localState.fuelConfig : localState.fuelConfig,
-    financialPlan: useRemoteConfig
-      ? remote.financialPlan ?? localState.financialPlan ?? DEFAULT_FINANCIAL_PLAN
-      : localState.financialPlan ?? remote.financialPlan ?? DEFAULT_FINANCIAL_PLAN,
-    customApps:
-      (remote.customApps || []).length > (localState.customApps || []).length
-        ? remote.customApps!
-        : localState.customApps,
-    customCategories:
-      (remote.customCategories || []).length > (localState.customCategories || []).length
-        ? remote.customCategories!
-        : localState.customCategories,
-    appOverrides: { ...(remote.appOverrides || {}), ...(localState.appOverrides || {}) },
-    deletedEntryIds,
-    deletedExpenseIds,
-    lastSyncedAt: isoNow,
-  };
-
-  const pushRes = await runWorkManagerCloudSync(mergedState, userEmail, false);
-
+  const upRes = await uploadLocalDataToCloud(localState, userEmail);
   return {
-    success: pushRes.success,
-    status: pushRes.status,
-    timestamp: pushRes.timestamp,
-    mergedState,
+    success: upRes.success,
+    status: upRes.status,
+    timestamp: upRes.timestamp,
+    mergedState: upRes.mergedState,
     stats: {
-      entries: mergedState.entries.length,
-      expenses: mergedState.expenses.length,
-      maintCards: mergedState.maintenanceItems.length,
+      entries: upRes.stats.entries,
+      expenses: upRes.stats.expenses,
+      maintCards: upRes.stats.maintCards,
     },
   };
+}
+
+export function exportCloudBackupCode(state: LocalRoomDatabaseState): string {
+  const payload = {
+    v: 3,
+    ts: new Date().toISOString(),
+    state,
+  };
+  const json = JSON.stringify(payload);
+  const encoded = btoa(unescape(encodeURIComponent(json)));
+  return `MOCHILINHA_BACKUP:${encoded}`;
+}
+
+export function importCloudBackupCode(
+  rawCode: string,
+  currentState: LocalRoomDatabaseState
+): { ok: boolean; mergedState?: LocalRoomDatabaseState; error?: string } {
+  try {
+    const trimmed = rawCode.trim();
+    const base64Part = trimmed.startsWith('MOCHILINHA_BACKUP:')
+      ? trimmed.slice('MOCHILINHA_BACKUP:'.length).trim()
+      : trimmed;
+    const jsonStr = decodeURIComponent(escape(atob(base64Part)));
+    const parsed = JSON.parse(jsonStr);
+    const incoming: Partial<LocalRoomDatabaseState> = parsed?.state || parsed;
+    if (!incoming || (!Array.isArray(incoming.entries) && !incoming.fuelConfig)) {
+      return { ok: false, error: 'Código de backup inválido ou incompleto.' };
+    }
+
+    const entriesMap = new Map<number, RideEntry>();
+    for (const e of [...(currentState.entries || []), ...(incoming.entries || [])]) {
+      if (e && !isLegacyDemoEntry(e)) entriesMap.set(Number(e.id), e);
+    }
+    const expensesMap = new Map<number, ExpenseEntry>();
+    for (const ex of [...(currentState.expenses || []), ...(incoming.expenses || [])]) {
+      if (ex && !isLegacyDemoExpense(ex)) expensesMap.set(Number(ex.id), ex);
+    }
+
+    const merged: LocalRoomDatabaseState = {
+      ...currentState,
+      ...incoming,
+      entries: Array.from(entriesMap.values()).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id),
+      expenses: Array.from(expensesMap.values()).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id),
+      fuelConfig: incoming.fuelConfig || currentState.fuelConfig,
+      maintenanceItems:
+        Array.isArray(incoming.maintenanceItems) && incoming.maintenanceItems.length > 0
+          ? incoming.maintenanceItems
+          : currentState.maintenanceItems,
+      financialPlan: {
+        ...DEFAULT_FINANCIAL_PLAN,
+        ...(currentState.financialPlan || {}),
+        ...(incoming.financialPlan || {}),
+      },
+      lastSyncedAt: new Date().toISOString(),
+    };
+    return { ok: true, mergedState: merged };
+  } catch {
+    return { ok: false, error: 'Não foi possível ler o código de backup. Verifique se copiou todo o código.' };
+  }
 }
 
 export async function registerPilotAccount(params: {

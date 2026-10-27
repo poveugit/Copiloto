@@ -21,6 +21,7 @@ import {
   Code2,
   Copy,
   Download,
+  Upload,
   Flame,
   MessageSquare,
   Send,
@@ -79,9 +80,11 @@ import {
   loginPilotAccount,
   resetPilotPassword,
   runWorkManagerCloudSync,
-  syncBidirectionalWithCloud,
+  uploadLocalDataToCloud,
+  downloadCloudDataToLocal,
+  exportCloudBackupCode,
+  importCloudBackupCode,
   clearRemoteCloudData,
-  fetchRemoteCloudData,
   isLegacyDemoEntry,
   isLegacyDemoExpense,
 } from './services/supabaseSync';
@@ -381,38 +384,26 @@ export default function App() {
     [simulateOffline, currentUser]
   );
 
-  // Real Bidirectional Cloud Sync (Pull from Cloud + Merge with Local Room + Push to Cloud)
-  const handleManualCloudSync = useCallback(
+  const [syncActionType, setSyncActionType] = useState<'upload' | 'download' | null>(null);
+  const [showBackupCodePanel, setShowBackupCodePanel] = useState<boolean>(false);
+  const [backupInputCode, setBackupInputCode] = useState<string>('');
+
+  // BOTÃO 1: ENVIAR DADOS PARA A NUVEM (Upload Local -> Cloud)
+  const handleUploadToCloud = useCallback(
     async (showFeedback = true) => {
       if (!currentUser || !currentUser.email) return;
-      if (simulateOffline) {
-        if (showFeedback) {
-          setSyncFeedbackBanner('⚠️ Desative o "Modo Offline Ativo" ao lado para sincronizar com o banco na nuvem.');
-        }
-        return;
-      }
-
       setIsSyncing(true);
+      setSyncActionType('upload');
       if (showFeedback) {
-        setSyncFeedbackBanner('Sincronizando dados locais com o banco na nuvem...');
+        setSyncFeedbackBanner('Enviando seus dados atuais (corridas, gastos, KM e configurações) para a nuvem...');
       }
 
-      const localSnap = loadDatabaseForUser(currentUser);
-      const isLocalBrandNew =
-        localSnap.entries.length === 0 &&
-        localSnap.expenses.length === 0 &&
-        !localSnap.lastSyncedAt;
-
-      const res = await syncBidirectionalWithCloud(
-        dbState,
-        currentUser.email,
-        simulateOffline,
-        isLocalBrandNew
-      );
+      const res = await uploadLocalDataToCloud(dbState, currentUser.email);
 
       setDbState(res.mergedState);
       localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
       setIsSyncing(false);
+      setSyncActionType(null);
       setLastSyncTime(res.timestamp);
       setWorkManagerStatus(res.status);
       if (res.success) {
@@ -422,52 +413,79 @@ export default function App() {
       if (showFeedback) {
         if (res.success) {
           setSyncFeedbackBanner(
-            `✅ Sincronizado com o banco às ${res.timestamp}! (${res.stats.entries} corridas, ${res.stats.expenses} gastos e ${res.stats.maintCards} cards de manutenção sincronizados entre seus dispositivos)`
+            `✅ Dados enviados para a nuvem às ${res.timestamp}! (${res.stats.entries} corridas, ${res.stats.expenses} gastos, ${res.stats.totalKm.toLocaleString('pt-BR')} km totais e ${res.stats.maintCards} cards de manutenção salvos no banco)`
           );
         } else {
           setSyncFeedbackBanner(
-            `⚠️ Salvo no Room Local às ${res.timestamp}. Verifique sua conexão para sincronizar na nuvem.`
+            `⚠️ Dados salvos neste aparelho às ${res.timestamp}. Verifique sua conexão para enviar à nuvem.`
           );
         }
       }
     },
-    [currentUser, dbState, simulateOffline]
+    [currentUser, dbState]
   );
 
-  // Bidirectional cloud sync on initial mount and when window regains focus (multi-device seamless sync)
-  useEffect(() => {
-    let active = true;
-    const syncFromRemoteOnLoad = async () => {
-      if (!currentUser || currentUser.isGuest || !currentUser.email || simulateOffline) return;
-      const currentLocal = loadDatabaseForUser(currentUser);
-      const isLocalUntouched =
-        currentLocal.entries.length === 0 &&
-        currentLocal.expenses.length === 0 &&
-        !currentLocal.lastSyncedAt;
-
+  // BOTÃO 2: BAIXAR / SINCRONIZAR DA NUVEM (Download Cloud -> Local)
+  const handleDownloadFromCloud = useCallback(
+    async (showFeedback = true) => {
+      if (!currentUser || !currentUser.email) return;
       setIsSyncing(true);
-      const res = await syncBidirectionalWithCloud(
-        currentLocal,
-        currentUser.email,
-        false,
-        isLocalUntouched
-      );
-      if (!active) return;
+      setSyncActionType('download');
+      if (showFeedback) {
+        setSyncFeedbackBanner('Buscando e baixando seus dados salvos na nuvem...');
+      }
+
+      const res = await downloadCloudDataToLocal(dbState, currentUser.email);
+
       setDbState(res.mergedState);
       localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
       setIsSyncing(false);
+      setSyncActionType(null);
       setLastSyncTime(res.timestamp);
       setWorkManagerStatus(res.status);
       if (res.success) {
         setPendingSyncCount(0);
       }
+
+      if (showFeedback) {
+        if (res.foundRemoteData) {
+          setSyncFeedbackBanner(
+            `✅ Dados baixados da nuvem às ${res.timestamp}! (${res.stats.entries} corridas, ${res.stats.expenses} gastos, ${res.stats.totalKm.toLocaleString('pt-BR')} km rodados e ${res.stats.maintCards} manutenções sincronizados neste aparelho)`
+          );
+        } else {
+          setSyncFeedbackBanner(
+            `⚠️ Nenhum backup encontrado na nuvem para ${currentUser.email} ainda. No aparelho onde seus dados estão cadastrados, clique em "Enviar Dados para a Nuvem" ou use o Código de Transferência abaixo.`
+          );
+        }
+      }
+    },
+    [currentUser, dbState]
+  );
+
+  // Automatic cloud download on initial mount and window focus (never overwrites cloud with empty local state!)
+  useEffect(() => {
+    let active = true;
+    const pullFromRemoteOnLoad = async () => {
+      if (!currentUser || currentUser.isGuest || !currentUser.email) return;
+      const currentLocal = loadDatabaseForUser(currentUser);
+      setIsSyncing(true);
+      const res = await downloadCloudDataToLocal(currentLocal, currentUser.email);
+      if (!active) return;
+      if (res.foundRemoteData) {
+        setDbState(res.mergedState);
+        localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
+        setLastSyncTime(res.timestamp);
+        setWorkManagerStatus(res.status);
+        setPendingSyncCount(0);
+      }
+      setIsSyncing(false);
     };
 
-    syncFromRemoteOnLoad();
+    pullFromRemoteOnLoad();
 
     const onWindowFocus = () => {
-      if (active && currentUser?.email && !simulateOffline) {
-        syncFromRemoteOnLoad();
+      if (active && currentUser?.email) {
+        pullFromRemoteOnLoad();
       }
     };
     window.addEventListener('focus', onWindowFocus);
@@ -475,26 +493,9 @@ export default function App() {
       active = false;
       window.removeEventListener('focus', onWindowFocus);
     };
-  }, [currentUser, simulateOffline]);
+  }, [currentUser]);
 
-  // Automatic periodic WorkManager bidirectional tick every 30s when online
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (!simulateOffline && currentUser && currentUser.email) {
-        setIsSyncing(true);
-        const res = await syncBidirectionalWithCloud(dbState, currentUser.email, false, false);
-        setDbState(res.mergedState);
-        localStorage.setItem(getStorageKeyForUser(currentUser), JSON.stringify(res.mergedState));
-        setIsSyncing(false);
-        setLastSyncTime(res.timestamp);
-        setWorkManagerStatus(res.status);
-        setPendingSyncCount(0);
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [dbState, simulateOffline, currentUser]);
-
-  // Helper to complete login and hydrate/merge user database from Room + Supabase/Server Cloud
+  // Helper to complete login and download user database from Cloud + Room
   const completeUserSessionLogin = async (
     user: UserProfile,
     plainPassword: string,
@@ -515,27 +516,18 @@ export default function App() {
     setSavedAccounts(getSavedLoginAccounts());
 
     const localUserDb = loadDatabaseForUser(user);
-    const isLocalUntouched =
-      localUserDb.entries.length === 0 &&
-      localUserDb.expenses.length === 0 &&
-      !localUserDb.lastSyncedAt;
-
-    const syncRes = await syncBidirectionalWithCloud(
-      localUserDb,
-      user.email,
-      simulateOffline,
-      isLocalUntouched
-    );
+    const downRes = await downloadCloudDataToLocal(localUserDb, user.email);
+    const finalState = downRes.foundRemoteData ? downRes.mergedState : localUserDb;
 
     setCurrentUser(user);
     setShowAuthScreen(false);
     if (!shouldRemember) {
       setAuthPassword('');
     }
-    setDbState(syncRes.mergedState);
-    localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(syncRes.mergedState));
-    setLastSyncTime(syncRes.timestamp);
-    setWorkManagerStatus(syncRes.status);
+    setDbState(finalState);
+    localStorage.setItem(getStorageKeyForUser(user), JSON.stringify(finalState));
+    setLastSyncTime(downRes.timestamp);
+    setWorkManagerStatus(downRes.foundRemoteData ? downRes.status : 'Banco Local Carregado');
   };
 
   // 1-Click Quick Login for Remembered Account
@@ -2552,12 +2544,12 @@ export default function App() {
         {/* Top Minimal Brand + Theme Switcher */}
         <header className="w-full max-w-6xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#FF6A1A] text-black font-black flex items-center justify-center text-base shadow-sm">
-              CR
+            <div className="w-9 h-9 rounded-xl bg-[#FF6A1A] text-black font-black flex items-center justify-center text-lg shadow-sm">
+              🎒
             </div>
             <div>
               <span className="text-base sm:text-lg font-black tracking-tight block leading-none">
-                CopilotRider
+                Mochilinha
               </span>
               <span className={`text-[11px] font-semibold ${mutedText}`}>
                 Gestão Financeira & Manutenção para Motoboys
@@ -3007,7 +2999,7 @@ export default function App() {
         </main>
 
         <footer className={`w-full max-w-6xl mx-auto text-center text-xs ${mutedText} py-2`}>
-          CopilotRider · Seus dados permanecem salvos no Room Database local e sincronizados com segurança.
+          Mochilinha · Seus dados permanecem salvos no banco local e sincronizados na nuvem com segurança.
         </footer>
       </div>
     );
@@ -3027,9 +3019,10 @@ export default function App() {
             e.preventDefault();
             setActiveTab('dashboard');
           }}
-          className="text-base sm:text-lg font-black tracking-tight whitespace-nowrap shrink-0"
+          className="text-base sm:text-lg font-black tracking-tight whitespace-nowrap shrink-0 flex items-center gap-1.5"
         >
-          CopilotRider
+          <span>🎒</span>
+          <span>Mochilinha</span>
         </a>
 
         <nav className="hidden md:flex items-center gap-6 text-sm font-semibold">
@@ -3088,89 +3081,95 @@ export default function App() {
               )}
             </button>
 
-            {/* Dropdown / Modal de Notificações adaptado para telas mobile */}
+            {/* Dropdown / Modal de Notificações adaptado para telas mobile e desktop */}
             {showNotificationsModal && (
-              <div
-                className={`absolute right-0 mt-2 w-[calc(100vw-1.75rem)] max-w-sm sm:w-96 rounded-2xl p-4 shadow-2xl z-50 border ${
-                  isDark
-                    ? 'bg-[#12141C] border-slate-800 text-slate-100'
-                    : 'bg-white border-slate-200 text-slate-900'
-                }`}
-              >
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800/40">
-                  <div className="flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-[#FF6A1A]" />
-                    <span className="text-xs font-black uppercase tracking-wider">
-                      Alertas de Manutenção ({pendingAlertNotifications.length})
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setShowNotificationsModal(false)}
-                    className={`p-1 rounded-lg ${surfaceSubtle} cursor-pointer`}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="mt-3 flex flex-col gap-2.5 max-h-80 overflow-y-auto">
-                  {pendingAlertNotifications.length === 0 ? (
-                    <div className="py-6 text-center text-xs font-semibold text-emerald-400 flex flex-col items-center gap-2">
-                      <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                      <span>Todas as manutenções estão abaixo da porcentagem de alerta!</span>
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowNotificationsModal(false)}
+                />
+                <div
+                  className={`fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
+                    isDark
+                      ? 'bg-[#12141C] border-slate-800 text-slate-100'
+                      : 'bg-white border-slate-200 text-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/40">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Bell className="w-4 h-4 text-[#FF6A1A] shrink-0" />
+                      <span className="text-xs font-black uppercase tracking-wider truncate">
+                        Alertas de Manutenção ({pendingAlertNotifications.length})
+                      </span>
                     </div>
-                  ) : (
-                    pendingAlertNotifications.map(item => (
-                      <div
-                        key={item.id}
+                    <button
+                      onClick={() => setShowNotificationsModal(false)}
+                      className={`p-1.5 rounded-lg shrink-0 ${surfaceSubtle} cursor-pointer`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex flex-col gap-2.5 max-h-[65vh] sm:max-h-80 overflow-y-auto">
+                    {pendingAlertNotifications.length === 0 ? (
+                      <div className="py-6 text-center text-xs font-semibold text-emerald-400 flex flex-col items-center gap-2">
+                        <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                        <span>Todas as manutenções estão abaixo da porcentagem de alerta!</span>
+                      </div>
+                    ) : (
+                      pendingAlertNotifications.map(item => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setActiveTab('maintenance');
+                            setShowNotificationsModal(false);
+                          }}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                            item.isOverdue
+                              ? 'bg-rose-500/10 border-rose-500/40 hover:bg-rose-500/20'
+                              : 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20'
+                          }`}
+                        >
+                          <span className="text-2xl shrink-0 mt-0.5">{item.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-black truncate">{item.name}</span>
+                              <span
+                                className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                                  item.isOverdue
+                                    ? 'bg-rose-500/25 text-rose-300'
+                                    : 'bg-amber-500/25 text-amber-300'
+                                }`}
+                              >
+                                {item.isOverdue ? 'Vencido' : `Alerta ${item.threshold}%`}
+                              </span>
+                            </div>
+                            <p className={`text-[11px] mt-0.5 break-words ${mutedText}`}>
+                              {item.isOverdue
+                                ? `Ultrapassou o limite (+${item.kmOverdue.toLocaleString('pt-BR')} km rodados além)`
+                                : `Atingiu ${item.rawPct}% do intervalo (restam ${item.kmRemaining.toLocaleString('pt-BR')} km)`}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {pendingAlertNotifications.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/40 flex justify-end">
+                      <button
                         onClick={() => {
                           setActiveTab('maintenance');
                           setShowNotificationsModal(false);
                         }}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                          item.isOverdue
-                            ? 'bg-rose-500/10 border-rose-500/40 hover:bg-rose-500/20'
-                            : 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20'
-                        }`}
+                        className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer"
                       >
-                        <span className="text-2xl shrink-0 mt-0.5">{item.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-xs font-black truncate">{item.name}</span>
-                            <span
-                              className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${
-                                item.isOverdue
-                                  ? 'bg-rose-500/25 text-rose-300'
-                                  : 'bg-amber-500/25 text-amber-300'
-                              }`}
-                            >
-                              {item.isOverdue ? 'Vencido' : `Alerta ${item.threshold}%`}
-                            </span>
-                          </div>
-                          <p className={`text-[11px] mt-0.5 ${mutedText}`}>
-                            {item.isOverdue
-                              ? `Ultrapassou o limite (+${item.kmOverdue.toLocaleString('pt-BR')} km rodados além)`
-                              : `Atingiu ${item.rawPct}% do intervalo (restam ${item.kmRemaining.toLocaleString('pt-BR')} km)`}
-                          </p>
-                        </div>
-                      </div>
-                    ))
+                        Ir para a Garagem da Moto →
+                      </button>
+                    </div>
                   )}
                 </div>
-
-                {pendingAlertNotifications.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-slate-800/40 flex justify-end">
-                    <button
-                      onClick={() => {
-                        setActiveTab('maintenance');
-                        setShowNotificationsModal(false);
-                      }}
-                      className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer"
-                    >
-                      Ir para a Garagem da Moto →
-                    </button>
-                  </div>
-                )}
-              </div>
+              </>
             )}
           </div>
 
@@ -6576,63 +6575,70 @@ export default function App() {
               </div>
             </div>
 
-            {/* WORKSPACE NATIVE ANDROID TOOLBAR CARD (Exclusivo na tela de Configurações) */}
+            {/* CENTRAL DE SINCRONIZAÇÃO COM A NUVEM (ENVIAR PARA NUVEM & BAIXAR DA NUVEM) */}
             <div
-              className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 ${surfaceCard}`}
+              className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-4 ${surfaceCard}`}
             >
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="font-bold text-[#FF6A1A]">Android Jetpack Compose · MVVM</span>
-                  <span aria-hidden="true" className={mutedText}>·</span>
-                  <span className="inline-flex items-center gap-1 font-medium">
-                    <Database className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>
-                      Room SQLite ({dbState.entries.length + dbState.expenses.length} regs · {dbState.maintenanceItems.length} cards)
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Database className="w-4 h-4 text-[#FF6A1A]" />
+                    <span className="text-sm sm:text-base font-black">
+                      Sincronização em Nuvem · Mochilinha Cloud
                     </span>
-                  </span>
-                  <span aria-hidden="true" className={mutedText}>·</span>
-                  <span className={`font-medium ${simulateOffline ? 'text-amber-500' : mutedText}`}>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      Multi-Dispositivo
+                    </span>
+                  </div>
+                  <p className={`text-xs mt-1 ${mutedText}`}>
+                    Use <strong>Enviar para a Nuvem</strong> no aparelho onde você cadastrou suas corridas, gastos e KM, e depois clique em <strong>Baixar da Nuvem</strong> ao acessar por outro celular ou navegador.
+                  </p>
+                </div>
+
+                <div className={`text-[11px] font-semibold shrink-0 px-3 py-2 rounded-xl ${surfaceSubtle}`}>
+                  <div className="font-bold text-[#FF6A1A]">
+                    {dbState.entries.length} corridas · {dbState.expenses.length} gastos ·{' '}
+                    {totals.totalKm.toLocaleString('pt-BR')} km
+                  </div>
+                  <div className={mutedText}>
                     {workManagerStatus} ({lastSyncTime})
-                    {pendingSyncCount > 0 ? ` · ${pendingSyncCount} na fila` : ''}
+                  </div>
+                </div>
+              </div>
+
+              {/* DOIS BOTÕES DEDICADOS: ENVIAR PARA A NUVEM vs BAIXAR DA NUVEM */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleUploadToCloud(true)}
+                  disabled={isSyncing}
+                  className="w-full justify-center px-4 py-3.5 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 transition-all cursor-pointer min-h-[48px] bg-[#FF6A1A] text-black hover:bg-[#ff7b33] shadow-sm"
+                >
+                  <Upload className={`w-4 h-4 stroke-[2.5] ${isSyncing && syncActionType === 'upload' ? 'animate-bounce' : ''}`} />
+                  <span>
+                    {isSyncing && syncActionType === 'upload'
+                      ? 'Enviando para a Nuvem...'
+                      : 'Enviar Dados para a Nuvem'}
                   </span>
-                </div>
+                </button>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {/* Offline Mode Simulator Toggle */}
-                  <button
-                    onClick={() => {
-                      const nextOffline = !simulateOffline;
-                      setSimulateOffline(nextOffline);
-                      if (!nextOffline) {
-                        persistAndEnqueueWorkManager(dbState);
-                      } else {
-                        setWorkManagerStatus('Offline Ativo · Room Local 100% Operacional');
-                      }
-                    }}
-                    className={`flex-1 sm:flex-initial justify-center px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap min-h-[40px] ${
-                      simulateOffline
-                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                        : isDark
-                        ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                        : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200'
-                    }`}
-                    title="Testar funcionamento 100% Offline via Room Database"
-                  >
-                    {simulateOffline ? <WifiOff className="w-3.5 h-3.5" /> : <Wifi className="w-3.5 h-3.5 text-emerald-500" />}
-                    <span>{simulateOffline ? 'Modo Offline Ativo' : 'Online (WorkManager)'}</span>
-                  </button>
-
-                  {/* Manual Bidirectional Cloud Sync Trigger */}
-                  <button
-                    type="button"
-                    onClick={() => handleManualCloudSync(true)}
-                    disabled={isSyncing}
-                    className="flex-1 sm:flex-initial justify-center px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap min-h-[40px] bg-[#FF6A1A] text-black hover:bg-[#ff7b33]"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadFromCloud(true)}
+                  disabled={isSyncing}
+                  className={`w-full justify-center px-4 py-3.5 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 transition-all cursor-pointer min-h-[48px] border ${
+                    isDark
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
+                      : 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Download className={`w-4 h-4 stroke-[2.5] ${isSyncing && syncActionType === 'download' ? 'animate-bounce' : ''}`} />
+                  <span>
+                    {isSyncing && syncActionType === 'download'
+                      ? 'Baixando da Nuvem...'
+                      : 'Baixar / Sincronizar da Nuvem'}
+                  </span>
+                </button>
               </div>
 
               {syncFeedbackBanner && (
@@ -6653,6 +6659,86 @@ export default function App() {
                   </button>
                 </div>
               )}
+
+              {/* Código de Transferência Direta / Backup Rápido entre Aparelhos */}
+              <div className="pt-2 border-t border-slate-800/40">
+                <button
+                  type="button"
+                  onClick={() => setShowBackupCodePanel(prev => !prev)}
+                  className={`text-xs font-bold flex items-center gap-1.5 cursor-pointer ${mutedText} hover:text-[#FF6A1A]`}
+                >
+                  <Copy className="w-3.5 h-3.5 text-[#FF6A1A]" />
+                  <span>
+                    {showBackupCodePanel
+                      ? 'Ocultar transferência por código de backup'
+                      : 'Precisa transferir dados de uma versão antiga? Usar Código de Backup Direto'}
+                  </span>
+                </button>
+
+                {showBackupCodePanel && (
+                  <div className={`mt-3 p-3.5 rounded-2xl border ${surfaceSubtle} flex flex-col gap-3`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-black">
+                          1. Copiar todos os dados deste aparelho
+                        </div>
+                        <div className={`text-[11px] ${mutedText}`}>
+                          Gera um código com todas as corridas, gastos, KM da moto e manutenções.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const code = exportCloudBackupCode(dbState);
+                          navigator.clipboard?.writeText(code);
+                          setSyncFeedbackBanner(
+                            '✅ Código de backup copiado! Cole no campo abaixo no outro aparelho ou navegador.'
+                          );
+                        }}
+                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black cursor-pointer shrink-0 flex items-center gap-1.5"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copiar Código dos Meus Dados</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-800/40 flex flex-col gap-2">
+                      <div className="text-xs font-black">
+                        2. Colar código de outro aparelho para restaurar e sincronizar
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={backupInputCode}
+                          onChange={e => setBackupInputCode(e.target.value)}
+                          placeholder="Cole aqui o código MOCHILINHA_BACKUP:..."
+                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!backupInputCode.trim()) return;
+                            const res = importCloudBackupCode(backupInputCode, dbState);
+                            if (!res.ok || !res.mergedState) {
+                              setSyncFeedbackBanner(`⚠️ ${res.error}`);
+                              return;
+                            }
+                            setBackupInputCode('');
+                            await persistAndEnqueueWorkManager(res.mergedState);
+                            await uploadLocalDataToCloud(res.mergedState, currentUser?.email);
+                            setSyncFeedbackBanner(
+                              `✅ Dados importados e sincronizados na nuvem com sucesso! (${res.mergedState.entries.length} corridas e ${res.mergedState.expenses.length} gastos)`
+                            );
+                          }}
+                          className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 text-black cursor-pointer shrink-0"
+                        >
+                          Restaurar Dados Agora
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 ${surfaceCard}`}>

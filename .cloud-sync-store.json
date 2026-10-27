@@ -1,0 +1,102 @@
+{
+  "usr_swamijunior346.sj_gmail.com": {
+    "state": {
+      "entries": [],
+      "expenses": [],
+      "dailyGoal": 150,
+      "weeklyGoal": 900,
+      "customGoalTarget": 3000,
+      "customGoalDays": 20,
+      "customGoalTitle": "Meta Personalizada de Ganhos",
+      "maintenanceNotificationsEnabled": true,
+      "maintenanceItems": [
+        {
+          "id": "oil",
+          "name": "Troca de Óleo",
+          "icon": "🛢️",
+          "lastChangeKm": 0,
+          "intervalKm": 1000,
+          "costEstimate": 45,
+          "notes": "Óleo 10W30 Semissintético",
+          "isDefault": true,
+          "alertThresholdPct": 85
+        },
+        {
+          "id": "tire",
+          "name": "Pneus Dianteiro/Traseiro",
+          "icon": "🛞",
+          "lastChangeKm": 0,
+          "intervalKm": 10000,
+          "costEstimate": 520,
+          "notes": "Calibrar semanalmente (29/33 PSI)",
+          "isDefault": true,
+          "alertThresholdPct": 90
+        },
+        {
+          "id": "chain",
+          "name": "Kit Relação",
+          "icon": "⚙️",
+          "lastChangeKm": 0,
+          "intervalKm": 8000,
+          "costEstimate": 210,
+          "notes": "Lubrificar corrente a cada 500 km",
+          "isDefault": true,
+          "alertThresholdPct": 80
+        },
+        {
+          "id": "brake",
+          "name": "Pastilhas de Freio",
+          "icon": "🛑",
+          "lastChangeKm": 0,
+          "intervalKm": 5000,
+          "costEstimate": 75,
+          "notes": "Conferir fluído DOT 4 e disco",
+          "isDefault": true,
+          "alertThresholdPct": 85
+        }
+      ],
+      "fuelConfig": {
+        "kmPerLiter": 35,
+        "fuelPrice": 5.8,
+        "tankCapacityLiters": 16.1,
+        "bikeModelName": "Minha Moto",
+        "odometerBaseKm": 0
+      },
+      "financialPlan": {
+        "workDaysPerMonth": 24,
+        "dailyLunchBudget": 22,
+        "dailySnackBudget": 10,
+        "emergencyReservePct": 10,
+        "maintenanceExtraBufferPct": 5,
+        "ipvaAnnual": 480,
+        "licensingAnnual": 160,
+        "insuranceOrMeiMonthly": 75,
+        "otherDocsAnnual": 120,
+        "docsTargetMonths": 12,
+        "revenueBaseMode": "actual_or_goal",
+        "customDailyGrossBase": 180,
+        "customDailyKmBase": 110
+      },
+      "customApps": [],
+      "customCategories": [],
+      "appOverrides": {},
+      "customShifts": [],
+      "shiftOverrides": {},
+      "deletedShiftIds": [],
+      "deletedAppIds": [],
+      "deletedEntryIds": [],
+      "deletedExpenseIds": [],
+      "lastSyncedAt": "2026-10-27T02:37:08.904Z"
+    },
+    "pilotProfile": {
+      "id": "usr_1793065121511",
+      "name": "Swami Junior",
+      "email": "swamijunior346.sj@gmail.com",
+      "phone": "",
+      "bikeModel": "Minha Moto",
+      "createdAt": "2026-10-27T01:38:41.511Z",
+      "passwordHash": "9ac4dbf2"
+    },
+    "updatedAt": "2026-10-27T02:37:20.410Z"
+  }
+}
