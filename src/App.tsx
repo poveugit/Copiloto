@@ -1761,12 +1761,12 @@ export default function App() {
   const [historyTypeFilter, setHistoryTypeFilter] = useState<'all' | 'ganho' | 'gasto'>('all');
   const [historySubFilter, setHistorySubFilter] = useState<string>('all');
 
-  // Copilot Chat Modal
+  // Mochilinha Chat Modal
   const [showCopilotModal, setShowCopilotModal] = useState<boolean>(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'bot' | 'user'; text: string }[]>([
     {
       role: 'bot',
-      text: 'Olá! Sou o seu Moto Copilot IA. Analiso em tempo real seus dados locais do Room Database, custos por KM e metas do turno. Como posso ajudar hoje?',
+      text: 'Olá! Sou a Mochilinha, sua IA assistente. Analiso em tempo real seus dados locais, custos por KM e metas do turno. Como posso ajudar hoje?',
     },
   ]);
   const [chatInput, setChatInput] = useState<string>('');
@@ -2178,7 +2178,7 @@ export default function App() {
         id: 'rev_10000',
         icon: '👑',
         title: 'Elite R$ 10.000',
-        desc: 'Fature R$ 10.000 registrados no CopilotRider',
+        desc: 'Fature R$ 10.000 registrados no Mochilinha',
         current: totals.totalRevenue,
         target: 10000,
         unit: 'R$',
@@ -3360,14 +3360,6 @@ export default function App() {
               </>
             )}
           </div>
-
-          <button
-            onClick={openNewEntryModal}
-            className="px-3 sm:px-4 py-2 text-xs font-bold text-black bg-[#FF6A1A] rounded-xl hover:bg-[#ff7b33] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
-          >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>Novo Registro</span>
-          </button>
         </div>
       </header>
 
@@ -3768,9 +3760,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right Column: Moto Copilot Decision, Quick Maintenance Status & App Ranking */}
+            {/* Right Column: Mochilinha Decision, Quick Maintenance Status & App Ranking */}
             <div className="lg:col-span-5 flex flex-col gap-4 sm:gap-6">
-              {/* Copilot Shift Evaluation Card */}
+              {/* Mochilinha Shift Evaluation Card */}
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-[#FF6A1A]">
@@ -3781,7 +3773,7 @@ export default function App() {
                     className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 transition-colors cursor-pointer flex items-center justify-center gap-1.5 self-start sm:self-auto"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Perguntar ao Copilot</span>
+                    <span>Perguntar à Mochilinha</span>
                   </button>
                 </div>
                 <h3 className="text-sm sm:text-base font-extrabold">{shiftEval.title}</h3>
@@ -4873,7 +4865,7 @@ export default function App() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                  Gestão Inteligente para Motoboys · IA Copilot
+                  Gestão Inteligente para Motoboys · IA Mochilinha
                 </span>
                 <h1 className="text-xl sm:text-2xl font-black mt-0.5">
                   Central de Finanças, Reservas Diárias & Lucro Real
@@ -5657,14 +5649,14 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h2 className="text-base sm:text-lg font-black">
-                            Consultor Financeiro Inteligente (IA do Motoboy)
+                            Consultor Financeiro Mochilinha (IA do Motoboy)
                           </h2>
                           <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
                             Análise em Tempo Real
                           </span>
                         </div>
                         <p className={`text-xs mt-0.5 ${mutedText}`}>
-                          A IA analisa seu faturamento, gastos de rua, desgaste da {dbState.fuelConfig.bikeModelName} e documentação para orientar seu bolso
+                          A Mochilinha analisa seu faturamento, gastos de rua, desgaste da {dbState.fuelConfig.bikeModelName} e documentação para orientar seu bolso
                         </p>
                       </div>
                     </div>
@@ -5733,7 +5725,7 @@ export default function App() {
                       type="text"
                       value={aiFinancialPrompt}
                       onChange={e => setAiFinancialPrompt(e.target.value)}
-                      placeholder="Pergunte para a IA Financeira (ex: Como juntar R$ 2.000 sem trabalhar domingo?)"
+                      placeholder="Pergunte para a Mochilinha (ex: Como juntar R$ 2.000 sem trabalhar domingo?)"
                       className={`flex-1 px-4 py-3 rounded-xl text-xs sm:text-sm font-semibold outline-none ${inputSurface}`}
                     />
                     <button
@@ -5742,7 +5734,7 @@ export default function App() {
                       className="px-5 py-3 rounded-xl bg-[#FF6A1A] text-black font-black text-xs sm:text-sm hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0 min-h-[44px]"
                     >
                       <Send className="w-3.5 h-3.5" />
-                      <span>Perguntar à IA</span>
+                      <span>Perguntar à Mochilinha</span>
                     </button>
                   </form>
                 </div>
@@ -7063,7 +7055,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-2 border-b border-slate-800/40">
                 <div>
                   <div className="text-sm font-bold">Meta Diária de Faturamento (R$)</div>
-                  <div className={`text-xs ${mutedText}`}>Usada no cálculo de progresso diário e Copilot</div>
+                  <div className={`text-xs ${mutedText}`}>Usada no cálculo de progresso diário e Mochilinha</div>
                 </div>
                 <FreeNumberInput
                   value={dbState.dailyGoal}
@@ -7268,6 +7260,17 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* FLOATING ACTION BUTTON: NOVO REGISTRO (Acima da barra de navegação, no lado direito da tela) */}
+      <button
+        type="button"
+        onClick={openNewEntryModal}
+        aria-label="Novo Registro"
+        className="fixed bottom-20 right-4 sm:right-6 z-40 px-4 py-3 sm:px-5 sm:py-3.5 text-xs sm:text-sm font-black text-black bg-[#FF6A1A] hover:bg-[#ff7b33] active:scale-95 rounded-2xl shadow-lg shadow-[#FF6A1A]/30 border border-orange-300/40 transition-all flex items-center gap-2 cursor-pointer"
+      >
+        <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8]" />
+        <span>Novo Registro</span>
+      </button>
 
       {/* FLOATING BOTTOM NAVIGATION BAR (Mobile Ergonomic Thumb Zone with safe spacing) */}
       <nav
@@ -7865,14 +7868,14 @@ export default function App() {
         </div>
       )}
 
-      {/* COPILOT AI ASSISTANT MODAL */}
+      {/* MOCHILINHA AI ASSISTANT MODAL */}
       {showCopilotModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[85vh] ${surfaceCard}`}>
             <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/50">
               <div>
-                <h3 className="text-sm sm:text-base font-black">Moto Copilot Gemini</h3>
-                <p className={`text-[11px] sm:text-xs ${mutedText}`}>Assistente inteligente integrado ao Room Database</p>
+                <h3 className="text-sm sm:text-base font-black">Mochilinha IA</h3>
+                <p className={`text-[11px] sm:text-xs ${mutedText}`}>Assistente inteligente Mochilinha integrada aos seus dados</p>
               </div>
               <button
                 onClick={() => setShowCopilotModal(false)}

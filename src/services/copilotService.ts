@@ -23,7 +23,7 @@ export function evaluateShiftWorthiness(
       badgeColor: '#38BDF8',
       title: 'Nenhum turno registrado hoje ainda.',
       summary: 'Seus dados começam zerados. Lance suas corridas do dia para acompanhar sua média por hora e progresso da meta.',
-      recommendation: 'Toque no botão "+ Novo Registro" no topo para adicionar seu primeiro ganho ou despesa.',
+      recommendation: 'Toque no botão flutuante "+ Novo Registro" no canto inferior direito para adicionar seu primeiro ganho ou despesa.',
       projectedExtra: `Meta diária configurada: R$ ${goal.toLocaleString('pt-BR')}`,
     };
   }

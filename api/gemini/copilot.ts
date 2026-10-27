@@ -23,7 +23,7 @@ export default async function handler(req: any, res: any) {
       },
     });
 
-    const systemPrompt = `Você é o Moto Copilot, o assistente virtual inteligente e especialista para motoboys e entregadores de aplicativo (iFood, Uber, 99, Rappi, Keeta).
+    const systemPrompt = `Você é a Mochilinha, a assistente virtual inteligente e especialista para motoboys e entregadores de aplicativo (iFood, Uber, 99, Rappi, Keeta).
 Responda de forma direta, amigável, motivadora e focada na realidade da rua em português do Brasil.
 
 Dados do Entregador Hoje:
