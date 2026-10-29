@@ -113,6 +113,8 @@ export interface LocalRoomDatabaseState {
   customGoalTarget?: number;
   customGoalDays?: number;
   customGoalTitle?: string;
+  customGoalMode?: 'days' | 'date';
+  customGoalTargetDate?: string;
   maintenanceNotificationsEnabled?: boolean;
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
@@ -278,6 +280,8 @@ export async function runWorkManagerCloudSync(
     customGoalTarget: state.customGoalTarget || 3000,
     customGoalDays: state.customGoalDays || 20,
     customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
+    customGoalMode: state.customGoalMode || 'days',
+    customGoalTargetDate: state.customGoalTargetDate || '',
     maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
     maintenanceItems: state.maintenanceItems || [],
     fuelConfig: state.fuelConfig,
@@ -405,6 +409,8 @@ export async function runWorkManagerCloudSync(
         customGoalTarget: state.customGoalTarget || 3000,
         customGoalDays: state.customGoalDays || 20,
         customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
+        customGoalMode: state.customGoalMode || 'days',
+        customGoalTargetDate: state.customGoalTargetDate || '',
         maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
         financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
         cloudSnapshot,
@@ -972,6 +978,8 @@ export async function fetchRemoteCloudData(
           customGoalTarget: Number(m.customGoalTarget || snap.customGoalTarget) || 3000,
           customGoalDays: Number(m.customGoalDays || snap.customGoalDays) || 20,
           customGoalTitle: m.customGoalTitle || snap.customGoalTitle || 'Meta Personalizada de Ganhos',
+          customGoalMode: (m.customGoalMode || snap.customGoalMode || 'days') as 'days' | 'date',
+          customGoalTargetDate: m.customGoalTargetDate || snap.customGoalTargetDate || '',
           maintenanceNotificationsEnabled:
             typeof m.maintenanceNotificationsEnabled === 'boolean'
               ? m.maintenanceNotificationsEnabled
@@ -1255,6 +1263,8 @@ export async function downloadCloudDataToLocal(
     customGoalTarget: Number(remote.customGoalTarget || localState.customGoalTarget) || 3000,
     customGoalDays: Number(remote.customGoalDays || localState.customGoalDays) || 20,
     customGoalTitle: remote.customGoalTitle || localState.customGoalTitle || 'Meta Personalizada de Ganhos',
+    customGoalMode: (remote.customGoalMode || localState.customGoalMode || 'days') as 'days' | 'date',
+    customGoalTargetDate: remote.customGoalTargetDate || localState.customGoalTargetDate || '',
     maintenanceNotificationsEnabled:
       typeof remote.maintenanceNotificationsEnabled === 'boolean'
         ? remote.maintenanceNotificationsEnabled
