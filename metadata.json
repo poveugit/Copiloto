@@ -1,6 +1,6 @@
 {
   "name": "Mochilinha",
   "description": "Mochilinha — Gestão Financeira, Corridas, Metas e Manutenção Inteligente para Motoboys e Entregadores.",
-  "requestFramePermissions": ["microphone"],
+  "requestFramePermissions": ["microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

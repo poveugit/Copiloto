@@ -59,6 +59,9 @@ import {
   FileText,
   Target,
   Sparkles,
+  Navigation,
+  MapPin,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -129,6 +132,12 @@ import {
   MicPermissionState,
   ParsedVoiceEntry,
 } from './services/voiceRecognition';
+import {
+  checkGpsPermissionStatus,
+  requestDeviceGpsPermission,
+  startGpsShiftWatcher,
+  GpsPermissionState,
+} from './services/gpsOdometerService';
 
 const BASE_APPS: AppDefinition[] = [
   { id: 'ifood', name: 'iFood', icon: '🛍️' },
@@ -931,10 +940,18 @@ export default function App() {
     return [...BASE_EXPENSE_CATEGORIES, ...dbState.customCategories];
   }, [dbState.customCategories]);
 
-  // Computed MVVM Totals
+  // Active Shift Session State (persisted in localStorage, tracks real-time GPS odometer)
+  const [activeShiftSession, setActiveShiftSession] = useState<ShiftSession | null>(() => getStoredShiftSession());
+
+  // Computed MVVM Totals (includes live GPS shift distance in real time when shift is active)
   const totals = useMemo(() => {
     const ridesKm = dbState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
-    const totalKm = (Number(dbState.fuelConfig.odometerBaseKm) || 0) + ridesKm;
+    const baseTotalKm = (Number(dbState.fuelConfig.odometerBaseKm) || 0) + ridesKm;
+    const liveShiftGpsKm =
+      activeShiftSession?.isActive && activeShiftSession?.gpsEnabled !== false
+        ? Number(activeShiftSession.gpsDistanceKm || 0)
+        : 0;
+    const totalKm = Math.round((baseTotalKm + liveShiftGpsKm) * 10) / 10;
     const totalHours = dbState.entries.reduce((s, e) => s + Number(e.hours || 0), 0);
 
     const revenueByApp: Record<string, number> = {};
@@ -953,6 +970,8 @@ export default function App() {
 
     return {
       ridesKm,
+      baseTotalKm,
+      liveShiftGpsKm,
       totalKm,
       totalHours,
       revenueByApp,
@@ -961,7 +980,16 @@ export default function App() {
       totalExpense,
       lucro: totalRevenue - totalExpense,
     };
-  }, [dbState.entries, dbState.expenses, dbState.fuelConfig.odometerBaseKm, allApps, allCategories]);
+  }, [
+    dbState.entries,
+    dbState.expenses,
+    dbState.fuelConfig.odometerBaseKm,
+    allApps,
+    allCategories,
+    activeShiftSession?.isActive,
+    activeShiftSession?.gpsEnabled,
+    activeShiftSession?.gpsDistanceKm,
+  ]);
 
   // Level info
   const level = useMemo(() => {
@@ -1530,12 +1558,11 @@ export default function App() {
   const [newCustomCatName, setNewCustomCatName] = useState<string>('');
   const [showNewCatInput, setShowNewCatInput] = useState<boolean>(false);
 
-  // ================= NEW FEATURES MODALS & SHIFT / VOICE STATE =================
+  // ================= NEW FEATURES MODALS & SHIFT / VOICE / GPS STATE =================
   const [showRadarModal, setShowRadarModal] = useState<boolean>(false);
   const [showTurnoModal, setShowTurnoModal] = useState<boolean>(false);
   const [showRelatorioMeiModal, setShowRelatorioMeiModal] = useState<boolean>(false);
   const [showMetaReversaModal, setShowMetaReversaModal] = useState<boolean>(false);
-  const [activeShiftSession, setActiveShiftSession] = useState<ShiftSession | null>(() => getStoredShiftSession());
   const [isRecordingVoice, setIsRecordingVoice] = useState<boolean>(false);
   const [voiceSpeechFeedback, setVoiceSpeechFeedback] = useState<string | null>(null);
   const [micPermissionStatus, setMicPermissionStatus] = useState<MicPermissionState>('prompt');
@@ -1544,18 +1571,113 @@ export default function App() {
   const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
   const [autoRecordAfterPermission, setAutoRecordAfterPermission] = useState<boolean>(true);
 
+  // GPS Real-Time & Background Odometer State
+  const [gpsPermissionStatus, setGpsPermissionStatus] = useState<GpsPermissionState>('prompt');
+  const [showGpsPermissionModal, setShowGpsPermissionModal] = useState<boolean>(false);
+  const [isRequestingGpsPermission, setIsRequestingGpsPermission] = useState<boolean>(false);
+  const [gpsPermissionError, setGpsPermissionError] = useState<string | null>(null);
+
   useEffect(() => {
     checkMicrophonePermissionStatus().then(status => {
       setMicPermissionStatus(status);
     });
+    checkGpsPermissionStatus().then(status => {
+      setGpsPermissionStatus(status);
+    });
   }, []);
 
-  const handleStartShift = (startKm: number) => {
+  const handleRequestDeviceGpsPermission = useCallback(async (): Promise<boolean> => {
+    setIsRequestingGpsPermission(true);
+    setGpsPermissionError(null);
+    const res = await requestDeviceGpsPermission();
+    setIsRequestingGpsPermission(false);
+    setGpsPermissionStatus(res.status);
+
+    if (res.granted) {
+      setShowGpsPermissionModal(false);
+      if (res.coords) {
+        setActiveShiftSession(prev => {
+          if (!prev || !prev.isActive) return prev;
+          const updated: ShiftSession = {
+            ...prev,
+            gpsEnabled: true,
+            lastLat: prev.lastLat ?? res.coords!.lat,
+            lastLng: prev.lastLng ?? res.coords!.lng,
+            lastTimestamp: prev.lastTimestamp ?? res.coords!.timestamp,
+            gpsAccuracyMeters: res.coords!.accuracy,
+            currentSpeedKmh: res.coords!.speedKmh,
+          };
+          saveStoredShiftSession(updated);
+          return updated;
+        });
+      }
+      setVoiceSpeechFeedback('🛰️ GPS em Tempo Real e 2º Plano ativado no dispositivo!');
+      setTimeout(() => setVoiceSpeechFeedback(null), 4000);
+      return true;
+    } else {
+      setGpsPermissionError(
+        res.error ||
+          'Permissão de localização necessária. Selecione "Permitir o tempo todo" nas configurações do aparelho.'
+      );
+      return false;
+    }
+  }, []);
+
+  // Continuous Real-Time & Background GPS Watcher when Shift is Active
+  useEffect(() => {
+    if (!activeShiftSession?.isActive || activeShiftSession.gpsEnabled === false) {
+      return;
+    }
+
+    const watcher = startGpsShiftWatcher(
+      {
+        lat: activeShiftSession.lastLat,
+        lng: activeShiftSession.lastLng,
+        timestamp: activeShiftSession.lastTimestamp,
+      },
+      update => {
+        setGpsPermissionStatus('granted');
+        setActiveShiftSession(prev => {
+          if (!prev || !prev.isActive) return prev;
+          const nextDistance =
+            Math.round(((Number(prev.gpsDistanceKm) || 0) + update.deltaKm) * 100) / 100;
+          const nextSession: ShiftSession = {
+            ...prev,
+            gpsDistanceKm: nextDistance,
+            lastLat: update.currentCoords.lat,
+            lastLng: update.currentCoords.lng,
+            lastTimestamp: update.currentCoords.timestamp,
+            currentSpeedKmh: update.currentCoords.speedKmh,
+            gpsAccuracyMeters: update.currentCoords.accuracy,
+            gpsPointsCount: (prev.gpsPointsCount || 0) + (update.deltaKm > 0 ? 1 : 0),
+          };
+          saveStoredShiftSession(nextSession);
+          return nextSession;
+        });
+      },
+      (errMessage, isPermissionDenied) => {
+        if (isPermissionDenied) {
+          setGpsPermissionStatus('denied');
+          setGpsPermissionError(errMessage);
+        }
+      }
+    );
+
+    return () => {
+      watcher.stop();
+    };
+  }, [activeShiftSession?.isActive, activeShiftSession?.gpsEnabled]);
+
+  const handleStartShift = (startKm: number, gpsEnabled = true) => {
     const session: ShiftSession = {
       isActive: true,
       startKm,
       startTime: new Date().toISOString(),
       startRevenue: totals.totalRevenue,
+      gpsEnabled,
+      gpsDistanceKm: 0,
+      currentSpeedKmh: 0,
+      gpsPointsCount: 0,
     };
     saveStoredShiftSession(session);
     setActiveShiftSession(session);
@@ -1574,19 +1696,29 @@ export default function App() {
 
     if (data.kmDelta > 0 || data.shiftRevenue > 0) {
       const today = todayStr();
+      const roundedKmDelta = Math.round(data.kmDelta * 10) / 10;
       const newEntry: RideEntry = {
         id: Date.now(),
         date: today,
         app: 'turno',
         shift: 'integral',
-        km: data.kmDelta,
+        km: roundedKmDelta,
         revenue: data.shiftRevenue,
         hours: Number(data.durationHours.toFixed(1)) || 1,
       };
 
+      const totalKmAfterEntry = totals.baseTotalKm + roundedKmDelta;
+      const extraBaseOffset =
+        data.syncOdometer && data.endKm > totalKmAfterEntry
+          ? Math.round((data.endKm - totalKmAfterEntry) * 10) / 10
+          : 0;
+
       const nextFuelConfig =
-        data.syncOdometer && data.endKm > (dbState.fuelConfig.odometerBaseKm || 0)
-          ? { ...dbState.fuelConfig, odometerBaseKm: data.endKm }
+        extraBaseOffset > 0
+          ? {
+              ...dbState.fuelConfig,
+              odometerBaseKm: (Number(dbState.fuelConfig.odometerBaseKm) || 0) + extraBaseOffset,
+            }
           : dbState.fuelConfig;
 
       persistAndEnqueueWorkManager({
@@ -3708,37 +3840,64 @@ export default function App() {
             <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
               {/* LIVE ACTIVE SHIFT BANNER */}
               {activeShiftSession?.isActive && (
-                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="relative flex h-3 w-3 shrink-0">
+                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-emerald-500/15 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-start sm:items-center gap-3 min-w-0">
+                    <span className="relative flex h-3 w-3 shrink-0 mt-1 sm:mt-0">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                          Turno em Andamento
+                          Turno Ativo · Odômetro GPS Automático
                         </span>
-                        <span className={`text-[11px] font-semibold ${mutedText}`}>
-                          · Início aos {activeShiftSession.startKm.toLocaleString('pt-BR')} km
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          +{(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          km no GPS
                         </span>
+                        {(activeShiftSession.currentSpeedKmh || 0) > 0 && (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                            {activeShiftSession.currentSpeedKmh} km/h
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs sm:text-sm font-bold mt-0.5 truncate">
-                        Ganhos no turno:{' '}
-                        <strong className="text-emerald-400 font-black">
-                          {fmtMoney(Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0)))}
-                        </strong>
+                      <div className="text-xs sm:text-sm font-bold mt-1 flex items-center gap-2 flex-wrap">
+                        <span>
+                          Início: <strong>{activeShiftSession.startKm.toLocaleString('pt-BR')} km</strong>
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Ganhos no turno:{' '}
+                          <strong className="text-emerald-400 font-black">
+                            {fmtMoney(Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0)))}
+                          </strong>
+                        </span>
                       </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowTurnoModal(true)}
-                    className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors shrink-0 cursor-pointer flex items-center gap-1.5 shadow-md"
-                  >
-                    <Square className="w-3.5 h-3.5 fill-black" />
-                    <span>Finalizar Turno</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    {gpsPermissionStatus !== 'granted' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowGpsPermissionModal(true)}
+                        className="px-3 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Permitir GPS 2º Plano</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowTurnoModal(true)}
+                      className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors shrink-0 cursor-pointer flex items-center gap-1.5 shadow-md"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-black" />
+                      <span>Ver / Encerrar</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3783,17 +3942,22 @@ export default function App() {
                     }`}
                   >
                     {activeShiftSession?.isActive ? (
-                      <Square className="w-4 h-4 fill-emerald-400" />
+                      <Navigation className="w-4 h-4 text-emerald-400 animate-pulse" />
                     ) : (
                       <Play className="w-4 h-4 fill-sky-400" />
                     )}
                   </div>
                   <div>
                     <div className="text-xs sm:text-sm font-black leading-tight">
-                      {activeShiftSession?.isActive ? 'Turno Ativo' : 'Iniciar Turno'}
+                      {activeShiftSession?.isActive ? 'Turno GPS Ativo' : 'Iniciar Turno'}
                     </div>
                     <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
-                      {activeShiftSession?.isActive ? 'Clique para encerrar' : 'Odômetro inicial'}
+                      {activeShiftSession?.isActive
+                        ? `+${(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })} km automáticos`
+                        : 'Odômetro GPS 2º plano'}
                     </div>
                   </div>
                 </button>
@@ -3840,12 +4004,30 @@ export default function App() {
               </div>
 
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
-                <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
-                  Odômetro Total · {dbState.fuelConfig.bikeModelName}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
+                    Odômetro Total · {dbState.fuelConfig.bikeModelName}
+                  </div>
+                  {activeShiftSession?.isActive && activeShiftSession.gpsEnabled !== false && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      <Navigation className="w-3 h-3 animate-pulse" />
+                      <span>
+                        GPS em Tempo Real (+
+                        {(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        km)
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <div className="mt-2 flex items-baseline gap-2 sm:gap-3 flex-wrap">
                   <span className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight tabular-nums">
-                    {totals.totalKm.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+                    {totals.totalKm.toLocaleString('pt-BR', {
+                      minimumFractionDigits: activeShiftSession?.isActive && totals.liveShiftGpsKm > 0 ? 1 : 0,
+                      maximumFractionDigits: 1,
+                    })}
                   </span>
                   <span className="text-xs sm:text-sm font-extrabold text-[#FF6A1A] uppercase tracking-wider">
                     KM Rodados
@@ -8061,6 +8243,72 @@ export default function App() {
                 </div>
               </div>
 
+              {/* PERMISSÃO DE LOCALIZAÇÃO GPS (ODÔMETRO AUTOMÁTICO EM 2º PLANO) */}
+              <div className="py-3.5 border-b border-slate-800/40 flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                        gpsPermissionStatus === 'granted'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          : gpsPermissionStatus === 'denied'
+                          ? 'bg-rose-500/15 border-rose-500/40 text-rose-400'
+                          : 'bg-sky-500/15 border-sky-500/40 text-sky-400'
+                      }`}
+                    >
+                      <Navigation className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold">
+                          Permissão de Localização GPS (Tempo Real & 2º Plano)
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                            gpsPermissionStatus === 'granted'
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : gpsPermissionStatus === 'denied'
+                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                          }`}
+                        >
+                          {gpsPermissionStatus === 'granted'
+                            ? 'Ativo no Aparelho'
+                            : gpsPermissionStatus === 'denied'
+                            ? 'Bloqueado'
+                            : 'Solicitar Permissão'}
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Permite que o odômetro conte a distância percorrida automaticamente no Modo Turno, inclusive em segundo plano enquanto você usa iFood, Uber ou 99.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGpsPermissionError(null);
+                        setShowGpsPermissionModal(true);
+                      }}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition-colors cursor-pointer flex items-center gap-1.5 ${
+                        gpsPermissionStatus === 'granted'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-[#FF6A1A] text-black hover:bg-[#ff7b33]'
+                      }`}
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      <span>
+                        {gpsPermissionStatus === 'granted'
+                          ? 'Configurar / Testar GPS'
+                          : 'Permitir GPS (O Tempo Todo)'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between gap-4 py-3 border-b border-slate-800/40">
                 <span className="text-sm font-bold">Tema da interface</span>
                 <button
@@ -9265,13 +9513,19 @@ export default function App() {
         isDark={isDark}
       />
 
-      {/* 2. CONTROLE DE TURNO MODAL (INICIAR / ENCERRAR COM ODÔMETRO) */}
+      {/* 2. CONTROLE DE TURNO MODAL (INICIAR / ENCERRAR COM ODÔMETRO AUTOMÁTICO GPS) */}
       <ControleTurnoModal
         isOpen={showTurnoModal}
         onClose={() => setShowTurnoModal(false)}
-        currentOdometer={totals.totalKm}
+        currentOdometer={totals.baseTotalKm}
         currentTotalRevenue={totals.totalRevenue}
         activeSession={activeShiftSession}
+        gpsPermissionStatus={gpsPermissionStatus}
+        onRequestGpsPermission={handleRequestDeviceGpsPermission}
+        onOpenGpsPermissionModal={() => {
+          setGpsPermissionError(null);
+          setShowGpsPermissionModal(true);
+        }}
         onStartShift={handleStartShift}
         onEndShift={handleEndShift}
         isDark={isDark}
@@ -9392,6 +9646,103 @@ export default function App() {
                     {isRequestingMicPermission
                       ? 'Solicitando no aparelho...'
                       : 'Permitir Microfone e Falar'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL DE PERMISSÃO DE LOCALIZAÇÃO GPS EM TEMPO REAL & SEGUNDO PLANO */}
+      {showGpsPermissionModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowGpsPermissionModal(false)}
+        >
+          <div
+            className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Navigation className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                    Odômetro Automático em 2º Plano
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    Permitir Localização Sempre
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGpsPermissionModal(false)}
+                className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3.5">
+              <p className={`text-xs sm:text-sm leading-relaxed ${mutedText}`}>
+                Para que o <strong className="text-[#FF6A1A]">Mochilinha</strong> marque a quilometragem percorrida{' '}
+                <strong className="text-current">automaticamente no Odômetro</strong> durante o Modo Turno — sem que você precise anotar manualmente — autorize o acesso ao GPS do seu aparelho.
+              </p>
+
+              <div className={`rounded-2xl p-3.5 flex flex-col gap-2 text-xs ${surfaceSubtle}`}>
+                <div className="font-black text-emerald-400 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span>Como ativar em Tempo Real e Segundo Plano:</span>
+                </div>
+                <ol className={`list-decimal list-inside space-y-1.5 font-medium ${mutedText}`}>
+                  <li>
+                    Toque em <strong className="text-current">"Ativar Localização GPS Agora"</strong> abaixo.
+                  </li>
+                  <li>
+                    No aviso do celular, escolha{' '}
+                    <strong className="text-emerald-400">"Permitir o tempo todo"</strong> (ou{' '}
+                    <strong className="text-current">"Permitir durante o uso do app"</strong>).
+                  </li>
+                  <li>
+                    Nas configurações de localização do aparelho, mantenha a{' '}
+                    <strong className="text-current">Localização Precisa (Alta Precisão)</strong> ligada para contar cada rua rodada enquanto você usa o iFood, Uber ou 99.
+                  </li>
+                </ol>
+              </div>
+
+              {gpsPermissionError && (
+                <div className="rounded-2xl p-3.5 bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 font-bold leading-relaxed flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-black text-rose-400 mb-0.5">Atenção na Permissão de GPS</div>
+                    <span>{gpsPermissionError}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGpsPermissionModal(false)}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  disabled={isRequestingGpsPermission}
+                  onClick={handleRequestDeviceGpsPermission}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
+                >
+                  <Navigation className={`w-4 h-4 ${isRequestingGpsPermission ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isRequestingGpsPermission
+                      ? 'Conectando ao GPS...'
+                      : 'Ativar Localização GPS Agora'}
                   </span>
                 </button>
               </div>

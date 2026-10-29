@@ -11,14 +11,25 @@ import {
   TrendingUp,
   MapPin,
   Flame,
+  Navigation,
+  ShieldCheck,
 } from 'lucide-react';
 import { FreeNumberInput } from './FreeNumberInput';
+import { GpsPermissionState } from '../services/gpsOdometerService';
 
 export interface ShiftSession {
   isActive: boolean;
   startKm: number;
   startTime: string; // ISO string
   startRevenue: number;
+  gpsEnabled?: boolean;
+  gpsDistanceKm?: number;
+  lastLat?: number;
+  lastLng?: number;
+  lastTimestamp?: number;
+  currentSpeedKmh?: number;
+  gpsAccuracyMeters?: number;
+  gpsPointsCount?: number;
 }
 
 const SHIFT_STORAGE_KEY = 'mochilinha_shift_session_v1';
@@ -51,7 +62,10 @@ interface ControleTurnoModalProps {
   currentOdometer: number;
   currentTotalRevenue: number;
   activeSession: ShiftSession | null;
-  onStartShift: (startKm: number) => void;
+  gpsPermissionStatus: GpsPermissionState;
+  onRequestGpsPermission: () => Promise<boolean>;
+  onOpenGpsPermissionModal: () => void;
+  onStartShift: (startKm: number, gpsEnabled: boolean) => void;
   onEndShift: (data: {
     startKm: number;
     endKm: number;
@@ -69,27 +83,52 @@ export function ControleTurnoModal({
   currentOdometer,
   currentTotalRevenue,
   activeSession,
+  gpsPermissionStatus,
+  onRequestGpsPermission,
+  onOpenGpsPermissionModal,
   onStartShift,
   onEndShift,
   isDark,
 }: ControleTurnoModalProps) {
   const [startKmInput, setStartKmInput] = useState<number>(currentOdometer || 0);
   const [endKmInput, setEndKmInput] = useState<number>(currentOdometer || 0);
+  const [manualEndKmOverride, setManualEndKmOverride] = useState<boolean>(false);
+  const [useAutoGps, setUseAutoGps] = useState<boolean>(true);
   const [syncOdometerCheckbox, setSyncOdometerCheckbox] = useState<boolean>(true);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [isStartingShiftGps, setIsStartingShiftGps] = useState<boolean>(false);
+
+  const liveGpsDistanceKm = Number(activeSession?.gpsDistanceKm || 0);
+  const autoCalculatedEndKm = useMemo(() => {
+    if (!activeSession) return currentOdometer || 0;
+    return Math.round((activeSession.startKm + liveGpsDistanceKm) * 10) / 10;
+  }, [activeSession, liveGpsDistanceKm, currentOdometer]);
 
   // Sync initial inputs when modal opens
   useEffect(() => {
     if (isOpen) {
+      setManualEndKmOverride(false);
       if (activeSession && activeSession.isActive) {
         setStartKmInput(activeSession.startKm);
-        setEndKmInput(Math.max(activeSession.startKm, currentOdometer));
+        const computedEnd = Math.max(
+          activeSession.startKm,
+          Math.round((activeSession.startKm + Number(activeSession.gpsDistanceKm || 0)) * 10) / 10,
+          currentOdometer
+        );
+        setEndKmInput(computedEnd);
       } else {
         setStartKmInput(currentOdometer || 0);
         setEndKmInput(currentOdometer || 0);
       }
     }
-  }, [isOpen, activeSession, currentOdometer]);
+  }, [isOpen, activeSession?.isActive, activeSession?.startKm, currentOdometer]);
+
+  // Keep endKmInput updated in real time with GPS distance unless user manually overrode it
+  useEffect(() => {
+    if (isOpen && activeSession?.isActive && !manualEndKmOverride) {
+      setEndKmInput(autoCalculatedEndKm);
+    }
+  }, [isOpen, activeSession?.isActive, autoCalculatedEndKm, manualEndKmOverride]);
 
   // Live timer tick when shift is active
   useEffect(() => {
@@ -116,7 +155,7 @@ export function ControleTurnoModal({
   const summary = useMemo(() => {
     const start = Number(startKmInput) || 0;
     const end = Number(endKmInput) || start;
-    const kmDelta = Math.max(0, end - start);
+    const kmDelta = Math.max(0, Math.round((end - start) * 10) / 10);
     const durationHours = Math.max(0.1, parseFloat((elapsedSeconds / 3600).toFixed(2)));
     const shiftRevenue = activeSession
       ? Math.max(0, currentTotalRevenue - (activeSession.startRevenue || 0))
@@ -135,15 +174,35 @@ export function ControleTurnoModal({
 
   if (!isOpen) return null;
 
-  const surfaceCard = isDark ? 'bg-[#12141C] border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900';
-  const surfaceSubtle = isDark ? 'bg-slate-900/70 border border-slate-800' : 'bg-slate-100 border border-slate-200';
-  const inputSurface = isDark ? 'bg-slate-800/80 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900';
+  const surfaceCard = isDark
+    ? 'bg-[#12141C] border-slate-800 text-slate-100'
+    : 'bg-white border-slate-200 text-slate-900';
+  const surfaceSubtle = isDark
+    ? 'bg-slate-900/70 border border-slate-800'
+    : 'bg-slate-100 border border-slate-200';
+  const inputSurface = isDark
+    ? 'bg-slate-800/80 border-slate-700 text-white'
+    : 'bg-white border-slate-300 text-slate-900';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
+
+  const handleStartClick = async () => {
+    if (useAutoGps && gpsPermissionStatus !== 'granted') {
+      setIsStartingShiftGps(true);
+      const granted = await onRequestGpsPermission();
+      setIsStartingShiftGps(false);
+      if (!granted) {
+        onOpenGpsPermissionModal();
+        return;
+      }
+    }
+    onStartShift(startKmInput, useAutoGps);
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div
-        className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[90vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
+        className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
       >
         {/* Header */}
         <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/50">
@@ -153,11 +212,15 @@ export function ControleTurnoModal({
                 activeSession?.isActive ? 'bg-emerald-500 text-black' : 'bg-[#FF6A1A] text-black'
               }`}
             >
-              {activeSession?.isActive ? <Clock className="w-5 h-5 animate-pulse" /> : <Gauge className="w-5 h-5" />}
+              {activeSession?.isActive ? (
+                <Navigation className="w-5 h-5 animate-pulse" />
+              ) : (
+                <Gauge className="w-5 h-5" />
+              )}
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm sm:text-base font-black">Controle de Turno (Odômetro)</h3>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h3 className="text-sm sm:text-base font-black">Controle de Turno & Odômetro GPS</h3>
                 <span
                   className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
                     activeSession?.isActive
@@ -165,11 +228,11 @@ export function ControleTurnoModal({
                       : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
                   }`}
                 >
-                  {activeSession?.isActive ? 'Em Andamento' : 'Turno Fechado'}
+                  {activeSession?.isActive ? 'GPS em Tempo Real' : 'Turno Fechado'}
                 </span>
               </div>
               <p className={`text-[11px] sm:text-xs ${mutedText}`}>
-                Inicie ao sair de casa e encerre ao voltar. O app calcula os KM do dia automaticamente.
+                Marca a distância percorrida automaticamente por GPS em tempo real e em 2º plano.
               </p>
             </div>
           </div>
@@ -184,52 +247,110 @@ export function ControleTurnoModal({
         {/* Shift Active State Display */}
         {activeSession?.isActive ? (
           <div className="mt-4 flex flex-col gap-3">
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/40 to-teal-950/30 border border-emerald-500/40 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
+            {/* Live GPS Banner */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/50 to-teal-950/40 border border-emerald-500/40 flex flex-col gap-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-                  Turno Aberto Agora
+                  {activeSession.gpsEnabled !== false
+                    ? 'Odômetro GPS Automático Ativo (2º Plano)'
+                    : 'Turno Aberto (Modo Manual)'}
                 </span>
-                <span className="text-xs font-black tabular-nums text-emerald-300">
-                  {formattedTime}
+                <span className="text-xs font-black tabular-nums text-emerald-300 bg-emerald-500/15 px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                  ⏱️ {formattedTime}
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                <div className="rounded-xl p-2.5 bg-black/30 border border-emerald-500/20">
-                  <span className={`block text-[10px] font-bold ${mutedText}`}>Odômetro Inicial</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block">
-                    {activeSession.startKm.toLocaleString('pt-BR')} km
+              {/* Real-time GPS Odometer Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="rounded-xl p-2.5 bg-black/35 border border-emerald-500/20">
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>KM no GPS (Turno)</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-emerald-400">
+                    +{liveGpsDistanceKm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                 </div>
-                <div className="rounded-xl p-2.5 bg-black/30 border border-emerald-500/20">
-                  <span className={`block text-[10px] font-bold ${mutedText}`}>Faturamento no Turno</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-emerald-400">
+                <div className="rounded-xl p-2.5 bg-black/35 border border-emerald-500/20">
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Odômetro Atual</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-white">
+                    {autoCalculatedEndKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km
+                  </span>
+                </div>
+                <div className="rounded-xl p-2.5 bg-black/35 border border-emerald-500/20">
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Velocidade GPS</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-sky-400">
+                    {activeSession.currentSpeedKmh || 0} km/h
+                  </span>
+                </div>
+                <div className="rounded-xl p-2.5 bg-black/35 border border-emerald-500/20">
+                  <span className={`block text-[10px] font-bold ${mutedText}`}>Ganhos no Turno</span>
+                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-[#FF6A1A]">
                     R$ {summary.shiftRevenue.toFixed(2)}
                   </span>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between text-[11px] pt-1 border-t border-emerald-500/20 text-emerald-200/90">
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <Navigation className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  {gpsPermissionStatus === 'granted'
+                    ? `Sinal GPS conectado ${
+                        activeSession.gpsAccuracyMeters ? `(±${activeSession.gpsAccuracyMeters}m)` : ''
+                      } · Contando KM sozinho`
+                    : 'Permissão de localização pendente'}
+                </span>
+                {gpsPermissionStatus !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={onOpenGpsPermissionModal}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-[#FF6A1A] text-black cursor-pointer"
+                  >
+                    Ativar GPS
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Ending Odometer Field */}
+            {/* Ending Odometer Field (Auto-populated by GPS, editable if needed) */}
             <div className={`p-4 rounded-2xl border ${surfaceSubtle} flex flex-col gap-3`}>
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-black text-[#FF6A1A]">
-                  Encerrar Turno: Digite o Odômetro Atual da Moto
-                </label>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <label className="text-xs font-black text-[#FF6A1A] block">
+                    Odômetro Final Calculado Automaticamente
+                  </label>
+                  <span className={`text-[10px] font-semibold ${mutedText}`}>
+                    Preenchido sozinho pelo GPS (você também pode ajustar se desejar)
+                  </span>
+                </div>
                 <span className={`text-[11px] font-bold tabular-nums ${mutedText}`}>
-                  KM Inicial: {activeSession.startKm}
+                  Início: {activeSession.startKm.toLocaleString('pt-BR')} km
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <FreeNumberInput
+                  step="0.1"
                   value={endKmInput}
-                  onValueChange={val => setEndKmInput(val)}
+                  onValueChange={val => {
+                    setManualEndKmOverride(true);
+                    setEndKmInput(val);
+                  }}
                   className={`w-full px-3.5 py-2.5 rounded-xl text-base sm:text-lg font-black tabular-nums outline-none ${inputSurface}`}
                   placeholder="Ex: 15280"
                 />
                 <span className="text-sm font-bold shrink-0">KM</span>
+                {manualEndKmOverride && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualEndKmOverride(false);
+                      setEndKmInput(autoCalculatedEndKm);
+                    }}
+                    title="Voltar para o valor automático do GPS"
+                    className="px-2.5 py-2 rounded-xl text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-pointer shrink-0"
+                  >
+                    Usar GPS
+                  </button>
+                )}
               </div>
 
               {/* Real-Time Preview of Distance Run */}
@@ -237,7 +358,7 @@ export function ControleTurnoModal({
                 <div className={`p-2 rounded-xl ${surfaceCard}`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>KM Rodados</span>
                   <span className="text-sm sm:text-base font-black tabular-nums text-[#FF6A1A]">
-                    {summary.kmDelta.toLocaleString('pt-BR')} km
+                    {summary.kmDelta.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km
                   </span>
                 </div>
                 <div className={`p-2 rounded-xl ${surfaceCard}`}>
@@ -261,7 +382,9 @@ export function ControleTurnoModal({
                   onChange={e => setSyncOdometerCheckbox(e.target.checked)}
                   className="rounded accent-[#FF6A1A] w-4 h-4"
                 />
-                <span>Atualizar automaticamente o Odômetro Principal da Moto para {endKmInput} km</span>
+                <span>
+                  Consolidar distância no Odômetro Principal da Moto ({endKmInput.toLocaleString('pt-BR')} km)
+                </span>
               </label>
             </div>
 
@@ -272,7 +395,7 @@ export function ControleTurnoModal({
                 onClick={onClose}
                 className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
               >
-                Voltar
+                Continuar Rodando
               </button>
               <button
                 type="button"
@@ -290,20 +413,83 @@ export function ControleTurnoModal({
                 className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-rose-500 text-white hover:bg-rose-600 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-rose-500/20"
               >
                 <Square className="w-4 h-4 fill-current" />
-                <span>Encerrar Turno ({summary.kmDelta} km rodados)</span>
+                <span>
+                  Encerrar Turno ({summary.kmDelta.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km)
+                </span>
               </button>
             </div>
           </div>
         ) : (
           /* Start Shift State Form */
           <div className="mt-4 flex flex-col gap-4">
+            {/* Automatic GPS Background Mode Card */}
+            <div
+              className={`p-4 rounded-2xl border transition-all flex flex-col gap-3 ${
+                useAutoGps
+                  ? 'bg-emerald-500/10 border-emerald-500/40'
+                  : surfaceSubtle
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
+                    <Navigation className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs sm:text-sm font-black">
+                        Odômetro Automático por GPS (2º Plano)
+                      </span>
+                      <span
+                        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                          gpsPermissionStatus === 'granted'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        }`}
+                      >
+                        {gpsPermissionStatus === 'granted'
+                          ? 'GPS Autorizado'
+                          : 'Requer Permissão'}
+                      </span>
+                    </div>
+                    <p className={`text-[11px] mt-1 leading-relaxed ${mutedText}`}>
+                      Marca os quilômetros rodados automaticamente em tempo real e em segundo plano, sem que você precise anotar o painel da moto.
+                    </p>
+                  </div>
+                </div>
+
+                <input
+                  type="checkbox"
+                  checked={useAutoGps}
+                  onChange={e => setUseAutoGps(e.target.checked)}
+                  className="rounded accent-emerald-500 w-5 h-5 shrink-0 mt-1 cursor-pointer"
+                />
+              </div>
+
+              {useAutoGps && gpsPermissionStatus !== 'granted' && (
+                <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                    Selecione &quot;Permitir o tempo todo&quot; no celular para funcionar em 2º plano.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onOpenGpsPermissionModal}
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer shrink-0"
+                  >
+                    Autorizar Localização
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className={`p-4 rounded-2xl border ${surfaceSubtle} flex flex-col gap-3`}>
               <div>
                 <label className="block text-xs font-black mb-1">
-                  Odômetro Inicial ao Sair de Casa (KM)
+                  Odômetro Inicial da Moto (KM)
                 </label>
                 <p className={`text-[11px] mb-2 ${mutedText}`}>
-                  Confirme o KM atual marcado no painel da sua moto para iniciar a contagem do turno:
+                  Já carregamos seu odômetro atual. O GPS somará os novos KM automaticamente a partir deste ponto:
                 </p>
                 <div className="flex items-center gap-2">
                   <FreeNumberInput
@@ -316,9 +502,11 @@ export function ControleTurnoModal({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-[#FF6A1A]">
-                <Flame className="w-4 h-4 shrink-0" />
-                <span>Ao iniciar, o Mochilinha marcará o horário e acompanhará seus ganhos em tempo real.</span>
+              <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-emerald-400">
+                <Flame className="w-4 h-4 shrink-0 text-[#FF6A1A]" />
+                <span>
+                  Assim que iniciar, o odômetro principal começará a subir automaticamente conforme você pilota!
+                </span>
               </div>
             </div>
 
@@ -332,14 +520,18 @@ export function ControleTurnoModal({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onStartShift(startKmInput);
-                  onClose();
-                }}
+                disabled={isStartingShiftGps}
+                onClick={handleStartClick}
                 className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
               >
                 <Play className="w-4 h-4 fill-current" />
-                <span>Iniciar Turno de Hoje</span>
+                <span>
+                  {isStartingShiftGps
+                    ? 'Ativando Satélite GPS...'
+                    : useAutoGps
+                    ? 'Iniciar Turno com GPS Automático'
+                    : 'Iniciar Turno Manual'}
+                </span>
               </button>
             </div>
           </div>
