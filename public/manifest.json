@@ -1,0 +1,39 @@
+{
+  "name": "Mochilinha — Gestão para Motoboys",
+  "short_name": "Mochilinha",
+  "description": "Gestão Financeira, Corridas, Metas, Manutenção e Lucro Real para Motoboys e Entregadores.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0F19",
+  "theme_color": "#FF6A1A",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Novo Registro",
+      "short_name": "Registro",
+      "description": "Lançar corrida ou despesa rapidamente",
+      "url": "/?action=novo_registro",
+      "icons": [{ "src": "/favicon.ico", "sizes": "64x64" }]
+    },
+    {
+      "name": "Radar de Corrida",
+      "short_name": "Radar",
+      "description": "Calcular se corrida compensa ou não",
+      "url": "/?action=radar",
+      "icons": [{ "src": "/favicon.ico", "sizes": "64x64" }]
+    },
+    {
+      "name": "Controle de Turno",
+      "short_name": "Turno",
+      "description": "Iniciar ou encerrar turno com odômetro",
+      "url": "/?action=turno",
+      "icons": [{ "src": "/favicon.ico", "sizes": "64x64" }]
+    }
+  ]
+}

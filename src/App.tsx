@@ -49,6 +49,16 @@ import {
   CalendarDays,
   Clock,
   Hourglass,
+  Mic,
+  MicOff,
+  Zap,
+  Printer,
+  Play,
+  Square,
+  Calculator,
+  FileText,
+  Target,
+  Sparkles,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -102,6 +112,23 @@ import {
   askFinancialAdvisorAI,
 } from './services/copilotService';
 import { KOTLIN_NATIVE_FILES } from './data/kotlinSourceCode';
+import { RadarCorridaModal } from './components/RadarCorridaModal';
+import {
+  ControleTurnoModal,
+  ShiftSession,
+  getStoredShiftSession,
+  saveStoredShiftSession,
+} from './components/ControleTurnoModal';
+import { RelatorioMeiModal } from './components/RelatorioMeiModal';
+import { MetaReversaModal } from './components/MetaReversaModal';
+import {
+  startSpeechRecognition,
+  isSpeechRecognitionSupported,
+  checkMicrophonePermissionStatus,
+  requestDeviceMicrophonePermission,
+  MicPermissionState,
+  ParsedVoiceEntry,
+} from './services/voiceRecognition';
 
 const BASE_APPS: AppDefinition[] = [
   { id: 'ifood', name: 'iFood', icon: '🛍️' },
@@ -1502,6 +1529,198 @@ export default function App() {
   // Expense Category Add State
   const [newCustomCatName, setNewCustomCatName] = useState<string>('');
   const [showNewCatInput, setShowNewCatInput] = useState<boolean>(false);
+
+  // ================= NEW FEATURES MODALS & SHIFT / VOICE STATE =================
+  const [showRadarModal, setShowRadarModal] = useState<boolean>(false);
+  const [showTurnoModal, setShowTurnoModal] = useState<boolean>(false);
+  const [showRelatorioMeiModal, setShowRelatorioMeiModal] = useState<boolean>(false);
+  const [showMetaReversaModal, setShowMetaReversaModal] = useState<boolean>(false);
+  const [activeShiftSession, setActiveShiftSession] = useState<ShiftSession | null>(() => getStoredShiftSession());
+  const [isRecordingVoice, setIsRecordingVoice] = useState<boolean>(false);
+  const [voiceSpeechFeedback, setVoiceSpeechFeedback] = useState<string | null>(null);
+  const [micPermissionStatus, setMicPermissionStatus] = useState<MicPermissionState>('prompt');
+  const [showMicPermissionModal, setShowMicPermissionModal] = useState<boolean>(false);
+  const [isRequestingMicPermission, setIsRequestingMicPermission] = useState<boolean>(false);
+  const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
+  const [autoRecordAfterPermission, setAutoRecordAfterPermission] = useState<boolean>(true);
+
+  useEffect(() => {
+    checkMicrophonePermissionStatus().then(status => {
+      setMicPermissionStatus(status);
+    });
+  }, []);
+
+  const handleStartShift = (startKm: number) => {
+    const session: ShiftSession = {
+      isActive: true,
+      startKm,
+      startTime: new Date().toISOString(),
+      startRevenue: totals.totalRevenue,
+    };
+    saveStoredShiftSession(session);
+    setActiveShiftSession(session);
+  };
+
+  const handleEndShift = (data: {
+    startKm: number;
+    endKm: number;
+    kmDelta: number;
+    durationHours: number;
+    shiftRevenue: number;
+    syncOdometer: boolean;
+  }) => {
+    saveStoredShiftSession(null);
+    setActiveShiftSession(null);
+
+    if (data.kmDelta > 0 || data.shiftRevenue > 0) {
+      const today = todayStr();
+      const newEntry: RideEntry = {
+        id: Date.now(),
+        date: today,
+        app: 'turno',
+        shift: 'integral',
+        km: data.kmDelta,
+        revenue: data.shiftRevenue,
+        hours: Number(data.durationHours.toFixed(1)) || 1,
+      };
+
+      const nextFuelConfig =
+        data.syncOdometer && data.endKm > (dbState.fuelConfig.odometerBaseKm || 0)
+          ? { ...dbState.fuelConfig, odometerBaseKm: data.endKm }
+          : dbState.fuelConfig;
+
+      persistAndEnqueueWorkManager({
+        ...dbState,
+        entries: [newEntry, ...dbState.entries],
+        fuelConfig: nextFuelConfig,
+      });
+    }
+  };
+
+  const handleAcceptRideFromRadar = (rideData: { revenue: number; km: number; hours: number }) => {
+    setShowRadarModal(false);
+    setEditingEntryId(null);
+    setEntryMode('ganho');
+    setEntryDate(todayStr());
+    if (allApps.length > 0) setSelectedApp(allApps[0].id);
+    setEntryRev(String(rideData.revenue));
+    setEntryKm(String(rideData.km));
+    setEntryHours(String(rideData.hours > 0 ? rideData.hours : 0.5));
+    setShowEntryModal(true);
+    setEntryModalFeedback(`Corrida do Radar (R$ ${rideData.revenue.toFixed(2)} · ${rideData.km} km) carregada!`);
+  };
+
+  const startVoiceCaptureSession = () => {
+    if (isRecordingVoice) return;
+    setIsRecordingVoice(true);
+    setVoiceSpeechFeedback('Ouvindo... Fale por exemplo: "Ganho 25 reais no iFood 8 km" ou "Gasto 40 reais gasolina"');
+
+    startSpeechRecognition(
+      (parsed: ParsedVoiceEntry) => {
+        setIsRecordingVoice(false);
+        setMicPermissionStatus('granted');
+        setEntryMode(parsed.mode);
+        setEntryDate(todayStr());
+        setEditingEntryId(null);
+
+        if (parsed.mode === 'ganho') {
+          if (parsed.amount > 0) setEntryRev(String(parsed.amount));
+          if (parsed.km > 0) setEntryKm(String(parsed.km));
+          if (parsed.hours && parsed.hours > 0) setEntryHours(String(parsed.hours));
+          if (parsed.appOrCategoryName) {
+            const matchedApp = allApps.find(
+              a =>
+                a.name.toLowerCase().includes(parsed.appOrCategoryName!.toLowerCase()) ||
+                parsed.appOrCategoryName!.toLowerCase().includes(a.name.toLowerCase())
+            );
+            if (matchedApp) setSelectedApp(matchedApp.id);
+          }
+        } else {
+          if (parsed.amount > 0) setExpenseAmount(String(parsed.amount));
+          if (parsed.appOrCategoryName) {
+            const matchedCat = allCategories.find(
+              c =>
+                c.name.toLowerCase().includes(parsed.appOrCategoryName!.toLowerCase()) ||
+                parsed.appOrCategoryName!.toLowerCase().includes(c.name.toLowerCase())
+            );
+            if (matchedCat) setSelectedCategory(matchedCat.id);
+          }
+        }
+
+        setVoiceSpeechFeedback(`Entendido: "${parsed.rawTranscript}"`);
+        setShowEntryModal(true);
+        setTimeout(() => setVoiceSpeechFeedback(null), 5000);
+      },
+      (err: string) => {
+        setIsRecordingVoice(false);
+        if (err.toLowerCase().includes('permissão') || err.toLowerCase().includes('bloquead') || err.toLowerCase().includes('negad')) {
+          setMicPermissionStatus('denied');
+          setMicPermissionError(err);
+          setShowMicPermissionModal(true);
+        }
+        setVoiceSpeechFeedback(err);
+        setTimeout(() => setVoiceSpeechFeedback(null), 5000);
+      },
+      () => setIsRecordingVoice(true),
+      () => setIsRecordingVoice(false)
+    );
+  };
+
+  const handleRequestDeviceMicPermission = async (startRecordingAfter = true) => {
+    setIsRequestingMicPermission(true);
+    setMicPermissionError(null);
+    const res = await requestDeviceMicrophonePermission();
+    setIsRequestingMicPermission(false);
+    setMicPermissionStatus(res.status);
+
+    if (res.granted) {
+      setShowMicPermissionModal(false);
+      if (startRecordingAfter) {
+        startVoiceCaptureSession();
+      } else {
+        setVoiceSpeechFeedback('✅ Permissão de microfone ativada no dispositivo! O modo de voz está pronto.');
+        setTimeout(() => setVoiceSpeechFeedback(null), 4000);
+      }
+    } else {
+      setMicPermissionError(
+        res.error || 'Permissão de voz não concedida. Autorize o uso do microfone nas configurações do navegador/aparelho.'
+      );
+    }
+  };
+
+  const handleTriggerVoiceDictation = async () => {
+    if (isRecordingVoice) return;
+
+    const currentPerm = await checkMicrophonePermissionStatus();
+    setMicPermissionStatus(currentPerm);
+
+    if (currentPerm !== 'granted') {
+      setMicPermissionError(null);
+      setAutoRecordAfterPermission(true);
+      setShowMicPermissionModal(true);
+      return;
+    }
+
+    startVoiceCaptureSession();
+  };
+
+  // PWA Shortcuts action detection (?action=novo_registro | ?action=radar | ?action=turno)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const action = urlParams.get('action');
+      if (action === 'novo_registro') {
+        openNewEntryModal();
+      } else if (action === 'radar') {
+        setShowRadarModal(true);
+      } else if (action === 'turno') {
+        setShowTurnoModal(true);
+      }
+    } catch {
+      // ignore url error
+    }
+  }, []);
 
   const openNewEntryModal = () => {
     setEditingEntryId(null);
@@ -3487,6 +3706,139 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
             {/* Left Column: Hero Odometer, Level Road & Main Financials */}
             <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
+              {/* LIVE ACTIVE SHIFT BANNER */}
+              {activeShiftSession?.isActive && (
+                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="relative flex h-3 w-3 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                          Turno em Andamento
+                        </span>
+                        <span className={`text-[11px] font-semibold ${mutedText}`}>
+                          · Início aos {activeShiftSession.startKm.toLocaleString('pt-BR')} km
+                        </span>
+                      </div>
+                      <div className="text-xs sm:text-sm font-bold mt-0.5 truncate">
+                        Ganhos no turno:{' '}
+                        <strong className="text-emerald-400 font-black">
+                          {fmtMoney(Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0)))}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTurnoModal(true)}
+                    className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors shrink-0 cursor-pointer flex items-center gap-1.5 shadow-md"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-black" />
+                    <span>Finalizar Turno</span>
+                  </button>
+                </div>
+              )}
+
+              {/* QUICK ACTIONS HUB (Radar de Lucro, Iniciar Turno, Relatório MEI, Meta Reversa) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRadarModal(true)}
+                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                    isDark
+                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-amber-500/30 hover:border-amber-500/60'
+                      : 'bg-white hover:bg-amber-50/50 border-amber-300 shadow-xs'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                    <Zap className="w-5 h-5 fill-amber-400/20" />
+                  </div>
+                  <div>
+                    <div className="text-xs sm:text-sm font-black leading-tight">Radar de Lucro</div>
+                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
+                      Aceito ou recuso a corrida?
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTurnoModal(true)}
+                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                    activeShiftSession?.isActive
+                      ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                      : isDark
+                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-sky-500/30 hover:border-sky-500/60'
+                      : 'bg-white hover:bg-sky-50/50 border-sky-300 shadow-xs'
+                  }`}
+                >
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                      activeShiftSession?.isActive
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                        : 'bg-sky-500/15 border-sky-500/30 text-sky-400'
+                    }`}
+                  >
+                    {activeShiftSession?.isActive ? (
+                      <Square className="w-4 h-4 fill-emerald-400" />
+                    ) : (
+                      <Play className="w-4 h-4 fill-sky-400" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs sm:text-sm font-black leading-tight">
+                      {activeShiftSession?.isActive ? 'Turno Ativo' : 'Iniciar Turno'}
+                    </div>
+                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
+                      {activeShiftSession?.isActive ? 'Clique para encerrar' : 'Odômetro inicial'}
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowRelatorioMeiModal(true)}
+                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                    isDark
+                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-purple-500/30 hover:border-purple-500/60'
+                      : 'bg-white hover:bg-purple-50/50 border-purple-300 shadow-xs'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                    <Printer className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs sm:text-sm font-black leading-tight">Extrato MEI</div>
+                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
+                      Relatório em PDF
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowMetaReversaModal(true)}
+                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                    isDark
+                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-[#FF6A1A]/30 hover:border-[#FF6A1A]/60'
+                      : 'bg-white hover:bg-orange-50/50 border-[#FF6A1A]/40 shadow-xs'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs sm:text-sm font-black leading-tight">Meta Reversa</div>
+                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
+                      Quanto faturar por dia?
+                    </div>
+                  </div>
+                </button>
+              </div>
+
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
                 <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
                   Odômetro Total · {dbState.fuelConfig.bikeModelName}
@@ -5119,6 +5471,85 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            {/* LEMBRETE DO DAS-MEI (Vencimento todo dia 20 do mês) + BOTÕES RÁPIDOS */}
+            {(() => {
+              const today = new Date();
+              const currentDay = today.getDate();
+              const daysUntil20 = 20 - currentDay;
+              const isNearOrOver = currentDay >= 12 && currentDay <= 25;
+              const isPast20 = currentDay > 20;
+
+              return (
+                <div
+                  className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md ${
+                    isPast20
+                      ? 'bg-amber-500/10 border-amber-500/40'
+                      : isNearOrOver
+                      ? 'bg-purple-500/10 border-purple-500/40'
+                      : surfaceSubtle
+                  }`}
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                        isPast20
+                          ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                          : 'bg-purple-500/20 border-purple-500/40 text-purple-400'
+                      }`}
+                    >
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                            isPast20
+                              ? 'bg-amber-500/20 text-amber-300'
+                              : 'bg-purple-500/20 text-purple-300'
+                          }`}
+                        >
+                          {isPast20
+                            ? '⚠️ Venceu dia 20'
+                            : daysUntil20 === 0
+                            ? '🚨 Vence Hoje (Dia 20)!'
+                            : `Lembrete DAS-MEI · Vence dia 20 (${daysUntil20} dias)`}
+                        </span>
+                        <span className={`text-[11px] font-semibold ${mutedText}`}>
+                          Guia Mensal do MEI
+                        </span>
+                      </div>
+                      <p className="text-xs sm:text-sm font-bold mt-1">
+                        {isPast20
+                          ? 'O boleto DAS-MEI deste mês venceu dia 20. Se ainda não pagou, emita a guia atualizada no portal do Simples Nacional.'
+                          : daysUntil20 <= 5
+                          ? `Atenção: O boleto DAS-MEI vence ${daysUntil20 === 0 ? 'HOJE' : `em ${daysUntil20} dias`} (dia 20). Mantenha seu INSS e benefícios em dia!`
+                          : 'Pague sua guia DAS-MEI mensalmente até o dia 20 para garantir direitos do INSS e CNPJ regular.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 self-stretch md:self-auto justify-end flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowRelatorioMeiModal(true)}
+                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-purple-600 hover:bg-purple-500 text-white transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Extrato MEI (PDF)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMetaReversaModal(true)}
+                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Target className="w-3.5 h-3.5" />
+                      <span>Meta Reversa</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {billingSubTab === 'planejamento' && (
               <>
@@ -7555,6 +7986,81 @@ export default function App() {
                 </div>
               </div>
 
+              {/* PERMISSÃO DE VOZ E MICROFONE NO DISPOSITIVO */}
+              <div className="py-3.5 border-b border-slate-800/40 flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                        micPermissionStatus === 'granted'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          : micPermissionStatus === 'denied'
+                          ? 'bg-rose-500/15 border-rose-500/40 text-rose-400'
+                          : 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]'
+                      }`}
+                    >
+                      {micPermissionStatus === 'denied' ? (
+                        <MicOff className="w-5 h-5" />
+                      ) : (
+                        <Mic className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold">
+                          Permissão de Voz e Microfone no Dispositivo
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                            micPermissionStatus === 'granted'
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : micPermissionStatus === 'denied'
+                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                          }`}
+                        >
+                          {micPermissionStatus === 'granted'
+                            ? 'Permitido no Aparelho'
+                            : micPermissionStatus === 'denied'
+                            ? 'Bloqueado'
+                            : 'Solicitar Permissão'}
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Necessário para ditar corridas e gastos por voz sem precisar digitar enquanto pilota.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (micPermissionStatus === 'granted') {
+                          handleTriggerVoiceDictation();
+                        } else {
+                          setMicPermissionError(null);
+                          setAutoRecordAfterPermission(false);
+                          setShowMicPermissionModal(true);
+                        }
+                      }}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition-colors cursor-pointer flex items-center gap-1.5 ${
+                        micPermissionStatus === 'granted'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-[#FF6A1A] text-black hover:bg-[#ff7b33]'
+                      }`}
+                    >
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>
+                        {micPermissionStatus === 'granted'
+                          ? 'Testar Comando de Voz'
+                          : 'Permitir Microfone no Aparelho'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between gap-4 py-3 border-b border-slate-800/40">
                 <span className="text-sm font-bold">Tema da interface</span>
                 <button
@@ -7583,16 +8089,56 @@ export default function App() {
         )}
       </main>
 
-      {/* FLOATING ACTION BUTTON: NOVO REGISTRO (Acima da barra de navegação, no lado direito da tela) */}
-      <button
-        type="button"
-        onClick={openNewEntryModal}
-        aria-label="Novo Registro"
-        className="fixed bottom-20 right-4 sm:right-6 z-40 px-4 py-3 sm:px-5 sm:py-3.5 text-xs sm:text-sm font-black text-black bg-[#FF6A1A] hover:bg-[#ff7b33] active:scale-95 rounded-2xl shadow-lg shadow-[#FF6A1A]/30 border border-orange-300/40 transition-all flex items-center gap-2 cursor-pointer"
-      >
-        <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8]" />
-        <span>Novo Registro</span>
-      </button>
+      {/* FLOATING ACTION BUTTONS: DITAR POR VOZ + NOVO REGISTRO (Acima da barra de navegação, lado direito) */}
+      <div className="fixed bottom-20 right-4 sm:right-6 z-40 flex items-center gap-2">
+        {/* Voice Dictation Button */}
+        <button
+          type="button"
+          onClick={handleTriggerVoiceDictation}
+          title="Ditar Corrida ou Gasto por Voz (Hands-Free)"
+          aria-label="Ditar por Voz"
+          className={`h-11 sm:h-12 px-3 sm:px-3.5 rounded-2xl shadow-lg border transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+            isRecordingVoice
+              ? 'bg-rose-500 text-white border-rose-300 animate-pulse ring-4 ring-rose-500/30'
+              : isDark
+              ? 'bg-[#181A24] text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-[#202330]'
+              : 'bg-white text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-orange-50 shadow-md'
+          }`}
+        >
+          <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
+          <span className="text-xs font-black hidden xs:inline">
+            {isRecordingVoice ? 'Ouvindo...' : 'Voz'}
+          </span>
+        </button>
+
+        {/* Novo Registro Button */}
+        <button
+          type="button"
+          onClick={openNewEntryModal}
+          aria-label="Novo Registro"
+          className="h-11 sm:h-12 px-4 sm:px-5 text-xs sm:text-sm font-black text-black bg-[#FF6A1A] hover:bg-[#ff7b33] active:scale-95 rounded-2xl shadow-lg shadow-[#FF6A1A]/30 border border-orange-300/40 transition-all flex items-center gap-2 cursor-pointer"
+        >
+          <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8]" />
+          <span>Novo Registro</span>
+        </button>
+      </div>
+
+      {/* VOICE SPEECH FEEDBACK POPUP */}
+      {voiceSpeechFeedback && (
+        <div className="fixed bottom-36 right-4 left-4 sm:left-auto sm:w-96 z-50 p-3.5 rounded-2xl bg-[#FF6A1A] text-black font-black text-xs shadow-2xl flex items-center justify-between gap-2 border border-orange-200">
+          <div className="flex items-center gap-2 min-w-0">
+            <Mic className="w-4 h-4 shrink-0" />
+            <span className="truncate">{voiceSpeechFeedback}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setVoiceSpeechFeedback(null)}
+            className="p-1 rounded-lg hover:bg-black/10 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* FLOATING BOTTOM NAVIGATION BAR (Mobile Ergonomic Thumb Zone with safe spacing) */}
       <nav
@@ -7648,6 +8194,24 @@ export default function App() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {/* In-Modal Voice Dictation Banner */}
+            <button
+              type="button"
+              onClick={handleTriggerVoiceDictation}
+              className={`w-full mb-4 py-2.5 px-3.5 rounded-2xl border flex items-center justify-center gap-2 text-xs font-black transition-all cursor-pointer ${
+                isRecordingVoice
+                  ? 'bg-rose-500 text-white border-rose-400 animate-pulse ring-4 ring-rose-500/30'
+                  : 'bg-[#FF6A1A]/10 text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-[#FF6A1A]/20'
+              }`}
+            >
+              <Mic className={`w-4 h-4 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
+              <span>
+                {isRecordingVoice
+                  ? 'Ouvindo... Fale sua corrida ou gasto agora!'
+                  : 'Preencher por Voz (Ex: "Ganho 25 reais no iFood 8 km")'}
+              </span>
+            </button>
 
             <div className="grid grid-cols-2 gap-2 mb-5">
               <button
@@ -8688,6 +9252,151 @@ export default function App() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* 1. RADAR DE CORRIDA MODAL ("ACEITO OU RECUSO?") */}
+      <RadarCorridaModal
+        isOpen={showRadarModal}
+        onClose={() => setShowRadarModal(false)}
+        fuelConfig={dbState.fuelConfig}
+        maintenanceItems={dbState.maintenanceItems}
+        onAcceptRide={handleAcceptRideFromRadar}
+        isDark={isDark}
+      />
+
+      {/* 2. CONTROLE DE TURNO MODAL (INICIAR / ENCERRAR COM ODÔMETRO) */}
+      <ControleTurnoModal
+        isOpen={showTurnoModal}
+        onClose={() => setShowTurnoModal(false)}
+        currentOdometer={totals.totalKm}
+        currentTotalRevenue={totals.totalRevenue}
+        activeSession={activeShiftSession}
+        onStartShift={handleStartShift}
+        onEndShift={handleEndShift}
+        isDark={isDark}
+      />
+
+      {/* 3. RELATÓRIO / EXTRATO FISCAL MEI MODAL (IMPRESSÃO / PDF) */}
+      <RelatorioMeiModal
+        isOpen={showRelatorioMeiModal}
+        onClose={() => setShowRelatorioMeiModal(false)}
+        entries={dbState.entries}
+        expenses={dbState.expenses}
+        currentUser={currentUser}
+        fuelConfig={dbState.fuelConfig}
+        isDark={isDark}
+      />
+
+      {/* 4. SIMULADOR DE META REVERSA MODAL */}
+      <MetaReversaModal
+        isOpen={showMetaReversaModal}
+        onClose={() => setShowMetaReversaModal(false)}
+        fuelConfig={dbState.fuelConfig}
+        maintenanceItems={dbState.maintenanceItems}
+        financialPlan={finPlan}
+        currentDailyGoal={dbState.dailyGoal}
+        onApplyDailyGoal={(newDailyGoal) => {
+          persistAndEnqueueWorkManager({
+            ...dbState,
+            dailyGoal: newDailyGoal,
+          });
+          setShowMetaReversaModal(false);
+        }}
+        isDark={isDark}
+      />
+
+      {/* 5. MODAL DE SOLICITAÇÃO DE PERMISSÃO DE VOZ NO DISPOSITIVO */}
+      {showMicPermissionModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowMicPermissionModal(false)}
+        >
+          <div
+            className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                  <Mic className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A]">
+                    Permissão do Dispositivo
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    Ativar Comando de Voz
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMicPermissionModal(false)}
+                className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3.5">
+              <p className={`text-xs sm:text-sm leading-relaxed ${mutedText}`}>
+                Para registrar corridas e despesas falando (ex:{' '}
+                <strong className="text-current">"Ganho 25 reais no iFood 8 km"</strong> ou{' '}
+                <strong className="text-current">"Gasto 40 reais de gasolina"</strong>), o{' '}
+                <strong className="text-[#FF6A1A]">Mochilinha</strong> precisa de permissão para usar o microfone do seu aparelho.
+              </p>
+
+              <div className={`rounded-2xl p-3.5 flex flex-col gap-2 text-xs ${surfaceSubtle}`}>
+                <div className="font-black text-[#FF6A1A] flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>Como autorizar no celular ou computador:</span>
+                </div>
+                <ol className={`list-decimal list-inside space-y-1 font-medium ${mutedText}`}>
+                  <li>Toque no botão laranja abaixo para solicitar acesso ao microfone.</li>
+                  <li>
+                    Quando o aviso do seu aparelho aparecer na tela, toque em{' '}
+                    <strong className="text-current">"Permitir"</strong> ou{' '}
+                    <strong className="text-current">"Durante o uso do app"</strong>.
+                  </li>
+                  <li>Pronto! Fale sua corrida ou gasto e os campos serão preenchidos sozinhos.</li>
+                </ol>
+              </div>
+
+              {micPermissionError && (
+                <div className="rounded-2xl p-3.5 bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 font-bold leading-relaxed flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-black text-rose-400 mb-0.5">Acesso ao microfone bloqueado</div>
+                    <span>{micPermissionError}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowMicPermissionModal(false)}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                >
+                  Agora não
+                </button>
+                <button
+                  type="button"
+                  disabled={isRequestingMicPermission}
+                  onClick={() => handleRequestDeviceMicPermission(autoRecordAfterPermission)}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/25"
+                >
+                  <Mic className={`w-4 h-4 ${isRequestingMicPermission ? 'animate-bounce' : ''}`} />
+                  <span>
+                    {isRequestingMicPermission
+                      ? 'Solicitando no aparelho...'
+                      : 'Permitir Microfone e Falar'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
