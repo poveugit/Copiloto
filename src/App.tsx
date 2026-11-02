@@ -304,6 +304,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     customGoalTitle: 'Meta Personalizada de Ganhos',
     customGoalMode: 'days',
     customGoalTargetDate: '',
+    customGoalScope: 'month',
     maintenanceNotificationsEnabled: true,
     maintenanceItems: DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item })),
     fuelConfig: {
@@ -361,6 +362,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         customGoalTitle: parsed.customGoalTitle || 'Meta Personalizada de Ganhos',
         customGoalMode: (parsed.customGoalMode === 'date' ? 'date' : 'days') as 'days' | 'date',
         customGoalTargetDate: parsed.customGoalTargetDate || '',
+        customGoalScope: (parsed.customGoalScope === 'all' ? 'all' : 'month') as 'month' | 'all',
         maintenanceNotificationsEnabled:
           typeof parsed.maintenanceNotificationsEnabled === 'boolean'
             ? parsed.maintenanceNotificationsEnabled
@@ -389,8 +391,38 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
   return createCleanDatabaseState(user?.bikeModel);
 }
 
+const PT_BR_MONTH_NAMES = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
+
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getCurrentMonthName(): string {
+  const d = new Date();
+  return `${PT_BR_MONTH_NAMES[d.getMonth()]} de ${d.getFullYear()}`;
+}
+
+function getDaysRemainingInMonth(): number {
+  const d = new Date();
+  const totalDays = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return Math.max(1, totalDays - d.getDate() + 1);
 }
 
 function getDefaultFutureDate(daysAhead: number = 20): string {
@@ -1009,7 +1041,10 @@ export default function App() {
   const periodTotals = useMemo(() => {
     const now = new Date();
     const currentYear = now.getFullYear();
-    const currentMonthStr = `${currentYear}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const currentMonthNum = now.getMonth() + 1;
+    const currentMonthStr = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+    const currentMonthName = PT_BR_MONTH_NAMES[now.getMonth()];
+    const daysRemainingInMonth = getDaysRemainingInMonth();
     const dayOfWeek = now.getDay() || 7;
     const monday = new Date(now);
     monday.setDate(now.getDate() - (dayOfWeek - 1));
@@ -1031,7 +1066,7 @@ export default function App() {
       if (entryDate >= monday && entryDate <= sunday) revWeek += rev;
     });
 
-    return { revWeek, revMonth, revYear };
+    return { revWeek, revMonth, revYear, currentMonthStr, currentMonthName, daysRemainingInMonth };
   }, [dbState.entries]);
 
   // Shift & Bike Diagnostics
@@ -2361,8 +2396,9 @@ export default function App() {
     const remainingDaysInWeek = Math.max(1, 8 - dayOfWeek);
     const weeklyDailyNeeded = weeklyRemaining > 0 ? weeklyRemaining / remainingDaysInWeek : 0;
 
-    // Custom Goal stats
-    const customCurrent = totals.totalRevenue;
+    // Custom Goal stats (Padrão: Faturamento do Mês Atual para não considerar meses anteriores)
+    const customScope = dbState.customGoalScope || 'month';
+    const customCurrent = customScope === 'all' ? totals.totalRevenue : periodTotals.revMonth;
     const customPct = Math.min(100, Math.round((customCurrent / customGoalTarget) * 100));
     const customRemaining = Math.max(0, customGoalTarget - customCurrent);
     const customDailyNeeded = customRemaining > 0 ? customRemaining / customGoalDays : 0;
@@ -2745,6 +2781,8 @@ export default function App() {
       customGoalMode: dbState.customGoalMode || 'days',
       customGoalTargetDate: customGoalCountdown.targetDateStr,
       customGoalCountdown,
+      customScope,
+      currentMonthName: periodTotals.currentMonthName,
       revToday,
       kmToday,
       hoursToday,
@@ -2800,6 +2838,8 @@ export default function App() {
   }, [
     dbState,
     periodTotals.revWeek,
+    periodTotals.revMonth,
+    periodTotals.currentMonthName,
     totals,
     streakCount,
     allApps,
@@ -4183,7 +4223,7 @@ export default function App() {
                   );
                 })()}
 
-                {/* Meta Personalizada de Ganhos + Barra de Progresso + Meta Diária até Atingir o Objetivo (Modo Dias ou Data Futura com Contagem Regressiva) */}
+                {/* Meta Personalizada de Ganhos: Por Dia ou Data Personalizada (com faturamento do Mês Atual) */}
                 {(() => {
                   const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
                   const customMode = dbState.customGoalMode || 'days';
@@ -4194,16 +4234,12 @@ export default function App() {
                   );
                   const customDays = countdown.effectiveDays;
                   const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
-                  const currentEarned = totals.totalRevenue;
+                  const currentEarned = periodTotals.revMonth;
                   const rawPct = Math.round((currentEarned / customTarget) * 100);
                   const barPct = Math.min(100, Math.max(0, rawPct));
                   const remainingToGoal = Math.max(0, customTarget - currentEarned);
                   const isGoalReached = currentEarned >= customTarget;
                   const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
-                  const estimatedDaysAtCurrentDailyGoal =
-                    isGoalReached || dbState.dailyGoal <= 0
-                      ? 0
-                      : Math.ceil(remainingToGoal / Math.max(10, dbState.dailyGoal));
 
                   return (
                     <div
@@ -4215,7 +4251,7 @@ export default function App() {
                           : surfaceSubtle
                       }`}
                     >
-                      {/* Header + Mode Switcher */}
+                      {/* Header */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="flex items-center gap-2">
                           <div
@@ -4232,14 +4268,12 @@ export default function App() {
                               {customTitle}
                             </span>
                             <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
-                              {customMode === 'date'
-                                ? 'Acompanhamento com contagem regressiva diária até a data limite'
-                                : 'Defina seu objetivo e acompanhe a meta diária pelo prazo em dias'}
+                              Faturamento do mês atual com meta diária até o objetivo
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
                           <span
                             className={`text-xs sm:text-sm font-black tabular-nums ${
                               isGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
@@ -4250,7 +4284,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Modo da Meta: Prazo Fixo em Dias VS Data Futura com Contagem Regressiva */}
+                      {/* Funções de Modo: "Por Dia" ou "Data Personalizada" */}
                       <div className="flex items-center gap-1.5 mt-2.5">
                         <button
                           type="button"
@@ -4267,7 +4301,7 @@ export default function App() {
                           }`}
                         >
                           <Clock className="w-3.5 h-3.5" />
-                          <span>Por Dias</span>
+                          <span>Por Dia</span>
                         </button>
                         <button
                           type="button"
@@ -4287,12 +4321,12 @@ export default function App() {
                               : `${surfaceCard} text-slate-400 hover:text-current`
                           }`}
                         >
-                          <CalendarDays className="w-3.5 h-3.5" />
-                          <span>Data Futura (Contagem Regressiva)</span>
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>Data Personalizada</span>
                         </button>
                       </div>
 
-                      {/* Inline Fields: Valor da Meta Personalizada (R$) & Prazo/Data Futura */}
+                      {/* Inline Fields: Meta de Ganhos (R$), Prazo/Data e Meta Diária */}
                       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
                           <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
@@ -4319,17 +4353,9 @@ export default function App() {
                           <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
                             <div className="flex items-center justify-between gap-1">
                               <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                                Data Futura da Meta
+                                Data Personalizada
                               </label>
-                              <span
-                                className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border shrink-0 ${
-                                  countdown.isExpired
-                                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                                    : countdown.isToday
-                                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                                    : 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30'
-                                }`}
-                              >
+                              <span className="text-[10px] font-black text-[#FF6A1A]">
                                 ⏳ {countdown.countdownBadgeText}
                               </span>
                             </div>
@@ -4347,17 +4373,6 @@ export default function App() {
                                 className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
                               />
                             </div>
-                            <span
-                              className={`text-[10px] font-semibold mt-1 truncate ${
-                                countdown.isExpired
-                                  ? 'text-rose-400 font-bold'
-                                  : countdown.isToday
-                                  ? 'text-amber-400 font-bold'
-                                  : mutedText
-                              }`}
-                            >
-                              {countdown.countdownLabel}
-                            </span>
                           </div>
                         ) : (
                           <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
@@ -4404,28 +4419,17 @@ export default function App() {
                             {!isGoalReached && (
                               <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
                                 {customMode === 'date'
-                                  ? countdown.isExpired
-                                    ? 'prazo encerrado'
-                                    : countdown.isToday
-                                    ? 'último dia hoje'
-                                    : `faltam ${countdown.countdownDays}d`
+                                  ? `faltam ${countdown.countdownDays}d`
                                   : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
                               </span>
                             )}
                           </div>
-                          {!isGoalReached && customMode === 'date' && (
-                            <div className="text-[10px] font-semibold text-[#FF6A1A]/90 mt-0.5 truncate">
-                              {countdown.isExpired
-                                ? `Encerrado em ${formatPtBrDate(countdown.targetDateStr)}`
-                                : `Contagem até ${formatPtBrDate(countdown.targetDateStr)}`}
-                            </div>
-                          )}
                         </div>
                       </div>
 
                       {/* Progress Bar */}
                       <div
-                        className={`mt-3 h-3 rounded-full overflow-hidden ${
+                        className={`mt-3 h-2.5 sm:h-3 rounded-full overflow-hidden ${
                           isDark ? 'bg-slate-800' : 'bg-slate-200'
                         }`}
                       >
@@ -4433,31 +4437,21 @@ export default function App() {
                           className={`h-full rounded-full transition-all duration-500 ${
                             isGoalReached
                               ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                              : 'bg-gradient-to-r from-[#FF6A1A] via-amber-500 to-emerald-400'
+                              : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
                           }`}
                           style={{ width: `${barPct}%` }}
                         />
                       </div>
 
-                      {/* Bottom Status Details */}
-                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
+                      {/* Feedback Visual Direto: Apenas Progresso Atual e o Quanto Falta */}
+                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
                         <span className={mutedText}>
-                          {isGoalReached
-                            ? `🏆 Parabéns! Você superou sua meta personalizada em ${fmtMoney(
-                                currentEarned - customTarget
-                              )}!`
-                            : customMode === 'date'
-                            ? `⏳ Contagem Regressiva: ${countdown.countdownLabel} · Faltam ${fmtMoney(
-                                remainingToGoal
-                              )} · Faça ${fmtCurrencyExact(requiredDailyToReachGoal)}/dia`
-                            : `Faltam ${fmtMoney(remainingToGoal)} · Faça ${fmtCurrencyExact(
-                                requiredDailyToReachGoal
-                              )}/dia (${customDays} dias) ou ~${estimatedDaysAtCurrentDailyGoal} dias na meta de ${fmtMoney(
-                                dbState.dailyGoal
-                              )}/dia`}
+                          Progresso: <span className={isDark ? 'text-slate-100 font-bold' : 'text-slate-900 font-bold'}>{fmtMoney(currentEarned)}</span> de {fmtMoney(customTarget)} ({rawPct}%)
                         </span>
                         <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-[#FF6A1A] font-extrabold'}>
-                          {rawPct}% do objetivo
+                          {isGoalReached
+                            ? `🎉 Meta atingida (+${fmtMoney(currentEarned - customTarget)})`
+                            : `Faltam ${fmtMoney(remainingToGoal)}`}
                         </span>
                       </div>
                     </div>
@@ -7005,9 +6999,22 @@ export default function App() {
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3 ${surfaceCard}`}>
                 <div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A] truncate">
-                      {progressAnalytics.customGoalTitle}
-                    </span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A] truncate">
+                        {progressAnalytics.customGoalTitle}
+                      </span>
+                      <span
+                        className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border shrink-0 ${
+                          progressAnalytics.customScope === 'month'
+                            ? 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                            : 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+                        }`}
+                      >
+                        {progressAnalytics.customScope === 'month'
+                          ? `📅 ${progressAnalytics.currentMonthName}`
+                          : '🌐 Histórico'}
+                      </span>
+                    </div>
                     <span
                       className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border shrink-0 ${
                         progressAnalytics.customCurrent >= progressAnalytics.customGoalTarget
@@ -7015,7 +7022,9 @@ export default function App() {
                           : 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30'
                       }`}
                     >
-                      {progressAnalytics.customPct}% atingido
+                      {progressAnalytics.customCurrent >= progressAnalytics.customGoalTarget
+                        ? '100% Batida!'
+                        : `${progressAnalytics.customPct}% atingido`}
                     </span>
                   </div>
 
@@ -7943,19 +7952,13 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div>
                     <div className="text-sm font-bold flex items-center gap-2">
-                      <span>Meta Personalizada de Ganhos & Contagem Regressiva</span>
-                      {dbState.customGoalMode === 'date' && (
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
-                          Data Futura Ativa
-                        </span>
-                      )}
+                      <span>Meta Personalizada de Ganhos</span>
                     </div>
                     <div className={`text-xs ${mutedText}`}>
-                      Acompanhe por prazo fixo em dias ou defina uma data limite futura com contagem regressiva diária
+                      Acompanhamento com meta diária por dias ou data limite personalizada
                     </div>
                   </div>
 
-                  {/* Mode switcher in settings */}
                   <div className={`flex items-center gap-1 p-1 rounded-xl ${surfaceSubtle} shrink-0`}>
                     <button
                       type="button"
@@ -7966,7 +7969,7 @@ export default function App() {
                           : `${mutedText} hover:text-current`
                       }`}
                     >
-                      Por Dias
+                      Por Dia
                     </button>
                     <button
                       type="button"
@@ -7985,7 +7988,7 @@ export default function App() {
                           : `${mutedText} hover:text-current`
                       }`}
                     >
-                      Por Data Futura
+                      Data Personalizada
                     </button>
                   </div>
                 </div>
@@ -8015,7 +8018,7 @@ export default function App() {
                     <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
                       <div className="flex items-center justify-between mb-1">
                         <label className={`text-[11px] font-bold ${mutedText}`}>
-                          Data Limite Futura da Meta
+                          Data Personalizada
                         </label>
                         <span className="text-[10px] font-black text-[#FF6A1A]">
                           ⏳ {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownBadgeText}
@@ -8033,9 +8036,6 @@ export default function App() {
                         }
                         className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
                       />
-                      <div className={`text-[11px] mt-1.5 font-semibold text-[#FF6A1A]`}>
-                        {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownLabel}
-                      </div>
                     </div>
                   ) : (
                     <div className={`rounded-xl p-3 ${surfaceSubtle}`}>

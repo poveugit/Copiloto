@@ -115,6 +115,7 @@ export interface LocalRoomDatabaseState {
   customGoalTitle?: string;
   customGoalMode?: 'days' | 'date';
   customGoalTargetDate?: string;
+  customGoalScope?: 'month' | 'all';
   maintenanceNotificationsEnabled?: boolean;
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
@@ -282,6 +283,7 @@ export async function runWorkManagerCloudSync(
     customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
     customGoalMode: state.customGoalMode || 'days',
     customGoalTargetDate: state.customGoalTargetDate || '',
+    customGoalScope: state.customGoalScope || 'month',
     maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
     maintenanceItems: state.maintenanceItems || [],
     fuelConfig: state.fuelConfig,
@@ -411,6 +413,7 @@ export async function runWorkManagerCloudSync(
         customGoalTitle: state.customGoalTitle || 'Meta Personalizada de Ganhos',
         customGoalMode: state.customGoalMode || 'days',
         customGoalTargetDate: state.customGoalTargetDate || '',
+        customGoalScope: state.customGoalScope || 'month',
         maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
         financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
         cloudSnapshot,
@@ -980,6 +983,7 @@ export async function fetchRemoteCloudData(
           customGoalTitle: m.customGoalTitle || snap.customGoalTitle || 'Meta Personalizada de Ganhos',
           customGoalMode: (m.customGoalMode || snap.customGoalMode || 'days') as 'days' | 'date',
           customGoalTargetDate: m.customGoalTargetDate || snap.customGoalTargetDate || '',
+          customGoalScope: ((m.customGoalScope || snap.customGoalScope || 'month') as 'month' | 'all'),
           maintenanceNotificationsEnabled:
             typeof m.maintenanceNotificationsEnabled === 'boolean'
               ? m.maintenanceNotificationsEnabled
@@ -1265,6 +1269,7 @@ export async function downloadCloudDataToLocal(
     customGoalTitle: remote.customGoalTitle || localState.customGoalTitle || 'Meta Personalizada de Ganhos',
     customGoalMode: (remote.customGoalMode || localState.customGoalMode || 'days') as 'days' | 'date',
     customGoalTargetDate: remote.customGoalTargetDate || localState.customGoalTargetDate || '',
+    customGoalScope: ((remote.customGoalScope || localState.customGoalScope || 'month') as 'month' | 'all'),
     maintenanceNotificationsEnabled:
       typeof remote.maintenanceNotificationsEnabled === 'boolean'
         ? remote.maintenanceNotificationsEnabled
