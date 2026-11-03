@@ -26,6 +26,7 @@ import {
   MessageSquare,
   Send,
   ChevronRight,
+  ChevronDown,
   SlidersHorizontal,
   Fuel,
   Gauge,
@@ -1573,6 +1574,8 @@ export default function App() {
   const [entryRev, setEntryRev] = useState<string>('');
   const [entryHours, setEntryHours] = useState<string>('');
   const [expenseAmount, setExpenseAmount] = useState<string>('');
+  const [fuelLiters, setFuelLiters] = useState<string>('');
+  const [fuelPricePerLiter, setFuelPricePerLiter] = useState<string>('');
   const [entryModalFeedback, setEntryModalFeedback] = useState<string | null>(null);
 
   // App / Local Add & Edit States
@@ -1601,6 +1604,7 @@ export default function App() {
   const [showRelatorioMeiModal, setShowRelatorioMeiModal] = useState<boolean>(false);
   const [showMetaReversaModal, setShowMetaReversaModal] = useState<boolean>(false);
   const [showCockpitMenu, setShowCockpitMenu] = useState<boolean>(false);
+  const [showOdometerCostDetails, setShowOdometerCostDetails] = useState<boolean>(false);
   const [isEditingFoodMaintPlan, setIsEditingFoodMaintPlan] = useState<boolean>(false);
   const [isEditingDocsPlan, setIsEditingDocsPlan] = useState<boolean>(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState<boolean>(false);
@@ -1902,6 +1906,8 @@ export default function App() {
     setEntryRev('');
     setEntryHours('');
     setExpenseAmount('');
+    setFuelLiters('');
+    setFuelPricePerLiter(String(dbState.fuelConfig.fuelPrice || 5.8));
     setEntryModalFeedback(null);
     setShowNewAppInput(false);
     setNewCustomAppName('');
@@ -1920,6 +1926,20 @@ export default function App() {
     if (!allShifts.some(s => s.id === selectedShift) && allShifts.length > 0) {
       setSelectedShift(allShifts[0].id);
     }
+    setShowEntryModal(true);
+  };
+
+  const openNewFuelModal = () => {
+    setEditingEntryId(null);
+    setEntryMode('gasto');
+    setSelectedCategory('combustivel');
+    setEntryDate(todayStr());
+    setExpenseAmount('');
+    setFuelLiters('');
+    setFuelPricePerLiter(String(dbState.fuelConfig.fuelPrice || 5.8));
+    setEntryModalFeedback(null);
+    setShowNewCatInput(false);
+    setNewCustomCatName('');
     setShowEntryModal(true);
   };
 
@@ -1945,6 +1965,14 @@ export default function App() {
     } else {
       setSelectedCategory(item.category);
       setExpenseAmount(String(item.amount || ''));
+      setFuelLiters(item.liters !== undefined && item.liters !== null ? String(item.liters) : '');
+      setFuelPricePerLiter(
+        item.pricePerLiter !== undefined && item.pricePerLiter !== null
+          ? String(item.pricePerLiter)
+          : item.liters && item.amount
+          ? (item.amount / item.liters).toFixed(2)
+          : String(dbState.fuelConfig.fuelPrice || 5.8)
+      );
     }
     setShowEntryModal(true);
   };
@@ -2232,11 +2260,37 @@ export default function App() {
         return;
       }
 
+      const isFuel = finalCategoryId === 'combustivel';
+      let litersVal: number | undefined = undefined;
+      let pricePerLiterVal: number | undefined = undefined;
+
+      if (isFuel) {
+        pricePerLiterVal = Number(fuelPricePerLiter) || Number(nextDb.fuelConfig.fuelPrice) || 5.8;
+        litersVal = Number(fuelLiters) || 0;
+        if (litersVal <= 0 && pricePerLiterVal > 0) {
+          litersVal = Math.round((amountVal / pricePerLiterVal) * 100) / 100;
+        } else if (litersVal > 0 && pricePerLiterVal <= 0) {
+          pricePerLiterVal = Math.round((amountVal / litersVal) * 100) / 100;
+        }
+      }
+
       const updatedExpenses =
         editingEntryId !== null
           ? nextDb.expenses.map(e =>
               e.id === editingEntryId
-                ? { ...e, date: entryDate, category: finalCategoryId, amount: amountVal }
+                ? {
+                    ...e,
+                    date: entryDate,
+                    category: finalCategoryId,
+                    amount: amountVal,
+                    ...(isFuel
+                      ? {
+                          liters: litersVal,
+                          pricePerLiter: pricePerLiterVal,
+                          odometerKm: e.odometerKm !== undefined ? e.odometerKm : totals.totalKm,
+                        }
+                      : {}),
+                  }
                 : e
             )
           : [
@@ -2246,10 +2300,29 @@ export default function App() {
                 date: entryDate,
                 category: finalCategoryId,
                 amount: amountVal,
+                ...(isFuel
+                  ? {
+                      liters: litersVal,
+                      pricePerLiter: pricePerLiterVal,
+                      odometerKm: totals.totalKm,
+                    }
+                  : {}),
               },
             ];
 
-      persistAndEnqueueWorkManager({ ...nextDb, expenses: updatedExpenses });
+      let nextFuelConfig = nextDb.fuelConfig;
+      if (isFuel && pricePerLiterVal && pricePerLiterVal > 0) {
+        nextFuelConfig = {
+          ...nextDb.fuelConfig,
+          fuelPrice: pricePerLiterVal,
+        };
+      }
+
+      persistAndEnqueueWorkManager({
+        ...nextDb,
+        expenses: updatedExpenses,
+        fuelConfig: nextFuelConfig,
+      });
     }
 
     setEntryModalFeedback(null);
@@ -3077,6 +3150,61 @@ export default function App() {
       totalRealLoggedProfit,
     };
   }, [dbState, finPlan, progressAnalytics, totals]);
+
+  // ================= TELEMETRIA REAL DO COMBUSTÍVEL & AUTONOMIA BASEADA EM ABASTECIMENTO =================
+  const fuelTelemetry = useMemo(() => {
+    const kmPerLiter = Math.max(5, Number(dbState.fuelConfig.kmPerLiter) || 35);
+    const fuelExpenses = dbState.expenses
+      .filter(ex => ex.category === 'combustivel')
+      .sort((a, b) => {
+        if (a.date !== b.date) {
+          return b.date.localeCompare(a.date);
+        }
+        return (b.id || 0) - (a.id || 0);
+      });
+
+    const latestFuel = fuelExpenses.length > 0 ? fuelExpenses[0] : null;
+
+    if (latestFuel) {
+      const amountPaid = Number(latestFuel.amount) || 0;
+      const pricePerL = Number(latestFuel.pricePerLiter) || Number(dbState.fuelConfig.fuelPrice) || 5.8;
+      const liters = Number(latestFuel.liters) || (pricePerL > 0 ? amountPaid / pricePerL : 0);
+      const totalAutonomyKm = Math.round(liters * kmPerLiter);
+
+      const odoAtFuel = latestFuel.odometerKm !== undefined && latestFuel.odometerKm !== null ? Number(latestFuel.odometerKm) : totals.totalKm;
+      const kmSinceFuel = Math.max(0, totals.totalKm - odoAtFuel);
+      const remainingAutonomyKm = Math.max(0, totalAutonomyKm - kmSinceFuel);
+      const fuelPercentage = totalAutonomyKm > 0 ? Math.min(100, Math.max(0, Math.round((remainingAutonomyKm / totalAutonomyKm) * 100))) : 0;
+
+      return {
+        hasLoggedFuel: true,
+        latestFuel,
+        liters: Math.round(liters * 10) / 10,
+        amountPaid,
+        pricePerL,
+        totalAutonomyKm,
+        kmSinceFuel: Math.round(kmSinceFuel * 10) / 10,
+        remainingAutonomyKm,
+        fuelPercentage,
+        fuelDate: latestFuel.date,
+      };
+    }
+
+    const tankLiters = Number(dbState.fuelConfig.tankCapacityLiters) || 16.1;
+    const defaultAutonomy = Math.round(tankLiters * kmPerLiter);
+    return {
+      hasLoggedFuel: false,
+      latestFuel: null,
+      liters: tankLiters,
+      amountPaid: tankLiters * (Number(dbState.fuelConfig.fuelPrice) || 5.8),
+      pricePerL: Number(dbState.fuelConfig.fuelPrice) || 5.8,
+      totalAutonomyKm: defaultAutonomy,
+      kmSinceFuel: 0,
+      remainingAutonomyKm: defaultAutonomy,
+      fuelPercentage: 100,
+      fuelDate: null,
+    };
+  }, [dbState.expenses, dbState.fuelConfig, totals.totalKm]);
 
   // ================= 30-DAY REAL NET PROFIT EVOLUTION (RECHARTS AREA CHART) =================
   const realProfitEvolution30Days = useMemo(() => {
@@ -4254,26 +4382,191 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Primary 3 Financial KPIs (Adaptive 3-column with guaranteed mobile fit) */}
-                <div className="grid grid-cols-3 gap-1.5 sm:gap-4 mt-5 sm:mt-6 pt-4 sm:pt-6 border-t border-slate-800/40">
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-bold truncate ${mutedText}`}>Ganhos</div>
-                    <div className="text-xs sm:text-xl lg:text-2xl font-black mt-1 tabular-nums text-sky-400 truncate">
-                      {fmtMoney(totals.totalRevenue)}
+                {/* RAIO-X OPERACIONAL DO ODÔMETRO: CUSTO REAL POR KM, AUTONOMIA & MARGEM LIMPA */}
+                <div className={`mt-5 sm:mt-6 pt-4 sm:pt-6 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-200'}`}>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Gauge className="w-4 h-4 text-[#FF6A1A]" />
+                      <h3 className="text-xs sm:text-sm font-black tracking-tight">
+                        Custo Operacional & Autonomia da Moto
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={openNewFuelModal}
+                        className="text-[10px] sm:text-xs font-black px-2.5 py-1 rounded-lg cursor-pointer transition-colors bg-[#FF6A1A] hover:bg-[#ff7b33] text-black flex items-center gap-1 shadow-xs"
+                      >
+                        <Fuel className="w-3 h-3" />
+                        <span>+ Abastecer</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowOdometerCostDetails(prev => !prev)}
+                        className={`text-[10px] sm:text-xs font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] flex items-center gap-1`}
+                      >
+                        <span>{showOdometerCostDetails ? 'Ocultar Detalhes' : 'Ver Detalhes do KM'}</span>
+                        <ChevronDown className={`w-3 h-3 transition-transform ${showOdometerCostDetails ? 'rotate-180' : ''}`} />
+                      </button>
                     </div>
                   </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-bold truncate ${mutedText}`}>Gastos</div>
-                    <div className="text-xs sm:text-xl lg:text-2xl font-black mt-1 tabular-nums text-rose-400 truncate">
-                      {fmtMoney(totals.totalExpense)}
+
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-4">
+                    {/* 1. Custo Real por KM */}
+                    <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                      <div className={`text-[10px] sm:text-xs font-bold truncate ${mutedText}`}>Custo Real / KM</div>
+                      <div className="text-xs sm:text-lg lg:text-xl font-black mt-1 tabular-nums text-amber-500 dark:text-amber-400 truncate">
+                        R$ {(financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm).toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                      <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
+                        Gasolina + Peças
+                      </div>
                     </div>
-                  </div>
-                  <div className="rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 bg-[#FF6A1A]/10 border border-[#FF6A1A]/30">
-                    <div className="text-[10px] sm:text-xs font-bold text-[#FF6A1A] truncate">Lucro Líq.</div>
-                    <div className="text-xs sm:text-xl lg:text-2xl font-black mt-1 tabular-nums text-[#FF6A1A] truncate">
-                      {fmtMoney(totals.lucro)}
+
+                    {/* 2. Autonomia Baseada no Abastecimento Real */}
+                    <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 ${
+                      fuelTelemetry.hasLoggedFuel
+                        ? fuelTelemetry.remainingAutonomyKm <= 35
+                          ? 'border-l-rose-500 bg-rose-500/10'
+                          : fuelTelemetry.remainingAutonomyKm <= 70
+                          ? 'border-l-amber-500 bg-amber-500/10'
+                          : 'border-l-sky-500'
+                        : 'border-l-sky-500'
+                    } ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between gap-1">
+                        <div className={`text-[10px] sm:text-xs font-bold truncate ${
+                          fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 35 ? 'text-rose-400' : mutedText
+                        }`}>
+                          {fuelTelemetry.hasLoggedFuel ? 'Autonomia Restante' : 'Autonomia Tanque'}
+                        </div>
+                        {fuelTelemetry.hasLoggedFuel && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                            fuelTelemetry.remainingAutonomyKm <= 35
+                              ? 'bg-rose-500/20 text-rose-400 animate-pulse'
+                              : 'bg-sky-500/20 text-sky-400'
+                          }`}>
+                            {fuelTelemetry.remainingAutonomyKm <= 35 ? 'Reserva' : `${fuelTelemetry.fuelPercentage}%`}
+                          </span>
+                        )}
+                      </div>
+                      <div className={`text-xs sm:text-lg lg:text-xl font-black mt-1 tabular-nums truncate ${
+                        fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 35
+                          ? 'text-rose-400'
+                          : fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 70
+                          ? 'text-amber-400'
+                          : 'text-sky-400'
+                      }`}>
+                        {fuelTelemetry.remainingAutonomyKm.toLocaleString('pt-BR')}{' '}
+                        <span className="text-[10px] sm:text-xs font-bold">km</span>
+                      </div>
+                      <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
+                        {fuelTelemetry.hasLoggedFuel
+                          ? `${fuelTelemetry.liters}L abastecidos (${fuelTelemetry.kmSinceFuel} km rodados)`
+                          : `Tanque padrão ${fuelTelemetry.liters}L`}
+                      </div>
                     </div>
+
+                    {/* 3. Margem Limpa por KM */}
+                    {(() => {
+                      const totalCostKm = financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm;
+                      const grossKm = totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : (progressAnalytics.grossPerKm > 0 ? progressAnalytics.grossPerKm : 0);
+                      const netKm = grossKm > 0 ? Math.max(0, grossKm - totalCostKm) : 0;
+                      return (
+                        <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 border-l-emerald-500 ${
+                          netKm > 0 ? 'bg-emerald-500/10 border border-emerald-500/25' : surfaceSubtle
+                        }`}>
+                          <div className={`text-[10px] sm:text-xs font-bold truncate ${netKm > 0 ? 'text-emerald-500 dark:text-emerald-400' : mutedText}`}>
+                            Lucro Limpo / KM
+                          </div>
+                          <div className={`text-xs sm:text-lg lg:text-xl font-black mt-1 tabular-nums truncate ${
+                            netKm > 0 ? 'text-emerald-500 dark:text-emerald-400' : mutedText
+                          }`}>
+                            {netKm > 0 ? `+ R$ ${netKm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                          </div>
+                          <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
+                            {netKm > 0 ? 'Livre no bolso' : 'Sem corridas'}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
+
+                  {/* Detalhamento Expansível do Custo Operacional e Telemetria de Combustível */}
+                  {showOdometerCostDetails && (
+                    <div className={`mt-3 p-3 sm:p-4 rounded-xl sm:rounded-2xl border text-xs ${
+                      isDark ? 'bg-slate-900/80 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
+                    } space-y-2`}>
+                      <div className="flex items-center justify-between font-bold border-b pb-2 border-slate-700/30 flex-wrap gap-2">
+                        <span className="flex items-center gap-1.5 text-xs text-slate-100 dark:text-white">
+                          <Fuel className="w-3.5 h-3.5 text-[#FF6A1A]" />
+                          <span>Telemetria do Combustível & Custo ({dbState.fuelConfig.bikeModelName})</span>
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={openNewFuelModal}
+                            className="text-[11px] font-bold text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
+                          >
+                            + Abastecer Agora
+                          </button>
+                          <span>·</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('maintenance');
+                              startEditFuelCard();
+                            }}
+                            className="text-[11px] font-bold text-[#FF6A1A] hover:underline cursor-pointer"
+                          >
+                            Configurar Moto →
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
+                        <div>
+                          <span className={mutedText}>Consumo Médio:</span>{' '}
+                          <strong className="text-slate-100 dark:text-white">{financialIntelligence.kmPerLiter} km/L</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Preço Gasolina:</span>{' '}
+                          <strong className="text-slate-100 dark:text-white">{fmtCurrencyExact(fuelTelemetry.pricePerL)}/L</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Combustível / KM:</span>{' '}
+                          <strong className="text-amber-400">{fmtCurrencyExact(financialIntelligence.fuelCostPerKm)}/km</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Desgaste Peças / KM:</span>{' '}
+                          <strong className="text-amber-400">{fmtCurrencyExact(financialIntelligence.baseMaintCostPerKm)}/km</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Último Abastecimento:</span>{' '}
+                          <strong className="text-sky-400">
+                            {fuelTelemetry.fuelDate
+                              ? `${fuelTelemetry.fuelDate.split('-').reverse().join('/')} (${fuelTelemetry.liters}L)`
+                              : `Padrão (${fuelTelemetry.liters}L)`}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Valor Pago:</span>{' '}
+                          <strong className="text-sky-400">{fmtMoney(fuelTelemetry.amountPaid)}</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>KM Rodados no Tanque:</span>{' '}
+                          <strong className="text-slate-100 dark:text-white">{fuelTelemetry.kmSinceFuel} km</strong>
+                        </div>
+                        <div>
+                          <span className={mutedText}>Autonomia Restante:</span>{' '}
+                          <strong className={fuelTelemetry.remainingAutonomyKm <= 35 ? 'text-rose-400 font-black' : 'text-emerald-400'}>
+                            {fuelTelemetry.remainingAutonomyKm} km ({fuelTelemetry.fuelPercentage}%)
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -9392,28 +9685,148 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data</label>
-                    <input
-                      type="date"
-                      value={entryDate}
-                      onChange={e => setEntryDate(e.target.value)}
-                      className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
+                {selectedCategory === 'combustivel' ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Abastecimento</label>
+                        <input
+                          type="date"
+                          value={entryDate}
+                          onChange={e => setEntryDate(e.target.value)}
+                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                          Preço Pago Total (R$) <span className="text-amber-400">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 50.00"
+                          value={expenseAmount}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setExpenseAmount(val);
+                            const numVal = parseFloat(val);
+                            const priceVal = parseFloat(fuelPricePerLiter);
+                            if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
+                              setFuelLiters((numVal / priceVal).toFixed(2));
+                            }
+                          }}
+                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                          Litros Abastecidos (L) <span className="text-[#FF6A1A]">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 8.5"
+                          value={fuelLiters}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFuelLiters(val);
+                            const litersNum = parseFloat(val);
+                            const amountNum = parseFloat(expenseAmount);
+                            const priceNum = parseFloat(fuelPricePerLiter);
+                            if (!isNaN(litersNum) && litersNum > 0) {
+                              if (!isNaN(amountNum) && amountNum > 0) {
+                                setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
+                              } else if (!isNaN(priceNum) && priceNum > 0) {
+                                setExpenseAmount((litersNum * priceNum).toFixed(2));
+                              }
+                            }
+                          }}
+                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço por Litro (R$/L)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 5.89"
+                          value={fuelPricePerLiter}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFuelPricePerLiter(val);
+                            const priceNum = parseFloat(val);
+                            const amountNum = parseFloat(expenseAmount);
+                            const litersNum = parseFloat(fuelLiters);
+                            if (!isNaN(priceNum) && priceNum > 0) {
+                              if (!isNaN(amountNum) && amountNum > 0) {
+                                setFuelLiters((amountNum / priceNum).toFixed(2));
+                              } else if (!isNaN(litersNum) && litersNum > 0) {
+                                setExpenseAmount((litersNum * priceNum).toFixed(2));
+                              }
+                            }
+                          }}
+                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM Atual do Odômetro</label>
+                        <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums flex items-center justify-between ${surfaceSubtle}`}>
+                          <span>{totals.totalKm.toLocaleString('pt-BR')} km</span>
+                          <span className="text-[10px] text-emerald-400 font-extrabold uppercase">Registrado</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Telemetria e Estimativa de Autonomia em Tempo Real */}
+                    {(() => {
+                      const ltr = parseFloat(fuelLiters) || (parseFloat(expenseAmount) && parseFloat(fuelPricePerLiter) ? parseFloat(expenseAmount) / parseFloat(fuelPricePerLiter) : 0);
+                      const kmL = Number(dbState.fuelConfig.kmPerLiter) || 35;
+                      const estKm = Math.round(ltr * kmL);
+                      return (
+                        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between flex-wrap gap-2 ${
+                          isDark ? 'bg-sky-950/30 border-sky-800/40 text-sky-300' : 'bg-sky-50 border-sky-200 text-sky-800'
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <Fuel className="w-4 h-4 text-sky-400 shrink-0" />
+                            <span>
+                              Autonomia Estimada: <strong className="text-white dark:text-sky-200 font-black">~{estKm.toLocaleString('pt-BR')} km</strong>{' '}
+                              <span className="opacity-75">({kmL} km/L médio)</span>
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-bold opacity-80">
+                            Custo: R$ {((parseFloat(fuelPricePerLiter) || 5.8) / kmL).toFixed(2)}/km
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Valor (R$)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ex: 35.00"
-                      value={expenseAmount}
-                      onChange={e => setExpenseAmount(e.target.value)}
-                      className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data</label>
+                      <input
+                        type="date"
+                        value={entryDate}
+                        onChange={e => setEntryDate(e.target.value)}
+                        className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Valor (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Ex: 35.00"
+                        value={expenseAmount}
+                        onChange={e => setExpenseAmount(e.target.value)}
+                        className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

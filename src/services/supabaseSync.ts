@@ -25,6 +25,9 @@ export interface ExpenseEntry {
   date: string;
   category: string;
   amount: number;
+  liters?: number;
+  pricePerLiter?: number;
+  odometerKm?: number;
 }
 
 export interface MaintenanceHistoryRecord {
