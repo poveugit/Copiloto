@@ -69,6 +69,8 @@ import {
   Line,
   BarChart,
   Bar,
+  AreaChart,
+  Area,
   Cell,
   XAxis,
   YAxis,
@@ -302,8 +304,8 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     customGoalTarget: 3000,
     customGoalDays: 20,
     customGoalTitle: 'Meta Personalizada de Ganhos',
-    customGoalMode: 'days',
-    customGoalTargetDate: '',
+    customGoalMode: 'date',
+    customGoalTargetDate: getDefaultFutureDate(20),
     customGoalScope: 'month',
     maintenanceNotificationsEnabled: true,
     maintenanceItems: DEFAULT_MAINTENANCE_ITEMS.map(item => ({ ...item })),
@@ -360,8 +362,8 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         customGoalTarget: Number(parsed.customGoalTarget) || 3000,
         customGoalDays: Number(parsed.customGoalDays) || 20,
         customGoalTitle: parsed.customGoalTitle || 'Meta Personalizada de Ganhos',
-        customGoalMode: (parsed.customGoalMode === 'date' ? 'date' : 'days') as 'days' | 'date',
-        customGoalTargetDate: parsed.customGoalTargetDate || '',
+        customGoalMode: 'date',
+        customGoalTargetDate: parsed.customGoalTargetDate || getDefaultFutureDate(Number(parsed.customGoalDays) || 20),
         customGoalScope: (parsed.customGoalScope === 'all' ? 'all' : 'month') as 'month' | 'all',
         maintenanceNotificationsEnabled:
           typeof parsed.maintenanceNotificationsEnabled === 'boolean'
@@ -1598,6 +1600,9 @@ export default function App() {
   const [showTurnoModal, setShowTurnoModal] = useState<boolean>(false);
   const [showRelatorioMeiModal, setShowRelatorioMeiModal] = useState<boolean>(false);
   const [showMetaReversaModal, setShowMetaReversaModal] = useState<boolean>(false);
+  const [showCockpitMenu, setShowCockpitMenu] = useState<boolean>(false);
+  const [isEditingFoodMaintPlan, setIsEditingFoodMaintPlan] = useState<boolean>(false);
+  const [isEditingDocsPlan, setIsEditingDocsPlan] = useState<boolean>(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState<boolean>(false);
   const [voiceSpeechFeedback, setVoiceSpeechFeedback] = useState<string | null>(null);
   const [micPermissionStatus, setMicPermissionStatus] = useState<MicPermissionState>('prompt');
@@ -2356,10 +2361,11 @@ export default function App() {
     const dailyGoal = Math.max(10, Number(dbState.dailyGoal) || 150);
     const weeklyGoal = Math.max(50, Number(dbState.weeklyGoal) || 900);
     const customGoalTarget = Math.max(10, Number(dbState.customGoalTarget) || 3000);
+    const customGoalTargetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
     const customGoalCountdown = getCustomGoalCountdown(
-      dbState.customGoalMode,
+      'date',
       dbState.customGoalDays,
-      dbState.customGoalTargetDate
+      customGoalTargetDate
     );
     const customGoalDays = customGoalCountdown.effectiveDays;
     const customGoalTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
@@ -3072,6 +3078,93 @@ export default function App() {
     };
   }, [dbState, finPlan, progressAnalytics, totals]);
 
+  // ================= 30-DAY REAL NET PROFIT EVOLUTION (RECHARTS AREA CHART) =================
+  const realProfitEvolution30Days = useMemo(() => {
+    const list: {
+      date: string;
+      fullDateLabel: string;
+      label: string;
+      lucroReal: number;
+      faturamento: number;
+      gastosDiretos: number;
+      deducoesTotais: number;
+      km: number;
+      isActive: boolean;
+    }[] = [];
+
+    const fuelCostPerKm = financialIntelligence.fuelCostPerKm;
+    const baseMaintCostPerKm = financialIntelligence.baseMaintCostPerKm;
+    const extraBufferPct = financialIntelligence.extraBufferPct;
+    const dailyFoodCost = financialIntelligence.dailyFoodCost;
+    const dailyDocsReserve = financialIntelligence.dailyDocsReserve;
+    const emergencyPct = financialIntelligence.emergencyPct;
+
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      const [yyyy, mm, dd] = iso.split('-');
+
+      const dayEntries = dbState.entries.filter(e => e.date === iso);
+      const dayExpenses = dbState.expenses.filter(e => e.date === iso);
+
+      const rev = dayEntries.reduce((s, e) => s + (Number(e.revenue) || 0), 0);
+      const km = dayEntries.reduce((s, e) => s + (Number(e.km) || 0), 0);
+      const directExp = dayExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+
+      const hasActivity = rev > 0 || km > 0 || directExp > 0;
+
+      let lucroReal = 0;
+      let deducoesTotais = 0;
+
+      if (hasActivity) {
+        const effectiveKm = km > 0 ? km : (rev > 0 ? Math.max(10, Math.round(rev / 1.65)) : 0);
+        const fuel = effectiveKm * fuelCostPerKm;
+        const maint = (effectiveKm * baseMaintCostPerKm) + (rev * (extraBufferPct / 100));
+        const food = rev > 0 ? dailyFoodCost : 0;
+        const docs = rev > 0 ? dailyDocsReserve : 0;
+        const emergency = rev * (emergencyPct / 100);
+
+        deducoesTotais = directExp + fuel + maint + food + docs + emergency;
+        lucroReal = rev - deducoesTotais;
+      }
+
+      list.push({
+        date: iso,
+        fullDateLabel: `${dd}/${mm}/${yyyy}`,
+        label: `${dd}/${mm}`,
+        lucroReal: Math.round(lucroReal * 100) / 100,
+        faturamento: Math.round(rev * 100) / 100,
+        gastosDiretos: Math.round(directExp * 100) / 100,
+        deducoesTotais: Math.round(deducoesTotais * 100) / 100,
+        km: Math.round(km * 10) / 10,
+        isActive: hasActivity,
+      });
+    }
+
+    const total30DaysProfit = list.reduce((s, d) => s + d.lucroReal, 0);
+    const total30DaysRev = list.reduce((s, d) => s + d.faturamento, 0);
+    const activeDays = list.filter(d => d.isActive);
+    const activeDaysCount = activeDays.length;
+    const avgDailyProfit = activeDaysCount > 0 ? total30DaysProfit / activeDaysCount : 0;
+    const positiveDaysCount = list.filter(d => d.lucroReal > 0).length;
+
+    const profitableDays = list.filter(d => d.lucroReal > 0);
+    const bestDay = profitableDays.length > 0
+      ? [...profitableDays].sort((a, b) => b.lucroReal - a.lucroReal)[0]
+      : null;
+
+    return {
+      data: list,
+      total30DaysProfit: Math.round(total30DaysProfit * 100) / 100,
+      total30DaysRev: Math.round(total30DaysRev * 100) / 100,
+      avgDailyProfit: Math.round(avgDailyProfit * 100) / 100,
+      activeDaysCount,
+      positiveDaysCount,
+      bestDay,
+    };
+  }, [dbState.entries, dbState.expenses, financialIntelligence]);
+
   // ================= 6-MONTH REVENUE SEASONALITY ANALYTICS (RECHARTS BAR CHART) =================
   const sixMonthSeasonality = useMemo(() => {
     const monthShortNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -3744,6 +3837,176 @@ export default function App() {
         </nav>
 
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 relative">
+          {/* Menu Cockpit Hub (Radar de Lucro, Iniciar Turno, Extrato MEI, Meta Reversa) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowCockpitMenu(prev => !prev)}
+              aria-label="Menu Cockpit de Operações"
+              title="Menu Cockpit: Radar de Lucro, Turno GPS, Extrato MEI, Meta Reversa"
+              className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 border ${
+                activeShiftSession?.isActive
+                  ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/25'
+                  : showCockpitMenu
+                  ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
+                  : `${surfaceSubtle} ${mutedText} hover:text-white hover:border-[#FF6A1A]/50`
+              }`}
+            >
+              <Gauge className={`w-3.5 h-3.5 shrink-0 ${activeShiftSession?.isActive ? 'text-emerald-400 animate-pulse' : 'text-[#FF6A1A]'}`} />
+              <span className="font-extrabold">Cockpit</span>
+              {activeShiftSession?.isActive && (
+                <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+              )}
+            </button>
+
+            {/* Dropdown / Popover do Menu Cockpit */}
+            {showCockpitMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowCockpitMenu(false)}
+                />
+                <div
+                  className={`fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 md:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
+                    isDark
+                      ? 'bg-[#12141C] border-slate-800 text-slate-100'
+                      : 'bg-white border-slate-200 text-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/40">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Gauge className="w-4 h-4 text-[#FF6A1A] shrink-0" />
+                      <span className="text-xs font-black uppercase tracking-wider truncate">
+                        Menu Cockpit do Piloto
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCockpitMenu(false)}
+                      className={`p-1.5 rounded-lg shrink-0 ${surfaceSubtle} cursor-pointer hover:text-white`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 mt-3">
+                    {/* 1. Radar de Lucro */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCockpitMenu(false);
+                        setShowRadarModal(true);
+                      }}
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                        isDark
+                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-amber-500/30 hover:border-amber-500/60'
+                          : 'bg-amber-50/50 hover:bg-amber-50 border-amber-300'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                        <Zap className="w-4 h-4 fill-amber-400/20" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black leading-tight">Radar de Lucro</div>
+                        <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
+                          Aceito ou recuso a corrida?
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* 2. Iniciar Turno / Turno GPS Ativo */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCockpitMenu(false);
+                        setShowTurnoModal(true);
+                      }}
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                        activeShiftSession?.isActive
+                          ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                          : isDark
+                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-sky-500/30 hover:border-sky-500/60'
+                          : 'bg-sky-50/50 hover:bg-sky-50 border-sky-300'
+                      }`}
+                    >
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                          activeShiftSession?.isActive
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                            : 'bg-sky-500/15 border-sky-500/30 text-sky-400'
+                        }`}
+                      >
+                        {activeShiftSession?.isActive ? (
+                          <Navigation className="w-4 h-4 text-emerald-400 animate-pulse" />
+                        ) : (
+                          <Play className="w-3.5 h-3.5 fill-sky-400" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="text-xs font-black leading-tight">
+                          {activeShiftSession?.isActive ? 'Turno GPS Ativo' : 'Iniciar Turno'}
+                        </div>
+                        <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
+                          {activeShiftSession?.isActive
+                            ? `+${(Number(activeShiftSession.gpsDistanceKm) || 0).toFixed(1)} km rodados`
+                            : 'Odômetro GPS 2º plano'}
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* 3. Extrato MEI */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCockpitMenu(false);
+                        setShowRelatorioMeiModal(true);
+                      }}
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                        isDark
+                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-purple-500/30 hover:border-purple-500/60'
+                          : 'bg-purple-50/50 hover:bg-purple-50 border-purple-300'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                        <Printer className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black leading-tight">Extrato MEI</div>
+                        <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
+                          Relatório em PDF
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* 4. Meta Reversa */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCockpitMenu(false);
+                        setShowMetaReversaModal(true);
+                      }}
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                        isDark
+                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-[#FF6A1A]/30 hover:border-[#FF6A1A]/60'
+                          : 'bg-orange-50/50 hover:bg-orange-50 border-[#FF6A1A]/40'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                        <Target className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black leading-tight">Meta Reversa</div>
+                        <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
+                          Quanto faturar por dia?
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Botão de Conta / Login Rápido */}
           <button
             type="button"
@@ -3941,108 +4204,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* QUICK ACTIONS HUB (Radar de Lucro, Iniciar Turno, Relatório MEI, Meta Reversa) */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowRadarModal(true)}
-                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
-                    isDark
-                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-amber-500/30 hover:border-amber-500/60'
-                      : 'bg-white hover:bg-amber-50/50 border-amber-300 shadow-xs'
-                  }`}
-                >
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-                    <Zap className="w-5 h-5 fill-amber-400/20" />
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-black leading-tight">Radar de Lucro</div>
-                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
-                      Aceito ou recuso a corrida?
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowTurnoModal(true)}
-                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
-                    activeShiftSession?.isActive
-                      ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
-                      : isDark
-                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-sky-500/30 hover:border-sky-500/60'
-                      : 'bg-white hover:bg-sky-50/50 border-sky-300 shadow-xs'
-                  }`}
-                >
-                  <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
-                      activeShiftSession?.isActive
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                        : 'bg-sky-500/15 border-sky-500/30 text-sky-400'
-                    }`}
-                  >
-                    {activeShiftSession?.isActive ? (
-                      <Navigation className="w-4 h-4 text-emerald-400 animate-pulse" />
-                    ) : (
-                      <Play className="w-4 h-4 fill-sky-400" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-black leading-tight">
-                      {activeShiftSession?.isActive ? 'Turno GPS Ativo' : 'Iniciar Turno'}
-                    </div>
-                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
-                      {activeShiftSession?.isActive
-                        ? `+${(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
-                            minimumFractionDigits: 1,
-                            maximumFractionDigits: 1,
-                          })} km automáticos`
-                        : 'Odômetro GPS 2º plano'}
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowRelatorioMeiModal(true)}
-                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
-                    isDark
-                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-purple-500/30 hover:border-purple-500/60'
-                      : 'bg-white hover:bg-purple-50/50 border-purple-300 shadow-xs'
-                  }`}
-                >
-                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
-                    <Printer className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-black leading-tight">Extrato MEI</div>
-                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
-                      Relatório em PDF
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowMetaReversaModal(true)}
-                  className={`p-3.5 rounded-2xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
-                    isDark
-                      ? 'bg-[#151722] hover:bg-[#1b1e2c] border-[#FF6A1A]/30 hover:border-[#FF6A1A]/60'
-                      : 'bg-white hover:bg-orange-50/50 border-[#FF6A1A]/40 shadow-xs'
-                  }`}
-                >
-                  <div className="w-9 h-9 rounded-xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
-                    <Target className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xs sm:text-sm font-black leading-tight">Meta Reversa</div>
-                    <div className={`text-[10px] sm:text-[11px] mt-0.5 leading-tight ${mutedText}`}>
-                      Quanto faturar por dia?
-                    </div>
-                  </div>
-                </button>
-              </div>
-
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
@@ -4128,26 +4289,85 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
-                  <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-                    <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Ganhos na Semana</div>
-                    <div className="text-lg sm:text-xl font-black mt-0.5 sm:mt-1 tabular-nums text-sky-400">
-                      {fmtMoney(periodTotals.revWeek)}
+                {/* Card de Meta Diária */}
+                {(() => {
+                  const dailyTarget = Math.max(10, Number(dbState.dailyGoal) || 150);
+                  const dailyEarned = progressAnalytics.revToday;
+                  const dailyRawPct = Math.round((dailyEarned / dailyTarget) * 100);
+                  const dailyBarPct = Math.min(100, Math.max(0, dailyRawPct));
+                  const dailyRemaining = Math.max(0, dailyTarget - dailyEarned);
+                  const isDailyGoalReached = dailyEarned >= dailyTarget;
+
+                  return (
+                    <div
+                      className={`rounded-xl sm:rounded-2xl p-3.5 sm:p-4 border transition-colors ${
+                        isDailyGoalReached
+                          ? isDark
+                            ? 'bg-emerald-950/20 border-emerald-500/40'
+                            : 'bg-emerald-50/70 border-emerald-300'
+                          : surfaceSubtle
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Target
+                            className={`w-4 h-4 shrink-0 ${
+                              isDailyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}
+                          />
+                          <span className="text-xs sm:text-sm font-extrabold">Meta Diária de Hoje</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-xs sm:text-sm font-black tabular-nums ${
+                              isDailyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}
+                          >
+                            {fmtMoney(dailyEarned)} / {fmtMoney(dailyTarget)} ({dailyRawPct}%)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('settings')}
+                            title="Ajustar Meta Diária nas Configurações"
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                              isDark
+                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
+                            }`}
+                          >
+                            Ajustar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`mt-2.5 h-2.5 sm:h-3 rounded-full overflow-hidden ${
+                          isDark ? 'bg-slate-800' : 'bg-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isDailyGoalReached
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
+                          }`}
+                          style={{ width: `${dailyBarPct}%` }}
+                        />
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
+                        <span className={isDailyGoalReached ? 'text-emerald-400 font-bold' : mutedText}>
+                          {isDailyGoalReached
+                            ? `🎉 Meta diária batida! (+${fmtMoney(dailyEarned - dailyTarget)} acima da meta)`
+                            : `Faltam ${fmtMoney(dailyRemaining)} para atingir o objetivo de hoje`}
+                        </span>
+                        <span className={isDailyGoalReached ? 'text-emerald-400 font-extrabold' : mutedText}>
+                          {dailyRawPct}% concluído
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-                    <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Ganhos no Mês</div>
-                    <div className="text-lg sm:text-xl font-black mt-0.5 sm:mt-1 tabular-nums text-emerald-400">
-                      {fmtMoney(periodTotals.revMonth)}
-                    </div>
-                  </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-                    <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Ganhos no Ano</div>
-                    <div className="text-lg sm:text-xl font-black mt-0.5 sm:mt-1 tabular-nums text-amber-400">
-                      {fmtMoney(periodTotals.revYear)}
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Meta de Faturamento Semanal Progress Bar */}
                 {(() => {
@@ -4223,16 +4443,12 @@ export default function App() {
                   );
                 })()}
 
-                {/* Meta Personalizada de Ganhos: Por Dia ou Data Personalizada (com faturamento do Mês Atual) */}
+                {/* Meta Personalizada de Ganhos: Modo Data Personalizada Definida na Configuração */}
                 {(() => {
                   const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
-                  const customMode = dbState.customGoalMode || 'days';
-                  const countdown = getCustomGoalCountdown(
-                    customMode,
-                    dbState.customGoalDays,
-                    dbState.customGoalTargetDate
-                  );
-                  const customDays = countdown.effectiveDays;
+                  const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
+                  const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
+                  const customDays = Math.max(1, countdown.effectiveDays);
                   const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
                   const currentEarned = periodTotals.revMonth;
                   const rawPct = Math.round((currentEarned / customTarget) * 100);
@@ -4268,7 +4484,7 @@ export default function App() {
                               {customTitle}
                             </span>
                             <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
-                              Faturamento do mês atual com meta diária até o objetivo
+                              Faturamento do mês atual até a data término
                             </span>
                           </div>
                         </div>
@@ -4281,120 +4497,36 @@ export default function App() {
                           >
                             {fmtMoney(currentEarned)} / {fmtMoney(customTarget)} ({rawPct}%)
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('settings')}
+                            title="Ajustar Meta e Data Término nas Configurações"
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                              isDark
+                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
+                            }`}
+                          >
+                            Ajustar
+                          </button>
                         </div>
                       </div>
 
-                      {/* Funções de Modo: "Por Dia" ou "Data Personalizada" */}
-                      <div className="flex items-center gap-1.5 mt-2.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            persistAndEnqueueWorkManager({
-                              ...dbState,
-                              customGoalMode: 'days',
-                            })
-                          }
-                          className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                            customMode !== 'date'
-                              ? 'bg-[#FF6A1A] text-black shadow-xs'
-                              : `${surfaceCard} text-slate-400 hover:text-current`
-                          }`}
-                        >
-                          <Clock className="w-3.5 h-3.5" />
-                          <span>Por Dia</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const targetDate =
-                              dbState.customGoalTargetDate ||
-                              getDefaultFutureDate(dbState.customGoalDays || 20);
-                            persistAndEnqueueWorkManager({
-                              ...dbState,
-                              customGoalMode: 'date',
-                              customGoalTargetDate: targetDate,
-                            });
-                          }}
-                          className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                            customMode === 'date'
-                              ? 'bg-[#FF6A1A] text-black shadow-xs'
-                              : `${surfaceCard} text-slate-400 hover:text-current`
-                          }`}
-                        >
-                          <Calendar className="w-3.5 h-3.5" />
-                          <span>Data Personalizada</span>
-                        </button>
-                      </div>
-
-                      {/* Inline Fields: Meta de Ganhos (R$), Prazo/Data e Meta Diária */}
+                      {/* Informações Definidas na Configuração: Data Término, Meta Diária e Falta para o Objetivo */}
                       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                            Definir Meta de Ganhos (R$)
-                          </label>
-                          <div className="flex items-center gap-1.5 mt-1">
-                            <span className="text-xs font-black text-[#FF6A1A]">R$</span>
-                            <FreeNumberInput
-                              step="50"
-                              value={dbState.customGoalTarget ?? 3000}
-                              onValueChange={val =>
-                                persistAndEnqueueWorkManager({
-                                  ...dbState,
-                                  customGoalTarget: Math.max(0, val),
-                                })
-                              }
-                              placeholder="Ex: 3000"
-                              className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                            />
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
+                            Data Término
+                          </span>
+                          <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
+                            <span className="text-xs sm:text-sm font-black tabular-nums">
+                              {formatPtBrDate(countdown.targetDateStr)}
+                            </span>
+                            <span className="text-[10px] font-black text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/20">
+                              ⏳ {countdown.countdownBadgeText}
+                            </span>
                           </div>
                         </div>
-
-                        {customMode === 'date' ? (
-                          <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
-                            <div className="flex items-center justify-between gap-1">
-                              <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                                Data Personalizada
-                              </label>
-                              <span className="text-[10px] font-black text-[#FF6A1A]">
-                                ⏳ {countdown.countdownBadgeText}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-1">
-                              <input
-                                type="date"
-                                min={todayStr()}
-                                value={dbState.customGoalTargetDate || getDefaultFutureDate(20)}
-                                onChange={e =>
-                                  persistAndEnqueueWorkManager({
-                                    ...dbState,
-                                    customGoalTargetDate: e.target.value,
-                                  })
-                                }
-                                className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
-                            <label className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                              Prazo p/ Objetivo (Dias)
-                            </label>
-                            <div className="flex items-center gap-1.5 mt-1">
-                              <FreeNumberInput
-                                value={dbState.customGoalDays ?? 20}
-                                onValueChange={val =>
-                                  persistAndEnqueueWorkManager({
-                                    ...dbState,
-                                    customGoalDays: Math.max(0, val),
-                                  })
-                                }
-                                placeholder="Ex: 20"
-                                className={`w-full px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                              <span className={`text-xs font-bold shrink-0 ${mutedText}`}>dias</span>
-                            </div>
-                          </div>
-                        )}
 
                         <div
                           className={`rounded-xl p-2.5 flex flex-col justify-between border ${
@@ -4404,7 +4536,7 @@ export default function App() {
                           }`}
                         >
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                            Meta Diária até o Objetivo
+                            Meta Diária Necessária
                           </span>
                           <div className="mt-1 flex items-baseline justify-between gap-1">
                             <span
@@ -4413,16 +4545,42 @@ export default function App() {
                               }`}
                             >
                               {isGoalReached
-                                ? 'Objetivo Atingido!'
+                                ? 'Objetivo Batido!'
                                 : `${fmtCurrencyExact(requiredDailyToReachGoal)}/dia`}
                             </span>
                             {!isGoalReached && (
                               <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
-                                {customMode === 'date'
-                                  ? `faltam ${countdown.countdownDays}d`
-                                  : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
+                                {countdown.isToday ? 'hoje' : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
                               </span>
                             )}
+                          </div>
+                        </div>
+
+                        <div
+                          className={`rounded-xl p-2.5 flex flex-col justify-between border ${
+                            isGoalReached
+                              ? 'bg-emerald-500/10 border-emerald-500/30'
+                              : 'bg-rose-500/10 border-rose-500/30'
+                          }`}
+                        >
+                          <span
+                            className={`text-[10px] font-extrabold uppercase tracking-wider ${
+                              isGoalReached ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'
+                            }`}
+                          >
+                            Falta para o Objetivo
+                          </span>
+                          <div className="mt-1 flex items-baseline justify-between gap-1">
+                            <span
+                              className={`text-sm sm:text-base font-black tabular-nums ${
+                                isGoalReached ? 'text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                              }`}
+                            >
+                              {isGoalReached ? '100% Batida!' : fmtMoney(remainingToGoal)}
+                            </span>
+                            <span className={`text-[10px] font-bold ${mutedText}`}>
+                              {isGoalReached ? 'Sucesso' : `${Math.max(0, 100 - rawPct)}% restante`}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -4448,10 +4606,14 @@ export default function App() {
                         <span className={mutedText}>
                           Progresso: <span className={isDark ? 'text-slate-100 font-bold' : 'text-slate-900 font-bold'}>{fmtMoney(currentEarned)}</span> de {fmtMoney(customTarget)} ({rawPct}%)
                         </span>
-                        <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-[#FF6A1A] font-extrabold'}>
-                          {isGoalReached
-                            ? `🎉 Meta atingida (+${fmtMoney(currentEarned - customTarget)})`
-                            : `Faltam ${fmtMoney(remainingToGoal)}`}
+                        <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-slate-800 dark:text-slate-200 font-bold'}>
+                          {isGoalReached ? (
+                            `🎉 Meta atingida (+${fmtMoney(currentEarned - customTarget)})`
+                          ) : (
+                            <>
+                              Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong>
+                            </>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -4572,12 +4734,12 @@ export default function App() {
                         }}
                         className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3 cursor-pointer transition-all ${
                           isDanger
-                            ? `maint-card-danger-glow-subtle border-2 border-rose-500/80 ${
-                                isDark ? 'bg-rose-950/20' : 'bg-rose-50/80 shadow-xs'
+                            ? `border-l-4 border-l-rose-500 border border-rose-500/40 ${
+                                isDark ? 'bg-slate-900/60' : 'bg-white shadow-xs'
                               }`
                             : isWarn
-                            ? `maint-card-warn-glow border-2 border-amber-500/80 ${
-                                isDark ? 'bg-amber-950/20' : 'bg-amber-50/80 shadow-xs'
+                            ? `border-l-4 border-l-amber-500 border border-amber-500/40 ${
+                                isDark ? 'bg-slate-900/60' : 'bg-white shadow-xs'
                               }`
                             : `${surfaceSubtle} hover:border-[#FF6A1A]/50`
                         }`}
@@ -4588,11 +4750,11 @@ export default function App() {
                             <div className="text-xs sm:text-sm font-bold truncate flex items-center gap-1.5">
                               <span className="truncate">{item.name}</span>
                               {isDanger ? (
-                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-rose-500/30 text-rose-300 border border-rose-500/40 shrink-0">
+                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300 border border-rose-500/30 shrink-0">
                                   Vencido
                                 </span>
                               ) : isWarn ? (
-                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 border border-amber-500/40 shrink-0">
+                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 shrink-0">
                                   Alerta {alertThreshold}%
                                 </span>
                               ) : null}
@@ -4752,23 +4914,25 @@ export default function App() {
               });
               if (overdueItems.length === 0) return null;
               return (
-                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-2 border-rose-500/80 bg-rose-500/10 maint-card-danger-glow-subtle flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 text-rose-300">
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-l-4 border-l-rose-500 border border-rose-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 ${
+                  isDark ? 'bg-rose-950/20 text-slate-100' : 'bg-rose-50/90 text-slate-900 shadow-xs'
+                }`}>
                   <div className="flex items-center gap-3 sm:gap-3.5">
-                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-500 shrink-0">
                       <AlertTriangle className="w-5 h-5 animate-bounce" />
                     </div>
                     <div>
-                      <h4 className="text-xs sm:text-sm font-black text-rose-200">
+                      <h4 className="text-xs sm:text-sm font-black text-rose-600 dark:text-rose-300">
                         {overdueItems.length === 1
                           ? `Atenção: 1 manutenção atingiu 100% ou mais do intervalo!`
                           : `Atenção: ${overdueItems.length} manutenções atingiram 100% ou mais do intervalo!`}
                       </h4>
                       <p className={`text-[11px] sm:text-xs mt-0.5 ${mutedText}`}>
-                        Cards com brilho pulsante vermelho precisam de troca imediata ({overdueItems.map(o => o.name).join(', ')}).
+                        Cards com alerta vermelho precisam de troca imediata ({overdueItems.map(o => o.name).join(', ')}).
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-rose-500/25 border border-rose-500/50 text-rose-200 shrink-0 self-start sm:self-auto">
+                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-700 dark:text-rose-200 shrink-0 self-start sm:self-auto">
                     Troca Obrigatória
                   </span>
                 </div>
@@ -4786,23 +4950,25 @@ export default function App() {
               });
               if (warningItems.length === 0) return null;
               return (
-                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-2 border-amber-500/80 bg-amber-500/10 maint-card-warn-glow flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 text-amber-300">
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-l-4 border-l-amber-500 border border-amber-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 ${
+                  isDark ? 'bg-amber-950/20 text-slate-100' : 'bg-amber-50/90 text-slate-900 shadow-xs'
+                }`}>
                   <div className="flex items-center gap-3 sm:gap-3.5">
-                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-500 shrink-0">
                       <AlertTriangle className="w-5 h-5 animate-pulse" />
                     </div>
                     <div>
-                      <h4 className="text-xs sm:text-sm font-black text-amber-200">
+                      <h4 className="text-xs sm:text-sm font-black text-amber-700 dark:text-amber-300">
                         {warningItems.length === 1
                           ? `Aviso Preventivo: 1 manutenção atingiu a porcentagem de alerta configurada!`
                           : `Aviso Preventivo: ${warningItems.length} manutenções atingiram a porcentagem de alerta configurada!`}
                       </h4>
                       <p className={`text-[11px] sm:text-xs mt-0.5 ${mutedText}`}>
-                        Cards com destaque e borda âmbar ({warningItems.map(w => `${w.name} aos ${w.alertThresholdPct ?? 85}%`).join(', ')}).
+                        Cards com alerta preventivo ({warningItems.map(w => `${w.name} aos ${w.alertThresholdPct ?? 85}%`).join(', ')}).
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-amber-500/25 border border-amber-500/50 text-amber-200 shrink-0 self-start sm:self-auto">
+                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-800 dark:text-amber-200 shrink-0 self-start sm:self-auto">
                     Alerta Preventivo
                   </span>
                 </div>
@@ -5011,20 +5177,12 @@ export default function App() {
                 return (
                   <div
                     key={item.id}
-                    className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 transition-all relative overflow-hidden ${
+                    className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 transition-all relative overflow-hidden ${surfaceCard} ${
                       isDanger && !isEditingThis
-                        ? `maint-card-danger-glow border-2 border-rose-500/90 ${
-                            isDark
-                              ? 'bg-gradient-to-b from-rose-950/30 via-[#12141C] to-[#12141C] text-slate-100'
-                              : 'bg-gradient-to-b from-rose-50/90 via-white to-white text-slate-900 shadow-lg'
-                          }`
+                        ? 'border-l-[6px] border-l-rose-500 border-rose-500/60 dark:border-rose-500/70 maint-card-danger-glow'
                         : isWarn && !isEditingThis
-                        ? `maint-card-warn-glow border-2 border-amber-500/90 ${
-                            isDark
-                              ? 'bg-gradient-to-b from-amber-950/25 via-[#12141C] to-[#12141C] text-slate-100'
-                              : 'bg-gradient-to-b from-amber-50/90 via-white to-white text-slate-900 shadow-md'
-                          }`
-                        : surfaceCard
+                        ? 'border-l-[6px] border-l-amber-500 border-amber-500/60 dark:border-amber-500/70 maint-card-warn-glow'
+                        : ''
                     } ${isEditingThis ? 'ring-2 ring-[#FF6A1A]' : ''}`}
                   >
                     {isEditingThis && maintDraft ? (
@@ -5205,38 +5363,49 @@ export default function App() {
                       /* DISPLAY MODE WITH DIRECT EDIT & RESET TRIGGERS */
                       <div className="flex flex-col h-full justify-between">
                         <div>
-                          {/* DESTAQUE VISUAL ANIMADO: Faixa e brilho de alerta para manutenções >= 100% */}
+                          {/* Feedback visual de alerta: Linha de status elegante com LED pulsante sem cobrir o texto */}
                           {isDanger && (
-                            <div className="mb-3 sm:mb-4 px-3 py-2 rounded-xl sm:rounded-2xl bg-rose-500/15 border border-rose-500/60 flex items-center justify-between text-xs font-black text-rose-400 gap-2">
+                            <div className={`mb-3 sm:mb-4 pb-2.5 flex items-center justify-between gap-2 border-b ${
+                              isDark ? 'border-rose-500/25' : 'border-rose-200'
+                            }`}>
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="relative flex h-2.5 w-2.5 shrink-0">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-600 dark:bg-rose-500"></span>
                                 </span>
-                                <span className="tracking-wide uppercase font-black truncate text-[11px] sm:text-xs">
-                                  ⚠️ Troca Vencida ({rawPct}%) · {kmOverdue > 0 ? `+${kmOverdue.toLocaleString('pt-BR')} km excedidos` : '100% atingido'}
+                                <span className="tracking-wide uppercase font-black truncate text-xs text-rose-600 dark:text-rose-400">
+                                  Troca Obrigatória ({rawPct}%)
                                 </span>
                               </div>
-                              <span className="text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-rose-500/25 text-rose-200 border border-rose-500/40 shrink-0">
-                                Trocar Já
+                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 ${
+                                isDark
+                                  ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                  : 'bg-rose-100 text-rose-700 border border-rose-300'
+                              }`}>
+                                {kmOverdue > 0 ? `+${kmOverdue.toLocaleString('pt-BR')} km além` : '100% atingido'}
                               </span>
                             </div>
                           )}
 
-                          {/* DESTAQUE VISUAL ANIMADO: Faixa de Alerta Preventivo (ex: >= 90%) */}
                           {isWarn && !isDanger && (
-                            <div className="mb-3 sm:mb-4 px-3 py-2 rounded-xl sm:rounded-2xl bg-amber-500/15 border border-amber-500/60 flex items-center justify-between text-xs font-black text-amber-300 gap-2">
+                            <div className={`mb-3 sm:mb-4 pb-2.5 flex items-center justify-between gap-2 border-b ${
+                              isDark ? 'border-amber-500/25' : 'border-amber-200'
+                            }`}>
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="relative flex h-2.5 w-2.5 shrink-0">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-600 dark:bg-amber-400"></span>
                                 </span>
-                                <span className="tracking-wide uppercase font-black truncate text-[11px] sm:text-xs">
-                                  ⚠️ Alerta Preventivo ({rawPct}%) · Gatilho {alertThreshold}% atingido
+                                <span className="tracking-wide uppercase font-black truncate text-xs text-amber-600 dark:text-amber-400">
+                                  Alerta Preventivo ({rawPct}%)
                                 </span>
                               </div>
-                              <span className="text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500/25 text-amber-200 border border-amber-500/40 shrink-0">
-                                Alerta {alertThreshold}%
+                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 ${
+                                isDark
+                                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+                              }`}>
+                                Gatilho {alertThreshold}% atingido
                               </span>
                             </div>
                           )}
@@ -5248,11 +5417,19 @@ export default function App() {
                                 <h3 className="text-sm sm:text-base font-extrabold leading-snug flex items-center gap-1.5 flex-wrap">
                                   <span className="break-words">{item.name}</span>
                                   {isDanger ? (
-                                    <span className="text-[9px] sm:text-[10px] font-black uppercase px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
+                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                                      isDark
+                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                        : 'bg-rose-100 text-rose-700 border border-rose-200'
+                                    }`}>
                                       {rawPct}%
                                     </span>
                                   ) : isWarn ? (
-                                    <span className="text-[9px] sm:text-[10px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                                      isDark
+                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    }`}>
                                       {rawPct}% ({alertThreshold}%)
                                     </span>
                                   ) : null}
@@ -5260,11 +5437,11 @@ export default function App() {
                                 <p className={`text-[11px] sm:text-xs mt-0.5 tabular-nums ${mutedText}`}>
                                   Troca aos {(item.lastChangeKm || 0).toLocaleString('pt-BR')} km ·{' '}
                                   {isDanger ? (
-                                    <strong className="text-rose-400 font-extrabold">
+                                    <strong className="text-rose-600 dark:text-rose-400 font-extrabold">
                                       +{kmOverdue.toLocaleString('pt-BR')} km além
                                     </strong>
                                   ) : isWarn ? (
-                                    <strong className="text-amber-400 font-extrabold">
+                                    <strong className="text-amber-600 dark:text-amber-400 font-extrabold">
                                       Restam {kmRemaining.toLocaleString('pt-BR')} km
                                     </strong>
                                   ) : (
@@ -5278,7 +5455,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => openMaintenanceHistoryModal(item)}
-                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-slate-200`}
+                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-slate-700 dark:text-slate-200`}
                                 title={`Ver histórico de datas e valores pagos de ${item.name}`}
                               >
                                 <History className="w-3.5 h-3.5 text-[#FF6A1A] shrink-0" />
@@ -5331,14 +5508,14 @@ export default function App() {
                             <span
                               className={`font-black ${
                                 isDanger
-                                  ? 'text-rose-400 animate-pulse'
+                                  ? 'text-rose-600 dark:text-rose-400'
                                   : isWarn
-                                  ? 'text-amber-400 animate-pulse'
-                                  : 'text-emerald-400'
+                                  ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-emerald-500 dark:text-emerald-400'
                               }`}
                             >
                               {isDanger
-                                ? '⚠️ VENCIDO (Troca Obrigatória)'
+                                ? '⚠️ Vencido (Troca Imediata)'
                                 : isWarn
                                 ? `⚠️ Atenção (Alerta aos ${alertThreshold}%)`
                                 : `Status OK (Alerta aos ${alertThreshold}%)`}
@@ -5362,9 +5539,9 @@ export default function App() {
                             <div
                               className={`h-full rounded-full transition-all duration-500 ${
                                 isDanger
-                                  ? 'bg-gradient-to-r from-rose-600 via-red-500 to-rose-600 animate-pulse shadow-[0_0_12px_rgba(244,63,94,0.6)]'
+                                  ? 'bg-gradient-to-r from-rose-600 via-red-500 to-rose-600 shadow-sm'
                                   : isWarn
-                                  ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.5)]'
+                                  ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 shadow-sm'
                                   : 'bg-gradient-to-r from-emerald-500 to-teal-400'
                               }`}
                               style={{ width: `${pct}%` }}
@@ -5373,13 +5550,17 @@ export default function App() {
                         </div>
 
                         {/* Card Footer Actions */}
-                        <div className="mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t border-slate-800/40 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                        <div className={`mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t ${
+                          isDark ? 'border-slate-800/40' : 'border-slate-200'
+                        } flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5`}>
                           <button
                             type="button"
                             onClick={() => quickResetMaintenanceCard(item.id)}
                             className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] text-center ${
                               isDanger
-                                ? 'bg-emerald-500/25 border-2 border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/35 shadow-sm'
+                                ? isDark
+                                  ? 'bg-rose-500/20 border-2 border-rose-500/70 text-rose-300 hover:bg-rose-500/30'
+                                  : 'bg-rose-50 border-2 border-rose-500/60 text-rose-700 hover:bg-rose-100 shadow-xs'
                                 : `${surfaceSubtle} hover:border-emerald-500/60`
                             }`}
                           >
@@ -5622,12 +5803,12 @@ export default function App() {
             {/* TOP HEADER + SUB-NAVIGATION (Sem Resumo e Sem Produtividade) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                  Gestão Inteligente para Motoboys · IA Mochilinha
-                </span>
-                <h1 className="text-xl sm:text-2xl font-black mt-0.5">
-                  Central de Finanças, Reservas Diárias & Lucro Real
+                <h1 className="text-xl sm:text-2xl font-black">
+                  Central de Finanças
                 </h1>
+                <p className={`text-xs mt-0.5 ${mutedText}`}>
+                  Planejamento de reservas diárias, custos e lucro real que sobra no seu bolso
+                </p>
               </div>
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
@@ -5998,6 +6179,174 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* GRÁFICO DE ÁREA (RECHARTS): TENDÊNCIA DO LUCRO LÍQUIDO REAL NOS ÚLTIMOS 30 DIAS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
+                          <span>📈 Tendência do Lucro Líquido Real</span>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30">
+                            Últimos 30 Dias
+                          </span>
+                        </h2>
+                      </div>
+                      <p className={`text-xs mt-1 ${mutedText}`}>
+                        Evolução do dinheiro limpo que realmente sobrou no seu bolso dia a dia após descontar combustível, manutenção preventiva, refeições e reservas financeiras
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Lucro Líquido (30d)</div>
+                        <div className={`text-xs sm:text-sm font-black tabular-nums ${
+                          realProfitEvolution30Days.total30DaysProfit >= 0
+                            ? 'text-emerald-500 dark:text-emerald-400'
+                            : 'text-rose-500 dark:text-rose-400'
+                        }`}>
+                          {fmtCurrencyExact(realProfitEvolution30Days.total30DaysProfit)}
+                        </div>
+                      </div>
+
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Média / Dia Ativo</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-sky-500 dark:text-sky-400">
+                          {fmtCurrencyExact(realProfitEvolution30Days.avgDailyProfit)}
+                        </div>
+                      </div>
+
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Melhor Dia</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-emerald-500 dark:text-emerald-400 truncate">
+                          {realProfitEvolution30Days.bestDay
+                            ? `${realProfitEvolution30Days.bestDay.label} · ${fmtCurrencyExact(realProfitEvolution30Days.bestDay.lucroReal)}`
+                            : 'Sem registros'}
+                        </div>
+                      </div>
+
+                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                        <div className={`text-[10px] font-semibold ${mutedText}`}>Dias Trabalhados</div>
+                        <div className="text-xs sm:text-sm font-black tabular-nums text-amber-500 dark:text-amber-400">
+                          {realProfitEvolution30Days.activeDaysCount} de 30 dias
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-64 sm:h-72 mt-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={realProfitEvolution30Days.data}
+                        margin={{ top: 12, right: 16, left: 0, bottom: 4 }}
+                      >
+                        <defs>
+                          <linearGradient id="areaLucroReal" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.45} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke={isDark ? '#334155' : '#e2e8f0'}
+                          opacity={0.6}
+                        />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          tickLine={false}
+                          axisLine={{ stroke: isDark ? '#334155' : '#e2e8f0' }}
+                          minTickGap={16}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={val => `R$${val}`}
+                          width={60}
+                        />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            const item = payload[0].payload;
+                            return (
+                              <div
+                                className={`rounded-xl p-3 shadow-xl border text-xs min-w-[210px] ${
+                                  isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                }`}
+                              >
+                                <div className="font-bold flex items-center justify-between border-b pb-1.5 mb-2 border-slate-200 dark:border-slate-800">
+                                  <span>📅 {item.fullDateLabel}</span>
+                                  {item.isActive ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 font-bold">
+                                      {item.km} km
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 font-medium">
+                                      Folga / Parado
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className={mutedText}>Faturamento Bruto:</span>
+                                    <span className="font-semibold tabular-nums">{fmtCurrencyExact(item.faturamento)}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className={mutedText}>Deduções & Reservas:</span>
+                                    <span className="font-semibold text-rose-500 dark:text-rose-400 tabular-nums">
+                                      - {fmtCurrencyExact(item.deducoesTotais)}
+                                    </span>
+                                  </div>
+                                  <div className="pt-1.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between font-black">
+                                    <span className="text-emerald-500 dark:text-emerald-400">Lucro Líquido Real:</span>
+                                    <span
+                                      className={`tabular-nums text-sm ${
+                                        item.lucroReal >= 0
+                                          ? 'text-emerald-500 dark:text-emerald-400'
+                                          : 'text-rose-500 dark:text-rose-400'
+                                      }`}
+                                    >
+                                      {fmtCurrencyExact(item.lucroReal)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <ReferenceLine
+                          y={0}
+                          stroke={isDark ? '#64748b' : '#94a3b8'}
+                          strokeDasharray="4 4"
+                        />
+                        {realProfitEvolution30Days.avgDailyProfit > 0 && (
+                          <ReferenceLine
+                            y={realProfitEvolution30Days.avgDailyProfit}
+                            stroke="#38bdf8"
+                            strokeDasharray="3 3"
+                            label={{
+                              value: 'Média',
+                              fill: '#38bdf8',
+                              fontSize: 10,
+                              position: 'insideTopRight',
+                            }}
+                          />
+                        )}
+                        <Area
+                          type="monotone"
+                          dataKey="lucroReal"
+                          stroke="#10b981"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#areaLucroReal)"
+                          name="Lucro Líquido Real"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
                 {/* GRÁFICO DE BARRAS (RECHARTS): COMPARATIVO DE FATURAMENTO DOS ÚLTIMOS 6 MESES & SAZONALIDADE */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
@@ -6194,85 +6543,169 @@ export default function App() {
                             🍱 Alimentação na Rua, Manutenção & Emergência
                           </h2>
                           <p className={`text-xs ${mutedText}`}>
-                            Ajuste quanto você gasta com almoço/lanche e o percentual das suas caixinhas diárias
+                            {isEditingFoodMaintPlan
+                              ? 'Ajuste quanto você gasta com almoço/lanche e o percentual das suas reservas diárias'
+                              : 'Valores diários calculados para cobrir suas despesas de rua e segurança'}
                           </p>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingFoodMaintPlan(prev => !prev)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                            isEditingFoodMaintPlan
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-xs'
+                              : 'bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30'
+                          }`}
+                        >
+                          {isEditingFoodMaintPlan ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Salvar</span>
+                            </>
+                          ) : (
+                            <>
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Ajustar</span>
+                            </>
+                          )}
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Almoço / Marmita por Dia (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="1"
-                            value={finPlan.dailyLunchBudget}
-                            onValueChange={val =>
-                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                      {/* Se estiver no modo de edição (expandido) */}
+                      {isEditingFoodMaintPlan ? (
+                        <div className="mt-4 p-3.5 rounded-2xl bg-slate-900/40 border border-slate-800/60">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Almoço / Marmita por Dia (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="1"
+                                value={finPlan.dailyLunchBudget}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Lanche / Café / Água por Dia (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="1"
-                            value={finPlan.dailySnackBudget}
-                            onValueChange={val =>
-                              updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Lanche / Café / Água por Dia (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="1"
+                                value={finPlan.dailySnackBudget}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Reserva de Emergência (% do Bruto)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <FreeNumberInput
-                              step="1"
-                              value={finPlan.emergencyReservePct}
-                              onValueChange={val =>
-                                updateFinancialPlan({
-                                  emergencyReservePct: Math.max(0, val),
-                                })
-                              }
-                              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                            />
-                            <span className="text-xs font-black text-purple-400">
-                              = {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
-                            </span>
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Reserva de Emergência (% do Bruto)
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <FreeNumberInput
+                                  step="1"
+                                  value={finPlan.emergencyReservePct}
+                                  onValueChange={val =>
+                                    updateFinancialPlan({
+                                      emergencyReservePct: Math.max(0, val),
+                                    })
+                                  }
+                                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                                />
+                                <span className="text-xs font-black text-purple-400 shrink-0">
+                                  = {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
+                                </span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Margem Extra Imprevisto Mecânico (%)
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <FreeNumberInput
+                                  step="1"
+                                  value={finPlan.maintenanceExtraBufferPct}
+                                  onValueChange={val =>
+                                    updateFinancialPlan({
+                                      maintenanceExtraBufferPct: Math.max(0, val),
+                                    })
+                                  }
+                                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                                />
+                                <span className="text-xs font-black text-amber-400 shrink-0">
+                                  +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingFoodMaintPlan(false)}
+                              className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Salvar & Recolher</span>
+                            </button>
                           </div>
                         </div>
+                      ) : (
+                        /* Modo Minimizado: Mostra o RESULTADO exato que o motoboy precisa separar */
+                        <div className="mt-4 flex flex-col gap-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>🍱 Almoço / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-orange-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyLunch)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtCurrencyExact(financialIntelligence.dailyLunch * financialIntelligence.workDaysPerMonth)}/mês
+                              </div>
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Margem Extra Imprevisto Mecânico (%)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <FreeNumberInput
-                              step="1"
-                              value={finPlan.maintenanceExtraBufferPct}
-                              onValueChange={val =>
-                                updateFinancialPlan({
-                                  maintenanceExtraBufferPct: Math.max(0, val),
-                                })
-                              }
-                              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                            />
-                            <span className="text-xs font-black text-amber-400">
-                              +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
-                            </span>
+                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>☕ Lanche & Água</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-orange-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailySnack)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtCurrencyExact(financialIntelligence.dailySnack * financialIntelligence.workDaysPerMonth)}/mês
+                              </div>
+                            </div>
+
+                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>🛠️ Manutenção / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-amber-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
+                              </div>
+                            </div>
+
+                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>🛡️ Emergência / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-purple-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Detalhamento Automático da Reserva de Manutenção por Peça da Aba Moto */}
-                      <div className={`mt-4 rounded-2xl p-3.5 ${surfaceSubtle}`}>
+                      <div className={`mt-3 rounded-2xl p-3.5 ${surfaceSubtle}`}>
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-extrabold text-amber-400">
                             🛠️ Detalhamento da Reserva de Manutenção por Peça
@@ -6327,128 +6760,179 @@ export default function App() {
                             📄 Documento da Moto: IPVA, Licenciamento & MEI/Seguro
                           </h2>
                           <p className={`text-xs ${mutedText}`}>
-                            Descubra exatamente quanto separar por dia trabalhado para pagar IPVA e Licenciamento à vista sem sufoco
+                            {isEditingDocsPlan
+                              ? 'Informe seus custos anuais com documentos para calcular a separação diária'
+                              : 'Objetivos financeiros e valores a separar diariamente para pagar tudo à vista'}
                           </p>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingDocsPlan(prev => !prev)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                            isEditingDocsPlan
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-xs'
+                              : 'bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30'
+                          }`}
+                        >
+                          {isEditingDocsPlan ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Salvar</span>
+                            </>
+                          ) : (
+                            <>
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Ajustar</span>
+                            </>
+                          )}
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            IPVA Anual da Moto (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="10"
-                            value={finPlan.ipvaAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                      {/* Se estiver no modo de edição (expandido) */}
+                      {isEditingDocsPlan ? (
+                        <div className="mt-4 p-3.5 rounded-2xl bg-slate-900/40 border border-slate-800/60">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                IPVA Anual da Moto (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="10"
+                                value={finPlan.ipvaAnnual}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Licenciamento Anual CRLV-e (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="5"
-                            value={finPlan.licensingAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Licenciamento Anual CRLV-e (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="5"
+                                value={finPlan.licensingAnnual}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            DAS MEI / Seguro / Rastreador Mensal (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="5"
-                            value={finPlan.insuranceOrMeiMonthly}
-                            onValueChange={val =>
-                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                DAS MEI / Seguro / Rastreador Mensal (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="5"
+                                value={finPlan.insuranceOrMeiMonthly}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div>
-                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                            Outras Taxas Anuais / CNH / Detran (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="10"
-                            value={finPlan.otherDocsAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
+                            <div>
+                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                                Outras Taxas Anuais / CNH / Detran (R$)
+                              </label>
+                              <FreeNumberInput
+                                step="10"
+                                value={finPlan.otherDocsAnnual}
+                                onValueChange={val =>
+                                  updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
+                                }
+                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
 
-                        <div className="sm:col-span-2">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <label className={`text-xs font-bold ${mutedText}`}>
-                              Meses até o vencimento do IPVA / Licenciamento:
-                            </label>
-                            <span className="text-xs font-black text-sky-400">
-                              {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {[1, 2, 3, 6, 9, 12].map(mVal => (
-                              <button
-                                key={mVal}
-                                type="button"
-                                onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
-                                  finPlan.docsTargetMonths === mVal
-                                    ? 'bg-sky-400 text-black'
-                                    : `${surfaceSubtle} hover:border-sky-400`
-                                }`}
-                              >
-                                {mVal} {mVal === 1 ? 'mês' : 'meses'}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Resumo de Quanto Guardar por Dia para Cada Documento */}
-                      <div className={`mt-4 rounded-2xl p-3.5 ${surfaceSubtle}`}>
-                        <div className="text-xs font-extrabold text-sky-400 mb-2">
-                          Quanto separar por dia trabalhado para cada obrigação:
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                            <div className={`text-[10px] font-bold ${mutedText}`}>IPVA / dia</div>
-                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
-                              {fmtCurrencyExact(financialIntelligence.dailyIpvaReserve)}
+                            <div className="sm:col-span-2">
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <label className={`text-xs font-bold ${mutedText}`}>
+                                  Meses até o vencimento do IPVA / Licenciamento:
+                                </label>
+                                <span className="text-xs font-black text-sky-400">
+                                  {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[1, 2, 3, 6, 9, 12].map(mVal => (
+                                  <button
+                                    key={mVal}
+                                    type="button"
+                                    onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
+                                      finPlan.docsTargetMonths === mVal
+                                        ? 'bg-sky-400 text-black'
+                                        : `${surfaceSubtle} hover:border-sky-400`
+                                    }`}
+                                  >
+                                    {mVal} {mVal === 1 ? 'mês' : 'meses'}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                            <div className={`text-[10px] font-bold ${mutedText}`}>Licenciam. / dia</div>
-                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
-                              {fmtCurrencyExact(financialIntelligence.dailyLicensingReserve)}
-                            </div>
+
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingDocsPlan(false)}
+                              className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Salvar & Recolher</span>
+                            </button>
                           </div>
-                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                            <div className={`text-[10px] font-bold ${mutedText}`}>MEI & Seguro / dia</div>
-                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
-                              {fmtCurrencyExact(financialIntelligence.dailyMeiInsuranceReserve)}
-                            </div>
+                        </div>
+                      ) : (
+                        /* Modo Minimizado: Mostra apenas os OBJETIVOS FINANCEIROS e valores a separar */
+                        <div className="mt-4 flex flex-col gap-3">
+                          <div className="text-xs font-extrabold text-sky-400">
+                            Quanto separar por dia trabalhado para cada obrigação:
                           </div>
-                          <div className={`rounded-xl p-2 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                            <div className={`text-[10px] font-bold ${mutedText}`}>CNH & Taxas / dia</div>
-                            <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400 mt-0.5">
-                              {fmtCurrencyExact(financialIntelligence.dailyOtherDocsReserve)}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>IPVA / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyIpvaReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtMoney(finPlan.ipvaAnnual)}/ano
+                              </div>
+                            </div>
+                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>Licenciam. / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyLicensingReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtMoney(finPlan.licensingAnnual)}/ano
+                              </div>
+                            </div>
+                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>MEI & Seguro / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyMeiInsuranceReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtMoney(finPlan.insuranceOrMeiMonthly)}/mês
+                              </div>
+                            </div>
+                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
+                              <div className={`text-[10px] font-bold ${mutedText}`}>CNH & Taxas / dia</div>
+                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
+                                {fmtCurrencyExact(financialIntelligence.dailyOtherDocsReserve)}
+                              </div>
+                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                                {fmtMoney(finPlan.otherDocsAnnual)}/ano
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     <div className={`rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
@@ -6459,7 +6943,7 @@ export default function App() {
                           Total a Guardar p/ Documentação & Proteção
                         </div>
                         <div className={`text-[11px] ${mutedText}`}>
-                          Custo anual total: {fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)}/ano
+                          Custo anual total: {fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)}/ano ({finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} p/ juntar)
                         </div>
                       </div>
                       <div className="text-left sm:text-right">
@@ -7952,44 +8436,12 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div>
                     <div className="text-sm font-bold flex items-center gap-2">
+                      <Target className="w-4 h-4 text-[#FF6A1A]" />
                       <span>Meta Personalizada de Ganhos</span>
                     </div>
                     <div className={`text-xs ${mutedText}`}>
-                      Acompanhamento com meta diária por dias ou data limite personalizada
+                      Defina sua meta de faturamento e a data término para contagem regressiva e meta diária
                     </div>
-                  </div>
-
-                  <div className={`flex items-center gap-1 p-1 rounded-xl ${surfaceSubtle} shrink-0`}>
-                    <button
-                      type="button"
-                      onClick={() => persistAndEnqueueWorkManager({ ...dbState, customGoalMode: 'days' })}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                        dbState.customGoalMode !== 'date'
-                          ? 'bg-[#FF6A1A] text-black font-black shadow-xs'
-                          : `${mutedText} hover:text-current`
-                      }`}
-                    >
-                      Por Dia
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        persistAndEnqueueWorkManager({
-                          ...dbState,
-                          customGoalMode: 'date',
-                          customGoalTargetDate:
-                            dbState.customGoalTargetDate ||
-                            getDefaultFutureDate(dbState.customGoalDays || 20),
-                        })
-                      }
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                        dbState.customGoalMode === 'date'
-                          ? 'bg-[#FF6A1A] text-black font-black shadow-xs'
-                          : `${mutedText} hover:text-current`
-                      }`}
-                    >
-                      Data Personalizada
-                    </button>
                   </div>
                 </div>
 
@@ -8007,6 +8459,7 @@ export default function App() {
                           persistAndEnqueueWorkManager({
                             ...dbState,
                             customGoalTarget: Math.max(0, val),
+                            customGoalMode: 'date',
                           })
                         }
                         className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
@@ -8014,50 +8467,29 @@ export default function App() {
                     </div>
                   </div>
 
-                  {dbState.customGoalMode === 'date' ? (
-                    <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className={`text-[11px] font-bold ${mutedText}`}>
-                          Data Personalizada
-                        </label>
-                        <span className="text-[10px] font-black text-[#FF6A1A]">
-                          ⏳ {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownBadgeText}
-                        </span>
-                      </div>
-                      <input
-                        type="date"
-                        min={todayStr()}
-                        value={dbState.customGoalTargetDate || getDefaultFutureDate(20)}
-                        onChange={e =>
-                          persistAndEnqueueWorkManager({
-                            ...dbState,
-                            customGoalTargetDate: e.target.value,
-                          })
-                        }
-                        className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
-                      />
-                    </div>
-                  ) : (
-                    <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                        Prazo p/ Atingir a Meta (Dias)
+                  <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`text-[11px] font-bold ${mutedText}`}>
+                        Data Término da Meta (Data Personalizada)
                       </label>
-                      <div className="flex items-center gap-2">
-                        <FreeNumberInput
-                          value={dbState.customGoalDays ?? 20}
-                          onValueChange={val =>
-                            persistAndEnqueueWorkManager({
-                              ...dbState,
-                              customGoalDays: Math.max(0, val),
-                            })
-                          }
-                          className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
-                          title="Prazo em dias para atingir a meta personalizada"
-                        />
-                        <span className={`text-xs font-bold ${mutedText}`}>dias</span>
-                      </div>
+                      <span className="text-[10px] font-black text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/20">
+                        ⏳ {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownBadgeText}
+                      </span>
                     </div>
-                  )}
+                    <input
+                      type="date"
+                      min={todayStr()}
+                      value={dbState.customGoalTargetDate || getDefaultFutureDate(20)}
+                      onChange={e =>
+                        persistAndEnqueueWorkManager({
+                          ...dbState,
+                          customGoalTargetDate: e.target.value,
+                          customGoalMode: 'date',
+                        })
+                      }
+                      className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
+                    />
+                  </div>
                 </div>
               </div>
 

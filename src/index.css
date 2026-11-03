@@ -16,15 +16,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Efeito visual de destaque: Brilho e borda pulsante para manutenções vencidas (>= 100%) */
-@keyframes danger-glow-pulse {
+/* Efeito visual de destaque: Borda pulsante e indicador sutil para manutenções vencidas (>= 100%) sem ocultar o texto */
+@keyframes danger-border-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.85), 0 0 28px rgba(244, 63, 94, 0.55), inset 0 0 16px rgba(244, 63, 94, 0.2);
     border-color: rgba(244, 63, 94, 0.95);
+    box-shadow: 0 4px 16px -2px rgba(244, 63, 94, 0.22);
   }
   50% {
-    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4), 0 0 12px rgba(239, 68, 68, 0.25), inset 0 0 6px rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.55);
+    border-color: rgba(244, 63, 94, 0.5);
+    box-shadow: 0 2px 8px -2px rgba(244, 63, 94, 0.1);
   }
 }
 
@@ -40,28 +40,28 @@
 }
 
 .maint-card-danger-glow {
-  animation: danger-glow-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: danger-border-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   position: relative;
 }
 
 .maint-card-danger-glow-subtle {
-  animation: danger-glow-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: danger-border-pulse 2.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 /* Efeito visual de alerta preventivo configurável (ex: avisar aos 90% do intervalo) */
-@keyframes warn-glow-pulse {
+@keyframes warn-border-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.8), 0 0 22px rgba(245, 158, 11, 0.45), inset 0 0 14px rgba(245, 158, 11, 0.15);
-    border-color: rgba(245, 158, 11, 0.9);
+    border-color: rgba(245, 158, 11, 0.95);
+    box-shadow: 0 4px 16px -2px rgba(245, 158, 11, 0.2);
   }
   50% {
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35), 0 0 10px rgba(245, 158, 11, 0.2), inset 0 0 6px rgba(245, 158, 11, 0.05);
-    border-color: rgba(245, 158, 11, 0.55);
+    border-color: rgba(245, 158, 11, 0.5);
+    box-shadow: 0 2px 8px -2px rgba(245, 158, 11, 0.08);
   }
 }
 
 .maint-card-warn-glow {
-  animation: warn-glow-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: warn-border-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   position: relative;
 }
 
