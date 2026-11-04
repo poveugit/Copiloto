@@ -63,6 +63,7 @@ import {
   Navigation,
   MapPin,
   ShieldCheck,
+  Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -72,12 +73,15 @@ import {
   Bar,
   AreaChart,
   Area,
+  PieChart,
+  Pie,
   Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ReferenceLine,
+  Sector,
 } from 'recharts';
 import {
   RideEntry,
@@ -144,10 +148,12 @@ import {
 
 const BASE_APPS: AppDefinition[] = [
   { id: 'ifood', name: 'iFood', icon: '🛍️' },
-  { id: 'uber', name: 'Uber', icon: '🚗' },
-  { id: '99', name: '99', icon: '🚖' },
-  { id: 'rappi', name: 'Rappi', icon: '📦' },
+  { id: '99moto', name: '99 Moto', icon: '🛵' },
+  { id: 'lalamove', name: 'Lalamove', icon: '📦' },
+  { id: 'ze_delivery', name: 'Zé Delivery', icon: '🍺' },
+  { id: 'rappi', name: 'Rappi', icon: '🍔' },
   { id: 'keeta', name: 'Keeta', icon: '🛵' },
+  { id: 'particular', name: 'Particular / Fixo', icon: '💼' },
 ];
 
 const BASE_EXPENSE_CATEGORIES: CategoryDefinition[] = [
@@ -349,7 +355,13 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
       };
 
       const cleanEntries = Array.isArray(parsed.entries)
-        ? parsed.entries.filter((e: any) => !isLegacyDemoEntry(e))
+        ? parsed.entries
+            .filter((e: any) => !isLegacyDemoEntry(e))
+            .map((e: any) => {
+              if (e.app === 'uber' || e.app === '99') return { ...e, app: '99moto' };
+              if (e.app === 'ze') return { ...e, app: 'ze_delivery' };
+              return e;
+            })
         : [];
       const cleanExpenses = Array.isArray(parsed.expenses)
         ? parsed.expenses.filter((e: any) => !isLegacyDemoExpense(e))
@@ -552,7 +564,28 @@ export default function App() {
 
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [billingSubTab, setBillingSubTab] = useState<'planejamento' | 'ganhos' | 'gastos'>('planejamento');
+  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [selectedFinanceMonth, setSelectedFinanceMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [financeAppFilter, setFinanceAppFilter] = useState<string>('all');
+  const [financeSortOrder, setFinanceSortOrder] = useState<'date_desc' | 'val_desc' | 'val_asc'>('date_desc');
+  const [isEditingCustomGoalInFinance, setIsEditingCustomGoalInFinance] = useState<boolean>(false);
+  const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(3000);
+  const [tempFinanceGoalDate, setTempFinanceGoalDate] = useState<string>(() => getDefaultFutureDate(20));
+  const [selectedRaioXCategory, setSelectedRaioXCategory] = useState<string>('fuel');
+  const [showFormulaExplanation, setShowFormulaExplanation] = useState<boolean>(false);
+  const [seasonalityFilter, setSeasonalityFilter] = useState<'3m' | '6m' | '12m' | 'ytd' | 'custom'>('6m');
+  const [seasonalityCustomStart, setSeasonalityCustomStart] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 5);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [seasonalityCustomEnd, setSeasonalityCustomEnd] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [showKotlinInspector, setShowKotlinInspector] = useState<boolean>(false);
   const [selectedKotlinFileIndex, setSelectedKotlinFileIndex] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
@@ -948,11 +981,11 @@ export default function App() {
   const allApps = useMemo(() => {
     const deleted = new Set(dbState.deletedAppIds || []);
     const overrides = dbState.appOverrides || {};
-    const base = BASE_APPS.filter(a => !deleted.has(a.id)).map(a =>
+    const base = BASE_APPS.filter(a => !deleted.has(a.id) && a.id !== 'uber').map(a =>
       overrides[a.id] ? { ...a, ...overrides[a.id] } : a
     );
     const custom = (dbState.customApps || [])
-      .filter(a => !deleted.has(a.id))
+      .filter(a => !deleted.has(a.id) && a.id !== 'uber' && a.name?.toLowerCase() !== 'uber')
       .map(a => (overrides[a.id] ? { ...a, ...overrides[a.id] } : a));
     const combined = [...base, ...custom];
     return combined.length > 0 ? combined : BASE_APPS;
@@ -1060,6 +1093,10 @@ export default function App() {
     let revMonth = 0;
     let revYear = 0;
 
+    let expWeek = 0;
+    let expMonth = 0;
+    let expYear = 0;
+
     dbState.entries.forEach(e => {
       if (!e.date) return;
       const rev = Number(e.revenue || 0);
@@ -1069,8 +1106,123 @@ export default function App() {
       if (entryDate >= monday && entryDate <= sunday) revWeek += rev;
     });
 
-    return { revWeek, revMonth, revYear, currentMonthStr, currentMonthName, daysRemainingInMonth };
-  }, [dbState.entries]);
+    dbState.expenses.forEach(ex => {
+      if (!ex.date) return;
+      const amt = Number(ex.amount || 0);
+      const expDate = new Date(ex.date + 'T12:00:00');
+      if (expDate.getFullYear() === currentYear) expYear += amt;
+      if (ex.date.startsWith(currentMonthStr)) expMonth += amt;
+      if (expDate >= monday && expDate <= sunday) expWeek += amt;
+    });
+
+    const saldoWeek = revWeek - expWeek;
+    const saldoMonth = revMonth - expMonth;
+    const saldoYear = revYear - expYear;
+
+    return {
+      revWeek,
+      expWeek,
+      saldoWeek,
+      revMonth,
+      expMonth,
+      saldoMonth,
+      revYear,
+      expYear,
+      saldoYear,
+      currentMonthStr,
+      currentMonthName,
+      daysRemainingInMonth,
+    };
+  }, [dbState.entries, dbState.expenses]);
+
+  // Lista de meses disponíveis para o filtro de finanças (mês atual + meses anteriores)
+  const availableFinanceMonths = useMemo(() => {
+    const now = new Date();
+    const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const set = new Set<string>();
+    set.add(currentYM);
+    dbState.entries.forEach(e => {
+      if (e.date && e.date.length >= 7) set.add(e.date.slice(0, 7));
+    });
+    dbState.expenses.forEach(ex => {
+      if (ex.date && ex.date.length >= 7) set.add(ex.date.slice(0, 7));
+    });
+    // Adiciona os últimos 12 meses para o motoboy sempre poder navegar e visualizar
+    const [cy, cm] = currentYM.split('-').map(Number);
+    for (let i = 1; i <= 12; i++) {
+      const d = new Date(cy, cm - 1 - i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      set.add(ym);
+    }
+    return Array.from(set).sort().reverse();
+  }, [dbState.entries, dbState.expenses]);
+
+  // Finanças completas do mês selecionado na Central de Finanças
+  const selectedMonthFinancials = useMemo(() => {
+    const mEntries = dbState.entries.filter(
+      e => e.date && e.date.startsWith(selectedFinanceMonth)
+    );
+    const mExpenses = dbState.expenses.filter(
+      ex => ex.date && ex.date.startsWith(selectedFinanceMonth)
+    );
+
+    const totalRevenue = mEntries.reduce((s, e) => s + (Number(e.revenue) || 0), 0);
+    const totalExpenses = mExpenses.reduce((s, ex) => s + (Number(ex.amount) || 0), 0);
+    const currentBalance = totalRevenue - totalExpenses;
+    const netMarginPct = totalRevenue > 0 ? Math.round((currentBalance / totalRevenue) * 100) : 0;
+
+    const totalKm = mEntries.reduce((s, e) => s + (Number(e.km) || 0), 0);
+    const totalHours = mEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+    const activeDays = new Set(mEntries.map(e => e.date)).size;
+    const avgPerKm = totalKm > 0 ? totalRevenue / totalKm : 0;
+    const avgPerHour = totalHours > 0 ? totalRevenue / totalHours : 0;
+    const avgPerRide = mEntries.length > 0 ? totalRevenue / mEntries.length : 0;
+
+    // Resumo de faturamento por aplicativo no mês
+    const appMap: Record<string, { id: string; name: string; icon: string; count: number; rev: number; km: number }> = {};
+    mEntries.forEach(e => {
+      const appInfo = allApps.find(
+        a => a.id === e.app || a.name.toLowerCase() === (e.app || '').toLowerCase()
+      ) || { id: e.app || 'outros', name: e.app || 'Outros', icon: '🛵' };
+
+      const key = appInfo.name;
+      if (!appMap[key]) {
+        appMap[key] = { id: appInfo.id, name: appInfo.name, icon: appInfo.icon || '🛵', count: 0, rev: 0, km: 0 };
+      }
+      appMap[key].count += 1;
+      appMap[key].rev += Number(e.revenue || 0);
+      appMap[key].km += Number(e.km || 0);
+    });
+
+    const byApp = Object.values(appMap).sort((a, b) => b.rev - a.rev);
+
+    // Mês formatado (ex: "Outubro de 2026")
+    const [y, m] = selectedFinanceMonth.split('-');
+    const monthName = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+    const now = new Date();
+    const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const isCurrentMonth = selectedFinanceMonth === currentYM;
+
+    return {
+      entries: mEntries,
+      expenses: mExpenses,
+      totalRevenue,
+      totalExpenses,
+      currentBalance,
+      netMarginPct,
+      totalKm,
+      totalHours,
+      activeDays,
+      avgPerKm,
+      avgPerHour,
+      avgPerRide,
+      byApp,
+      monthName,
+      year: y,
+      formattedLabel: `${monthName} de ${y}`,
+      isCurrentMonth,
+    };
+  }, [dbState.entries, dbState.expenses, selectedFinanceMonth, allApps]);
 
   // Shift & Bike Diagnostics
   const shiftEval = useMemo(() => {
@@ -2475,10 +2627,12 @@ export default function App() {
     const remainingDaysInWeek = Math.max(1, 8 - dayOfWeek);
     const weeklyDailyNeeded = weeklyRemaining > 0 ? weeklyRemaining / remainingDaysInWeek : 0;
 
-    // Custom Goal stats (Padrão: Faturamento do Mês Atual para não considerar meses anteriores)
+    // Custom Goal stats: Acompanha o SALDO ATUAL do usuário (Lucro Líquido Real = Ganhos - Gastos)
     const customScope = dbState.customGoalScope || 'month';
-    const customCurrent = customScope === 'all' ? totals.totalRevenue : periodTotals.revMonth;
-    const customPct = Math.min(100, Math.round((customCurrent / customGoalTarget) * 100));
+    const customCurrent = customScope === 'all' ? totals.lucro : periodTotals.saldoMonth;
+    const customGross = customScope === 'all' ? totals.totalRevenue : periodTotals.revMonth;
+    const customExpenses = customScope === 'all' ? totals.totalExpense : periodTotals.expMonth;
+    const customPct = Math.min(100, Math.max(0, Math.round((customCurrent / customGoalTarget) * 100)));
     const customRemaining = Math.max(0, customGoalTarget - customCurrent);
     const customDailyNeeded = customRemaining > 0 ? customRemaining / customGoalDays : 0;
 
@@ -2875,6 +3029,8 @@ export default function App() {
       weeklyRemaining,
       weeklyDailyNeeded,
       customCurrent,
+      customGross,
+      customExpenses,
       customPct,
       customRemaining,
       customDailyNeeded,
@@ -3293,7 +3449,7 @@ export default function App() {
     };
   }, [dbState.entries, dbState.expenses, financialIntelligence]);
 
-  // ================= 6-MONTH REVENUE SEASONALITY ANALYTICS (RECHARTS BAR CHART) =================
+  // ================= REVENUE SEASONALITY ANALYTICS (DYNAMIC DATE FILTER + RECHARTS BAR CHART) =================
   const sixMonthSeasonality = useMemo(() => {
     const monthShortNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
     const monthFullNames = [
@@ -3312,23 +3468,60 @@ export default function App() {
     ];
 
     const now = new Date();
-    const monthsData: {
-      yearMonth: string;
-      label: string;
-      fullLabel: string;
-      faturamento: number;
-      gastos: number;
-      lucro: number;
-      km: number;
-      corridas: number;
-      isPeak: boolean;
-      isCurrent: boolean;
-    }[] = [];
+    const targetMonths: { year: number; month: number }[] = [];
 
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const yyyy = d.getFullYear();
-      const mmIndex = d.getMonth();
+    if (seasonalityFilter === '3m') {
+      for (let i = 2; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        targetMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+      }
+    } else if (seasonalityFilter === '6m') {
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        targetMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+      }
+    } else if (seasonalityFilter === '12m') {
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        targetMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+      }
+    } else if (seasonalityFilter === 'ytd') {
+      const curYear = now.getFullYear();
+      const curMonth = now.getMonth();
+      for (let m = 0; m <= curMonth; m++) {
+        targetMonths.push({ year: curYear, month: m });
+      }
+    } else if (seasonalityFilter === 'custom') {
+      const startParts = (seasonalityCustomStart || '').split('-').map(Number);
+      const endParts = (seasonalityCustomEnd || '').split('-').map(Number);
+      if (
+        startParts.length === 2 &&
+        endParts.length === 2 &&
+        !isNaN(startParts[0]) &&
+        !isNaN(startParts[1]) &&
+        !isNaN(endParts[0]) &&
+        !isNaN(endParts[1])
+      ) {
+        let cur = new Date(startParts[0], startParts[1] - 1, 1);
+        const end = new Date(endParts[0], endParts[1] - 1, 1);
+        let guard = 0;
+        while (cur <= end && guard < 36) {
+          targetMonths.push({ year: cur.getFullYear(), month: cur.getMonth() });
+          cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+          guard++;
+        }
+      }
+      if (targetMonths.length === 0) {
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          targetMonths.push({ year: d.getFullYear(), month: d.getMonth() });
+        }
+      }
+    }
+
+    const monthsData = targetMonths.map(tm => {
+      const yyyy = tm.year;
+      const mmIndex = tm.month;
       const mmStr = String(mmIndex + 1).padStart(2, '0');
       const yearMonth = `${yyyy}-${mmStr}`;
       const shortYear = String(yyyy).slice(-2);
@@ -3340,7 +3533,9 @@ export default function App() {
       const exp = monthExpenses.reduce((acc, ex) => acc + (Number(ex.amount) || 0), 0);
       const km = monthEntries.reduce((acc, e) => acc + (Number(e.km) || 0), 0);
 
-      monthsData.push({
+      const isCurrent = yyyy === now.getFullYear() && mmIndex === now.getMonth();
+
+      return {
         yearMonth,
         label: `${monthShortNames[mmIndex]}/${shortYear}`,
         fullLabel: `${monthFullNames[mmIndex]} de ${yyyy}`,
@@ -3350,14 +3545,18 @@ export default function App() {
         km: Math.round(km * 10) / 10,
         corridas: monthEntries.length,
         isPeak: false,
-        isCurrent: i === 0,
-      });
-    }
+        isCurrent,
+      };
+    });
 
     const total6MonthsRev = monthsData.reduce((s, m) => s + m.faturamento, 0);
     const activeMonths = monthsData.filter(m => m.faturamento > 0);
     const avgMonthlyRev =
-      activeMonths.length > 0 ? total6MonthsRev / activeMonths.length : total6MonthsRev / 6;
+      activeMonths.length > 0
+        ? total6MonthsRev / activeMonths.length
+        : monthsData.length > 0
+        ? total6MonthsRev / monthsData.length
+        : 0;
 
     let peakMonth: (typeof monthsData)[0] | null = null;
     let lowActiveMonth: (typeof monthsData)[0] | null = null;
@@ -3378,6 +3577,13 @@ export default function App() {
       prevMonthObj && prevMonthObj.faturamento > 0
         ? Math.round(((currentMonthObj.faturamento - prevMonthObj.faturamento) / prevMonthObj.faturamento) * 100)
         : null;
+
+    let filterLabel = 'Últimos 6 Meses';
+    if (seasonalityFilter === '3m') filterLabel = 'Últimos 3 Meses';
+    else if (seasonalityFilter === '6m') filterLabel = 'Últimos 6 Meses';
+    else if (seasonalityFilter === '12m') filterLabel = 'Últimos 12 Meses (1 Ano)';
+    else if (seasonalityFilter === 'ytd') filterLabel = `Ano Atual (${now.getFullYear()})`;
+    else if (seasonalityFilter === 'custom') filterLabel = 'Período Personalizado';
 
     let seasonalitySummary =
       'Registre seus ganhos ao longo dos meses para identificar os períodos de alta demanda e planejar reservas para meses mais fracos.';
@@ -3405,9 +3611,10 @@ export default function App() {
       lowActiveMonth,
       activeMonthsCount: activeMonths.length,
       momGrowthPct,
+      filterLabel,
       seasonalitySummary,
     };
-  }, [dbState.entries, dbState.expenses]);
+  }, [dbState.entries, dbState.expenses, seasonalityFilter, seasonalityCustomStart, seasonalityCustomEnd]);
 
   const [aiFinancialAdvice, setAiFinancialAdvice] = useState<string>('');
   const [isAiFinancialLoading, setIsAiFinancialLoading] = useState<boolean>(false);
@@ -3972,7 +4179,7 @@ export default function App() {
               onClick={() => setShowCockpitMenu(prev => !prev)}
               aria-label="Menu Cockpit de Operações"
               title="Menu Cockpit: Radar de Lucro, Turno GPS, Extrato MEI, Meta Reversa"
-              className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] flex items-center gap-1.5 border ${
+              className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center relative border ${
                 activeShiftSession?.isActive
                   ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/25'
                   : showCockpitMenu
@@ -3980,10 +4187,12 @@ export default function App() {
                   : `${surfaceSubtle} ${mutedText} hover:text-white hover:border-[#FF6A1A]/50`
               }`}
             >
-              <Gauge className={`w-3.5 h-3.5 shrink-0 ${activeShiftSession?.isActive ? 'text-emerald-400 animate-pulse' : 'text-[#FF6A1A]'}`} />
-              <span className="font-extrabold">Cockpit</span>
+              <Gauge className={`w-4 h-4 shrink-0 ${activeShiftSession?.isActive ? 'text-emerald-400 animate-pulse' : 'text-[#FF6A1A]'}`} />
               {activeShiftSession?.isActive && (
-                <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <span className="absolute top-1 right-1 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
               )}
             </button>
 
@@ -4266,7 +4475,136 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 sm:pt-6">
         {/* ================= ABA 1: PAINEL (DASHBOARD) ================= */}
         {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
+          <div className="flex flex-col gap-4 sm:gap-6">
+            {/* CARDS EM DESTAQUE NO TOPO: RESERVAS OBRIGATÓRIAS DO MOTOBOY */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800/50">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-base shrink-0">
+                    🛡️
+                  </span>
+                  <div>
+                    <h2 className="text-sm sm:text-base font-black flex items-center gap-2">
+                      <span>Reservas Financeiras Obrigatórias</span>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                        Blindagem do Bolso
+                      </span>
+                    </h2>
+                    <p className={`text-xs mt-0.5 ${mutedText}`}>
+                      Valores diários que você deve separar do faturamento antes de gastar seu lucro
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('planejamento');
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Ajustar Parâmetros</span>
+                </button>
+              </div>
+
+              {/* Grid dos Cards de Reserva em Destaque */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                {/* 1. Reserva Alimentação na Rua */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1.5 text-orange-400 font-black">
+                      <span>🍱</span>
+                      <span>Alimentação na Rua</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
+                      {financialIntelligence.foodPctOfGross}% do dia
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-orange-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                  </div>
+                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês estimado
+                  </div>
+                  <div className={`text-[11px] mt-1 ${mutedText}`}>
+                    Almoço, lanches e água no turno
+                  </div>
+                </div>
+
+                {/* 2. Reserva Manutenção da Moto */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1.5 text-amber-400 font-black">
+                      <span>🛠️</span>
+                      <span>Manutenção Preventiva</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
+                      {financialIntelligence.maintPctOfGross}% do dia
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                  </div>
+                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês preventivo
+                  </div>
+                  <div className={`text-[11px] mt-1 ${mutedText}`}>
+                    Desgaste de óleo, pneus e relação
+                  </div>
+                </div>
+
+                {/* 3. Reserva Documentos da Moto */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1.5 text-sky-400 font-black">
+                      <span>📄</span>
+                      <span>Documentos & IPVA</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-400">
+                      {financialIntelligence.docsPctOfGross}% do dia
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-sky-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                  </div>
+                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês · Total {fmtMoney(financialIntelligence.totalAnnualDocsWithInsurance)}/ano
+                  </div>
+                  <div className={`text-[11px] mt-1 ${mutedText}`}>
+                    IPVA, licenciamento e DAS MEI
+                  </div>
+                </div>
+
+                {/* 4. Total a Reservar por Dia */}
+                <div className="rounded-2xl p-3.5 sm:p-4 border-2 border-emerald-500/40 bg-emerald-500/10">
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1.5 text-emerald-400 font-black">
+                      <span>🔒</span>
+                      <span>Total Diário a Guardar</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                      Proteção
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-emerald-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)}
+                    <span className="text-xs font-semibold ml-1 text-emerald-300">/ dia</span>
+                  </div>
+                  <div className="text-xs mt-1 font-semibold text-emerald-400/90">
+                    Alimentação + Manutenção + Docs + Emergência
+                  </div>
+                  <div className={`text-[11px] mt-1 ${mutedText}`}>
+                    Separe todo dia antes do lucro livre
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
             {/* Left Column: Hero Odometer, Level Road & Main Financials */}
             <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
               {/* LIVE ACTIVE SHIFT BANNER */}
@@ -4801,18 +5139,21 @@ export default function App() {
                   );
                 })()}
 
-                {/* Meta Personalizada de Ganhos: Modo Data Personalizada Definida na Configuração */}
+                {/* Meta Personalizada de Ganhos: Acompanha o Saldo Atual do Usuário */}
                 {(() => {
                   const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
                   const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
                   const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
                   const customDays = Math.max(1, countdown.effectiveDays);
-                  const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
-                  const currentEarned = periodTotals.revMonth;
-                  const rawPct = Math.round((currentEarned / customTarget) * 100);
+                  const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Saldo';
+                  // Acompanha o SALDO ATUAL do usuário (Lucro Líquido Real = Ganhos - Gastos)
+                  const currentBalance = periodTotals.saldoMonth;
+                  const currentGross = periodTotals.revMonth;
+                  const currentExpenses = periodTotals.expMonth;
+                  const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
                   const barPct = Math.min(100, Math.max(0, rawPct));
-                  const remainingToGoal = Math.max(0, customTarget - currentEarned);
-                  const isGoalReached = currentEarned >= customTarget;
+                  const remainingToGoal = Math.max(0, customTarget - currentBalance);
+                  const isGoalReached = currentBalance >= customTarget;
                   const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
 
                   return (
@@ -4842,7 +5183,7 @@ export default function App() {
                               {customTitle}
                             </span>
                             <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
-                              Faturamento do mês atual até a data término
+                              Acompanhando seu Saldo Atual (Lucro Líquido = Ganhos - Gastos)
                             </span>
                           </div>
                         </div>
@@ -4850,10 +5191,10 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <span
                             className={`text-xs sm:text-sm font-black tabular-nums ${
-                              isGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
+                              isGoalReached ? 'text-emerald-400' : currentBalance < 0 ? 'text-rose-400' : 'text-[#FF6A1A]'
                             }`}
                           >
-                            {fmtMoney(currentEarned)} / {fmtMoney(customTarget)} ({rawPct}%)
+                            Saldo: {fmtMoney(currentBalance)} / {fmtMoney(customTarget)} ({rawPct}%)
                           </span>
                           <button
                             type="button"
@@ -4894,7 +5235,7 @@ export default function App() {
                           }`}
                         >
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                            Meta Diária Necessária
+                            Saldo Diário Necessário
                           </span>
                           <div className="mt-1 flex items-baseline justify-between gap-1">
                             <span
@@ -4926,7 +5267,7 @@ export default function App() {
                               isGoalReached ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                             }`}
                           >
-                            Falta para o Objetivo
+                            Falta de Saldo Líquido
                           </span>
                           <div className="mt-1 flex items-baseline justify-between gap-1">
                             <span
@@ -4959,17 +5300,17 @@ export default function App() {
                         />
                       </div>
 
-                      {/* Feedback Visual Direto: Apenas Progresso Atual e o Quanto Falta */}
-                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
+                      {/* Feedback Visual Direto: Saldo Atual (Ganhos - Gastos) e o Quanto Falta */}
+                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
                         <span className={mutedText}>
-                          Progresso: <span className={isDark ? 'text-slate-100 font-bold' : 'text-slate-900 font-bold'}>{fmtMoney(currentEarned)}</span> de {fmtMoney(customTarget)} ({rawPct}%)
+                          Saldo no bolso: <span className={currentBalance >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fmtMoney(currentBalance)}</span> <span className="opacity-75">(Ganhos: {fmtMoney(currentGross)} · Gastos: {fmtMoney(currentExpenses)})</span>
                         </span>
                         <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-slate-800 dark:text-slate-200 font-bold'}>
                           {isGoalReached ? (
-                            `🎉 Meta atingida (+${fmtMoney(currentEarned - customTarget)})`
+                            `🎉 Meta atingida (+${fmtMoney(currentBalance - customTarget)} de sobra)`
                           ) : (
                             <>
-                              Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong>
+                              Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong> de saldo
                             </>
                           )}
                         </span>
@@ -5198,7 +5539,8 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* ================= ABA 2: MOTO (100% EDITABLE CARDS) ================= */}
         {activeTab === 'maintenance' && (
@@ -6170,6 +6512,7 @@ export default function App() {
               </div>
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
+                  { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
                   { id: 'planejamento', label: 'Planejamento & IA' },
                   { id: 'ganhos', label: 'Ganhos por App' },
                   { id: 'gastos', label: 'Gastos por Categoria' },
@@ -6266,9 +6609,564 @@ export default function App() {
               );
             })()}
 
+            {billingSubTab === 'mensal' && (
+              <div className="flex flex-col gap-4 sm:gap-6">
+                {/* 1. BARRA DE CONTROLE: SELETOR DE MÊS, FILTRO DE MESES ANTERIORES & ATALHOS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} shadow-sm border`}>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm sm:text-base font-black flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4 text-[#FF6A1A]" />
+                          <span>Extrato Mensal & Filtro de Meses</span>
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                            selectedMonthFinancials.isCurrentMonth
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                          }`}
+                        >
+                          {selectedMonthFinancials.isCurrentMonth
+                            ? 'Mês Atual em Andamento'
+                            : 'Mês Fechado / Histórico'}
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Navegue entre os meses para comparar seus faturamentos brutos, gastos operacionais e saldo real
+                      </p>
+                    </div>
+
+                    {/* Controles de Navegação de Mês */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                          const d = new Date(y, m - 2, 1);
+                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                        }}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        title="Mês Anterior"
+                      >
+                        <ChevronRight className="w-4 h-4 rotate-180" />
+                        <span className="hidden sm:inline">Anterior</span>
+                      </button>
+
+                      <div className="relative">
+                        <select
+                          value={selectedFinanceMonth}
+                          onChange={e => setSelectedFinanceMonth(e.target.value)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none pr-8 ${inputSurface}`}
+                        >
+                          {availableFinanceMonths.map(ym => {
+                            const [y, m] = ym.split('-');
+                            const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+                            const now = new Date();
+                            const nowYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                            return (
+                              <option key={ym} value={ym}>
+                                {name} de {y} {ym === nowYM ? '· (Atual)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-70" />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                          const d = new Date(y, m, 1);
+                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                        }}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        title="Próximo Mês"
+                      >
+                        <span className="hidden sm:inline">Próximo</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+
+                      {!selectedMonthFinancials.isCurrentMonth && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const now = new Date();
+                            setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 cursor-pointer transition-colors"
+                        >
+                          Ir p/ Mês Atual
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. OS 4 CARDS PRINCIPAIS: GANHOS TOTAIS, GASTOS, SALDO ATUAL E META PERSONALIZADA */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                  {/* Card 1: Ganhos Totais do Mês */}
+                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
+                          1. Ganhos Totais
+                        </span>
+                        <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                          {selectedMonthFinancials.entries.length} corridas
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] mt-1">
+                        {fmtMoney(selectedMonthFinancials.totalRevenue)}
+                      </div>
+                    </div>
+                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                      <span>Média/corrida:</span>
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-200">
+                        {fmtMoney(selectedMonthFinancials.avgPerRide)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Gastos do Mês */}
+                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
+                          2. Gastos do Mês
+                        </span>
+                        <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded">
+                          {selectedMonthFinancials.expenses.length} lançamentos
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black tabular-nums text-rose-500 dark:text-rose-400 mt-1">
+                        - {fmtMoney(selectedMonthFinancials.totalExpenses)}
+                      </div>
+                    </div>
+                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                      <span>Custos operacionais:</span>
+                      <span className="font-bold tabular-nums text-rose-400">
+                        Gasolina + Manutenção
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Saldo Atual / Lucro Líquido Real */}
+                  <div
+                    className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                      selectedMonthFinancials.currentBalance >= 0
+                        ? 'bg-emerald-500/5 border-emerald-500/30'
+                        : 'bg-rose-500/5 border-rose-500/30'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                          3. Saldo Atual (Lucro Real)
+                        </span>
+                        <span
+                          className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                            selectedMonthFinancials.currentBalance >= 0
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-rose-500/20 text-rose-300'
+                          }`}
+                        >
+                          {selectedMonthFinancials.netMarginPct}% livre
+                        </span>
+                      </div>
+                      <div
+                        className={`text-xl sm:text-2xl font-black tabular-nums mt-1 ${
+                          selectedMonthFinancials.currentBalance >= 0
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {fmtMoney(selectedMonthFinancials.currentBalance)}
+                      </div>
+                    </div>
+                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                      <span>Dinheiro limpo:</span>
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-200">
+                        Sobra no seu bolso
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Meta Personalizada Acompanhando o Saldo Atual do Usuário */}
+                  {(() => {
+                    const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
+                    const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
+                    const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
+                    const customDays = Math.max(1, countdown.effectiveDays);
+                    const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Saldo';
+
+                    // O campo de meta personalizada acompanha o saldo atual do usuário!
+                    const currentBalance = selectedMonthFinancials.currentBalance;
+                    const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
+                    const barPct = Math.min(100, Math.max(0, rawPct));
+                    const remainingToGoal = Math.max(0, customTarget - currentBalance);
+                    const isGoalReached = currentBalance >= customTarget;
+                    const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
+
+                    return (
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A] truncate">
+                              4. {customTitle}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTempFinanceGoalTarget(customTarget);
+                                setTempFinanceGoalDate(targetDate);
+                                setIsEditingCustomGoalInFinance(prev => !prev);
+                              }}
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                                isEditingCustomGoalInFinance
+                                  ? 'bg-emerald-500 text-black font-black'
+                                  : 'bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25'
+                              }`}
+                            >
+                              {isEditingCustomGoalInFinance ? 'Fechar' : 'Ajustar'}
+                            </button>
+                          </div>
+
+                          <div className="flex items-baseline justify-between gap-1 mt-1">
+                            <div className={`text-base sm:text-lg font-black tabular-nums ${currentBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {fmtMoney(currentBalance)}
+                            </div>
+                            <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
+                              de {fmtMoney(customTarget)} ({rawPct}%)
+                            </div>
+                          </div>
+
+                          {/* Barra de Progresso da Meta com Saldo Atual */}
+                          <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden mt-2">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                isGoalReached
+                                  ? 'bg-emerald-400'
+                                  : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
+                              }`}
+                              style={{ width: `${barPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Editor Rápido Inline se acionado */}
+                        {isEditingCustomGoalInFinance ? (
+                          <div className="mt-2.5 pt-2 border-t border-slate-800/40 flex flex-col gap-2">
+                            <div>
+                              <label className={`text-[10px] font-bold ${mutedText}`}>Valor da Meta (R$):</label>
+                              <FreeNumberInput
+                                step="50"
+                                value={tempFinanceGoalTarget}
+                                onValueChange={v => setTempFinanceGoalTarget(Math.max(50, v))}
+                                className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`text-[10px] font-bold ${mutedText}`}>Data Término:</label>
+                              <input
+                                type="date"
+                                min={todayStr()}
+                                value={tempFinanceGoalDate}
+                                onChange={e => setTempFinanceGoalDate(e.target.value)}
+                                className={`w-full px-2.5 py-1 rounded-lg text-xs font-black tabular-nums outline-none ${inputSurface}`}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                persistAndEnqueueWorkManager({
+                                  ...dbState,
+                                  customGoalTarget: tempFinanceGoalTarget,
+                                  customGoalTargetDate: tempFinanceGoalDate,
+                                  customGoalMode: 'date',
+                                });
+                                setIsEditingCustomGoalInFinance(false);
+                              }}
+                              className="w-full py-1.5 rounded-lg text-xs font-black bg-emerald-500 text-black cursor-pointer shadow-xs"
+                            >
+                              Salvar Meta
+                            </button>
+                          </div>
+                        ) : (
+                          <div className={`mt-2.5 pt-2 border-t border-slate-800/40 text-[10px] font-semibold ${mutedText} flex items-center justify-between`}>
+                            <span>
+                              {isGoalReached
+                                ? '🎉 Meta batida com saldo positivo!'
+                                : `Falta ${fmtMoney(remainingToGoal)} de saldo`}
+                            </span>
+                            {!isGoalReached && (
+                              <span className="font-bold text-[#FF6A1A]">
+                                {fmtCurrencyExact(requiredDailyToReachGoal)}/dia
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 3. FAIXA OPERACIONAL RESUMIDA DO MÊS */}
+                <div className={`rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-around gap-2 text-xs border ${surfaceSubtle}`}>
+                  <div className="flex items-center gap-1.5">
+                    <span className={mutedText}>Dias Trabalhados:</span>
+                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.activeDays} dias</strong>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={mutedText}>Total Rodado:</span>
+                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.totalKm.toLocaleString('pt-BR')} km</strong>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={mutedText}>Horas em Rota:</span>
+                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.totalHours.toFixed(1)}h</strong>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={mutedText}>Rendimento/KM:</span>
+                    <strong className="text-[#FF6A1A] font-black">{fmtMoney(selectedMonthFinancials.avgPerKm)}/km</strong>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={mutedText}>Rendimento/Hora:</span>
+                    <strong className="text-emerald-400 font-black">{fmtMoney(selectedMonthFinancials.avgPerHour)}/h</strong>
+                  </div>
+                </div>
+
+                {/* 4. CAMPO PRINCIPAL: TODOS OS GANHOS DO MÊS (LISTA COM FILTROS) */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
+                  {/* Cabeçalho da Lista */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/40">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
+                          <span>Todos os Ganhos de {selectedMonthFinancials.formattedLabel}</span>
+                        </h2>
+                        <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30 tabular-nums">
+                          {selectedMonthFinancials.entries.length} registro(s)
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Extrato detalhado de cada corrida ou entrega lançada neste mês
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={openNewEntryModal}
+                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>Novo Ganho</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowRelatorioMeiModal(true)}
+                        className="px-3 py-2 rounded-xl text-xs font-bold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5 text-purple-400" />
+                        <span>PDF / MEI</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Filtro por App e Ordenação */}
+                  <div className="my-3.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                    {/* Filtro por Aplicativo */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto max-w-full no-scrollbar pb-1">
+                      <button
+                        type="button"
+                        onClick={() => setFinanceAppFilter('all')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                          financeAppFilter === 'all'
+                            ? 'bg-[#FF6A1A] text-black'
+                            : `${surfaceSubtle} ${mutedText} hover:text-current`
+                        }`}
+                      >
+                        Todos ({selectedMonthFinancials.entries.length})
+                      </button>
+                      {allApps.map(app => {
+                        const countInMonth = selectedMonthFinancials.entries.filter(
+                          e => e.app === app.id || e.app?.toLowerCase() === app.name.toLowerCase()
+                        ).length;
+                        if (countInMonth === 0) return null;
+                        return (
+                          <button
+                            key={app.id}
+                            type="button"
+                            onClick={() => setFinanceAppFilter(app.id)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                              financeAppFilter === app.id
+                                ? 'bg-[#FF6A1A] text-black'
+                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            }`}
+                          >
+                            <span>{app.icon}</span>
+                            <span>{app.name}</span>
+                            <span className="opacity-70 text-[10px]">({countInMonth})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Ordenação */}
+                    <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+                      <span className={`text-[11px] font-bold ${mutedText}`}>Ordenar:</span>
+                      <select
+                        value={financeSortOrder}
+                        onChange={e => setFinanceSortOrder(e.target.value as any)}
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer ${inputSurface}`}
+                      >
+                        <option value="date_desc">Mais Recentes</option>
+                        <option value="val_desc">Maior Valor</option>
+                        <option value="val_asc">Menor Valor</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Lista de Ganhos Filtrados */}
+                  {(() => {
+                    const filtered = selectedMonthFinancials.entries.filter(e => {
+                      if (financeAppFilter === 'all') return true;
+                      return e.app === financeAppFilter || e.app?.toLowerCase() === financeAppFilter.toLowerCase();
+                    });
+
+                    const sorted = [...filtered].sort((a, b) => {
+                      if (financeSortOrder === 'val_desc') {
+                        return (Number(b.revenue) || 0) - (Number(a.revenue) || 0);
+                      }
+                      if (financeSortOrder === 'val_asc') {
+                        return (Number(a.revenue) || 0) - (Number(b.revenue) || 0);
+                      }
+                      // date_desc
+                      return (b.date || '').localeCompare(a.date || '') || Number(b.id) - Number(a.id);
+                    });
+
+                    if (sorted.length === 0) {
+                      return (
+                        <div className={`p-8 rounded-2xl border border-dashed border-slate-700/60 text-center flex flex-col items-center justify-center gap-3 my-2 ${surfaceSubtle}`}>
+                          <div className="w-12 h-12 rounded-2xl bg-[#FF6A1A]/10 text-[#FF6A1A] flex items-center justify-center">
+                            <Fuel className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold">
+                              Nenhum ganho encontrado para {selectedMonthFinancials.formattedLabel}
+                            </h3>
+                            <p className={`text-xs mt-1 max-w-sm ${mutedText}`}>
+                              {financeAppFilter !== 'all'
+                                ? 'Nenhum ganho cadastrado para este aplicativo neste mês.'
+                                : 'Você ainda não registrou nenhuma corrida ou entrega neste mês.'}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={openNewEntryModal}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Lançar Corrida Neste Mês</span>
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="flex flex-col gap-2.5 mt-2">
+                        {sorted.map(entry => {
+                          const appInfo = allApps.find(
+                            a => a.id === entry.app || a.name.toLowerCase() === (entry.app || '').toLowerCase()
+                          ) || { id: entry.app || 'outros', name: entry.app || 'Outros', icon: '🛵' };
+
+                          const shiftInfo = allShifts.find(s => s.id === entry.shift);
+                          const rev = Number(entry.revenue || 0);
+                          const km = Number(entry.km || 0);
+                          const hours = Number(entry.hours || 0);
+                          const ratePerKm = km > 0 ? rev / km : 0;
+
+                          return (
+                            <div
+                              key={entry.id}
+                              className={`rounded-2xl p-3 sm:p-4 border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${surfaceSubtle} hover:border-[#FF6A1A]/40`}
+                            >
+                              {/* Lado Esquerdo: App, Data, Turno */}
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-2xl bg-black/10 dark:bg-white/10 flex items-center justify-center text-xl shrink-0">
+                                  {appInfo.icon}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-xs sm:text-sm font-black truncate">
+                                      {appInfo.name}
+                                    </span>
+                                    {shiftInfo && (
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400">
+                                        {shiftInfo.name.split(' ')[0]}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className={`text-[11px] font-semibold mt-0.5 ${mutedText} flex items-center gap-2 flex-wrap`}>
+                                    <span>📅 {formatPtBrDate(entry.date)}</span>
+                                    {km > 0 && <span>· {km} km</span>}
+                                    {hours > 0 && <span>· {hours}h</span>}
+                                    {ratePerKm > 0 && <span>· {fmtMoney(ratePerKm)}/km</span>}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Lado Direito: Valor e Ações */}
+                              <div className="flex items-center justify-between sm:justify-end gap-3 self-stretch sm:self-auto shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
+                                <div className="text-right">
+                                  <div className="text-base sm:text-lg font-black text-emerald-400 tabular-nums">
+                                    + {fmtMoney(rev)}
+                                  </div>
+                                  <span className={`text-[10px] block ${mutedText}`}>Faturamento bruto</span>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditHistoryItem(entry, 'ganho')}
+                                    className={`p-2 rounded-xl text-slate-400 hover:text-white cursor-pointer transition-colors ${surfaceCard}`}
+                                    title="Editar corrida"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      persistAndEnqueueWorkManager({
+                                        ...dbState,
+                                        entries: dbState.entries.filter(e => e.id !== entry.id),
+                                        deletedEntryIds: Array.from(
+                                          new Set([...(dbState.deletedEntryIds || []), Number(entry.id)])
+                                        ),
+                                      });
+                                    }}
+                                    className={`p-2 rounded-xl text-rose-400 hover:text-rose-300 cursor-pointer transition-colors ${surfaceCard}`}
+                                    title="Excluir corrida"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             {billingSubTab === 'planejamento' && (
               <>
-                {/* SELETOR DE BASE DE CÁLCULO + PARÂMETROS RÁPIDOS DE DIAS TRABALHADOS */}
+                {/* BASE DO CÁLCULO FINANCEIRO OPERACIONAL (COMPLETO, TRANSPARENTE E SEM ABA DE SIMULAÇÃO) */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/50">
                     <div>
@@ -6279,7 +7177,7 @@ export default function App() {
                         </span>
                       </h2>
                       <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Escolha se deseja calcular suas reservas diárias pela sua média real de corridas, pela sua meta diária ou por um valor simulado
+                        Parâmetros reais do seu trabalho para calcular custos de rodagem, reservas obrigatórias e seu lucro limpo
                       </p>
                     </div>
 
@@ -6287,15 +7185,14 @@ export default function App() {
                       {[
                         { id: 'actual_or_goal', label: 'Média Real / Automático' },
                         { id: 'daily_goal', label: `Meta Diária (${fmtMoney(dbState.dailyGoal)})` },
-                        { id: 'custom_daily', label: 'Simular Valor' },
                       ].map(mode => (
                         <button
                           key={mode.id}
                           type="button"
                           onClick={() => updateFinancialPlan({ revenueBaseMode: mode.id as any })}
                           className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
-                            finPlan.revenueBaseMode === mode.id
-                              ? 'bg-[#FF6A1A] text-black'
+                            finPlan.revenueBaseMode === mode.id || (finPlan.revenueBaseMode === 'custom_daily' && mode.id === 'actual_or_goal')
+                              ? 'bg-[#FF6A1A] text-black font-black'
                               : `${surfaceSubtle} hover:border-[#FF6A1A]`
                           }`}
                         >
@@ -6305,53 +7202,35 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Grid Completo de Métricas Operacionais */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-4">
+                    {/* 1. Faturamento Bruto Base */}
                     <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
                       <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                        Faturamento Bruto Base / Dia (R$)
+                        Faturamento Bruto Base / Dia
                       </label>
-                      {finPlan.revenueBaseMode === 'custom_daily' ? (
-                        <FreeNumberInput
-                          step="10"
-                          value={finPlan.customDailyGrossBase ?? 180}
-                          onValueChange={val =>
-                            updateFinancialPlan({ customDailyGrossBase: Math.max(0, val) })
-                          }
-                          className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
-                      ) : (
-                        <div className="text-lg sm:text-xl font-black text-[#FF6A1A] tabular-nums">
-                          {fmtCurrencyExact(financialIntelligence.dailyGross)}
-                        </div>
-                      )}
+                      <div className="text-lg sm:text-xl font-black text-[#FF6A1A] tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.dailyGross)}
+                      </div>
                       <div className={`text-[10px] mt-1 ${mutedText}`}>
-                        Bruto mensal est.: {fmtMoney(financialIntelligence.monthlyGross)}
+                        Projeção mensal: {fmtMoney(financialIntelligence.monthlyGross)} ({finPlan.workDaysPerMonth} dias)
                       </div>
                     </div>
 
+                    {/* 2. Rodagem Média Diária */}
                     <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
                       <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
                         Rodagem Média / Dia (KM)
                       </label>
-                      {finPlan.revenueBaseMode === 'custom_daily' ? (
-                        <FreeNumberInput
-                          step="5"
-                          value={finPlan.customDailyKmBase ?? 110}
-                          onValueChange={val =>
-                            updateFinancialPlan({ customDailyKmBase: Math.max(0, val) })
-                          }
-                          className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
-                      ) : (
-                        <div className="text-lg sm:text-xl font-black tabular-nums">
-                          {Math.round(financialIntelligence.dailyKm).toLocaleString('pt-BR')} km/dia
-                        </div>
-                      )}
+                      <div className="text-lg sm:text-xl font-black tabular-nums">
+                        {Math.round(financialIntelligence.dailyKm).toLocaleString('pt-BR')} km/dia
+                      </div>
                       <div className={`text-[10px] mt-1 ${mutedText}`}>
-                        Consumo: {financialIntelligence.kmPerLiter} km/L · Gasolina R$ {financialIntelligence.fuelPrice.toFixed(2)}
+                        ~{Math.round(financialIntelligence.dailyKm * financialIntelligence.workDaysPerMonth).toLocaleString('pt-BR')} km/mês rodados
                       </div>
                     </div>
 
+                    {/* 3. Dias Trabalhados no Mês */}
                     <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
                       <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
                         Dias Trabalhados por Mês
@@ -6361,7 +7240,7 @@ export default function App() {
                           value={finPlan.workDaysPerMonth}
                           onValueChange={val =>
                             updateFinancialPlan({
-                              workDaysPerMonth: Math.max(0, val),
+                              workDaysPerMonth: Math.max(1, Math.min(31, val)),
                             })
                           }
                           className={`w-20 px-3 py-1.5 rounded-xl text-sm font-black tabular-nums text-center outline-none ${inputSurface}`}
@@ -6369,17 +7248,18 @@ export default function App() {
                         <span className="text-xs font-bold">dias/mês</span>
                       </div>
                       <div className={`text-[10px] mt-1 ${mutedText}`}>
-                        Ex: 24 dias = 6 dias por semana
+                        {finPlan.workDaysPerMonth >= 26 ? 'Escala intensa (6x1)' : `${finPlan.workDaysPerMonth} dias úteis no asfalto`}
                       </div>
                     </div>
 
+                    {/* 4. Sobra Limpa no Bolso (Líquido Real) */}
                     <div className={`rounded-2xl p-3.5 border ${
                       financialIntelligence.dailyNetProfit >= 0
                         ? 'bg-emerald-500/10 border-emerald-500/30'
                         : 'bg-rose-500/10 border-rose-500/30'
                     }`}>
                       <div className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400">
-                        Sobra Limpa no Bolso (Líquido Real)
+                        Sobra Limpa (Líquido Real)
                       </div>
                       <div className={`text-lg sm:text-xl font-black tabular-nums mt-0.5 ${
                         financialIntelligence.dailyNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -6391,151 +7271,465 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                </div>
 
-                {/* HERO WATERFALL: O QUE SOBRA DE FATO PARA O MOTOBOY APÓS TODOS OS CUSTOS E RESERVAS */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-                    <div>
-                      <h2 className="text-base sm:text-lg font-black">
-                        Raio-X do Faturamento Diário: Para Onde Vai Seu Dinheiro?
-                      </h2>
-                      <p className={`text-xs ${mutedText}`}>
-                        Divisão inteligente de cada dia rodado descontando combustível, desgaste da moto, almoço/lanche, documentos e emergência
-                      </p>
+                  {/* Segunda Linha de Indicadores Operacionais Completos */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3 pt-3 border-t border-slate-800/40">
+                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                      <div className={`text-[10px] font-bold ${mutedText}`}>⛽ Custo Combustível/KM</div>
+                      <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-0.5">
+                        R$ {financialIntelligence.fuelCostPerKm.toFixed(2)}/km
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                        {financialIntelligence.kmPerLiter} km/L · Gasolina R$ {financialIntelligence.fuelPrice.toFixed(2)}
+                      </div>
                     </div>
-                    <span className="text-xs font-black px-3 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 self-start sm:self-center">
-                      Margem Real Livre: {financialIntelligence.netMarginPct}%
-                    </span>
+
+                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                      <div className={`text-[10px] font-bold ${mutedText}`}>🛠️ Desgaste Mecânico/KM</div>
+                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-0.5">
+                        R$ {financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                        Óleo, pneus, relação e pastilhas
+                      </div>
+                    </div>
+
+                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                      <div className={`text-[10px] font-bold ${mutedText}`}>⚙️ Custo Operacional Total/KM</div>
+                      <div className="text-sm sm:text-base font-black text-sky-400 tabular-nums mt-0.5">
+                        R$ {(financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm).toFixed(2)}/km
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                        Gasolina + Desgaste por km rodado
+                      </div>
+                    </div>
+
+                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                      <div className={`text-[10px] font-bold ${mutedText}`}>⚖️ Ponto de Equilíbrio (Break-Even)</div>
+                      <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-0.5">
+                        {fmtCurrencyExact(financialIntelligence.dailyFuelCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyFoodCost + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)}/dia
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                        Mínimo a faturar p/ cobrir custos do dia
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Barra Visual Proporcional de Alocação do Faturamento Diário */}
-                  <div className="w-full h-4 rounded-full bg-slate-800 overflow-hidden flex mb-4 p-0.5 gap-0.5">
-                    <div
-                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.fuelPctOfGross))}%` }}
-                      className="h-full bg-rose-500 rounded-l-full"
-                      title={`Combustível: ${financialIntelligence.fuelPctOfGross}%`}
-                    />
-                    <div
-                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.maintPctOfGross))}%` }}
-                      className="h-full bg-amber-500"
-                      title={`Reserva Manutenção: ${financialIntelligence.maintPctOfGross}%`}
-                    />
-                    <div
-                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.foodPctOfGross))}%` }}
-                      className="h-full bg-orange-400"
-                      title={`Almoço e Lanche: ${financialIntelligence.foodPctOfGross}%`}
-                    />
-                    <div
-                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.docsPctOfGross))}%` }}
-                      className="h-full bg-sky-400"
-                      title={`Documentos (IPVA/Licenciamento/MEI): ${financialIntelligence.docsPctOfGross}%`}
-                    />
-                    <div
-                      style={{ width: `${Math.max(2, Math.min(100, financialIntelligence.emergencyPct))}%` }}
-                      className="h-full bg-purple-400"
-                      title={`Reserva de Emergência: ${financialIntelligence.emergencyPct}%`}
-                    />
-                    <div
-                      style={{ width: `${Math.max(0, Math.min(100, financialIntelligence.netMarginPct))}%` }}
-                      className="h-full bg-emerald-400 rounded-r-full"
-                      title={`Lucro Líquido Real Livre: ${financialIntelligence.netMarginPct}%`}
-                    />
-                  </div>
+                  {/* Toggle para Explicação Transparente da Fórmula */}
+                  <div className="mt-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowFormulaExplanation(prev => !prev)}
+                      className={`text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        showFormulaExplanation ? 'text-[#FF6A1A]' : mutedText
+                      } hover:text-[#FF6A1A]`}
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                      <span>{showFormulaExplanation ? 'Ocultar detalhes da fórmula de cálculo' : 'Como o app calcula seu Lucro Líquido Real? (Ver fórmula passo a passo)'}</span>
+                    </button>
 
-                  {/* Cards do Raio-X Diário e Mensal */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {/* 1. Combustível */}
-                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-rose-500 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span>⛽ Combustível do Dia</span>
-                        <span className="text-rose-400 font-black">{financialIntelligence.fuelPctOfGross}%</span>
-                      </div>
-                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-rose-400">
-                        - {fmtCurrencyExact(financialIntelligence.dailyFuelCost)} / dia
-                      </div>
-                      <div className={`text-[11px] mt-1 ${mutedText}`}>
-                        {fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}/mês · R$ {financialIntelligence.fuelCostPerKm.toFixed(2)}/km
-                      </div>
-                    </div>
-
-                    {/* 2. Manutenção da Moto */}
-                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span>🛠️ Reserva Manutenção Moto</span>
-                        <span className="text-amber-400 font-black">{financialIntelligence.maintPctOfGross}%</span>
-                      </div>
-                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-amber-400">
-                        - {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)} / dia
-                      </div>
-                      <div className={`text-[11px] mt-1 ${mutedText}`}>
-                        {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês · Desgaste R$ {financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km
-                      </div>
-                    </div>
-
-                    {/* 3. Almoço, Lanche e Água */}
-                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span>🍱 Almoço, Lanche & Água</span>
-                        <span className="text-orange-400 font-black">{financialIntelligence.foodPctOfGross}%</span>
-                      </div>
-                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-orange-400">
-                        - {fmtCurrencyExact(financialIntelligence.dailyFoodCost)} / dia
-                      </div>
-                      <div className={`text-[11px] mt-1 ${mutedText}`}>
-                        Almoço {fmtCurrencyExact(financialIntelligence.dailyLunch)} + Lanche {fmtCurrencyExact(financialIntelligence.dailySnack)} ({fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês)
-                      </div>
-                    </div>
-
-                    {/* 4. Documentos (IPVA + Licenciamento + MEI/Seguro) */}
-                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span>📄 Reserva Documentos & IPVA</span>
-                        <span className="text-sky-400 font-black">{financialIntelligence.docsPctOfGross}%</span>
-                      </div>
-                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-sky-400">
-                        - {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} / dia
-                      </div>
-                      <div className={`text-[11px] mt-1 ${mutedText}`}>
-                        {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês (IPVA, Licenciamento, MEI/Seguro)
-                      </div>
-                    </div>
-
-                    {/* 5. Reserva de Emergência */}
-                    <div className={`rounded-2xl p-3.5 border-l-4 border-l-purple-400 ${surfaceSubtle}`}>
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span>🛡️ Reserva de Emergência ({financialIntelligence.emergencyPct}%)</span>
-                        <span className="text-purple-400 font-black">{financialIntelligence.emergencyPct}%</span>
-                      </div>
-                      <div className="text-base sm:text-lg font-black tabular-nums mt-1 text-purple-400">
-                        - {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)} / dia
-                      </div>
-                      <div className={`text-[11px] mt-1 ${mutedText}`}>
-                        Acumula {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês · {fmtMoney(financialIntelligence.emergencyIn6Months)} em 6 meses
-                      </div>
-                    </div>
-
-                    {/* 6. LUCRO LÍQUIDO REAL (O QUE SOBRA DE FATO) */}
-                    <div className={`rounded-2xl p-3.5 border-2 ${
-                      financialIntelligence.dailyNetProfit >= 0
-                        ? 'border-emerald-500/60 bg-emerald-500/10'
-                        : 'border-rose-500/60 bg-rose-500/10'
-                    }`}>
-                      <div className="flex items-center justify-between text-xs font-black">
-                        <span className="text-emerald-400">💰 LUCRO LÍQUIDO REAL</span>
-                        <span className="text-emerald-400">{financialIntelligence.netMarginPct}% livre</span>
-                      </div>
-                      <div className={`text-lg sm:text-xl font-black tabular-nums mt-1 ${
-                        financialIntelligence.dailyNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    {showFormulaExplanation && (
+                      <div className={`mt-3 p-4 rounded-2xl border text-xs leading-relaxed ${
+                        isDark ? 'bg-slate-900/80 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
                       }`}>
-                        = {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} / dia
+                        <div className="font-black text-[#FF6A1A] mb-1.5 text-sm">
+                          📐 A Matemática Real do Bolso do Motoboy
+                        </div>
+                        <p className="mb-2">
+                          Muitos entregadores acham que faturar <strong>R$ 200/dia</strong> significa ter <strong>R$ 200 no bolso</strong>. Mas na realidade, o dinheiro precisa ser blindado antes que uma quebra ou imposto surpreenda você.
+                        </p>
+                        <div className="p-3 rounded-xl bg-black/30 border border-slate-800/80 font-mono text-[11px] mb-2 space-y-1">
+                          <div className="text-[#FF6A1A] font-black">
+                            Faturamento Bruto ({fmtCurrencyExact(financialIntelligence.dailyGross)})
+                          </div>
+                          <div className="text-rose-400">
+                            - Combustível do Dia: {fmtCurrencyExact(financialIntelligence.dailyFuelCost)} ({financialIntelligence.fuelPctOfGross}%)
+                          </div>
+                          <div className="text-amber-400">
+                            - Reserva Manutenção da Moto: {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)} ({financialIntelligence.maintPctOfGross}%)
+                          </div>
+                          <div className="text-orange-400">
+                            - Alimentação na Rua: {fmtCurrencyExact(financialIntelligence.dailyFoodCost)} ({financialIntelligence.foodPctOfGross}%)
+                          </div>
+                          <div className="text-sky-400">
+                            - Provisão Documentos & IPVA: {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} ({financialIntelligence.docsPctOfGross}%)
+                          </div>
+                          <div className="text-purple-400">
+                            - Reserva de Emergência: {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)} ({financialIntelligence.emergencyPct}%)
+                          </div>
+                          <div className="pt-1.5 border-t border-slate-700 text-emerald-400 font-black text-xs">
+                            = Lucro Líquido Real Limpo: {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} ({financialIntelligence.netMarginPct}% livre)
+                          </div>
+                        </div>
+                        <p className="text-[11px]">
+                          💡 Este valor líquido de <strong>{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong> é o que realmente é seu para pagar as despesas de casa, mercado e lazer sem se endividar!
+                        </p>
                       </div>
-                      <div className={`text-[11px] font-bold mt-1 ${mutedText}`}>
-                        Semana: {fmtCurrencyExact(financialIntelligence.weeklyNetProfit)} · Mês: {fmtCurrencyExact(financialIntelligence.monthlyNetProfit)}
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
+
+                {/* RAIO-X INTERATIVO DO FATURAMENTO DIÁRIO: GRÁFICO DINÂMICO, ANIMADO COM DESTAQUE E DETALHES */}
+                {(() => {
+                  const raioXItems = [
+                    {
+                      id: 'fuel',
+                      name: 'Combustível do Dia',
+                      shortName: 'Combustível',
+                      icon: '⛽',
+                      color: '#ef4444',
+                      colorClass: 'text-rose-400',
+                      bgClass: 'bg-rose-500/15 border-rose-500/40 text-rose-400',
+                      amount: financialIntelligence.dailyFuelCost,
+                      monthly: financialIntelligence.monthlyFuelCost,
+                      pct: Math.max(1, financialIntelligence.fuelPctOfGross),
+                      desc: 'Cobre a gasolina gasta para rodar suas corridas do dia, calculado com base na sua quilometragem e consumo da moto.',
+                      formulaInfo: `${Math.round(financialIntelligence.dailyKm)} km/dia ÷ ${financialIntelligence.kmPerLiter} km/L × R$ ${financialIntelligence.fuelPrice.toFixed(2)}/L`,
+                      tip: 'Calibrar os pneus a cada 5 dias e evitar aceleradas bruscas pode economizar até R$ 80 a R$ 120 de gasolina todo mês.',
+                    },
+                    {
+                      id: 'maint',
+                      name: 'Reserva Manutenção da Moto',
+                      shortName: 'Manutenção',
+                      icon: '🛠️',
+                      color: '#f59e0b',
+                      colorClass: 'text-amber-400',
+                      bgClass: 'bg-amber-500/15 border-amber-500/40 text-amber-400',
+                      amount: financialIntelligence.dailyMaintReserve,
+                      monthly: financialIntelligence.monthlyMaintReserve,
+                      pct: Math.max(1, financialIntelligence.maintPctOfGross),
+                      desc: 'Guarda o valor do desgaste mecânico gerado hoje para pagar troca de óleo, pneus novos, relação e pastilhas sem aperto.',
+                      formulaInfo: `Desgaste de R$ ${financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km rodado + ${financialIntelligence.extraBufferPct}% margem preventiva`,
+                      tip: 'Trocar o óleo religiosamente no prazo evita fundir o motor, economizando mais de R$ 1.800 de retífica na oficina.',
+                    },
+                    {
+                      id: 'food',
+                      name: 'Alimentação na Rua',
+                      shortName: 'Alimentação',
+                      icon: '🍱',
+                      color: '#fb923c',
+                      colorClass: 'text-orange-400',
+                      bgClass: 'bg-orange-500/15 border-orange-500/40 text-orange-400',
+                      amount: financialIntelligence.dailyFoodCost,
+                      monthly: financialIntelligence.monthlyFoodCost,
+                      pct: Math.max(1, financialIntelligence.foodPctOfGross),
+                      desc: 'Garante almoço digno, marmita, lanches rápidos e água gelada para manter sua energia e foco no trânsito.',
+                      formulaInfo: `Almoço ${fmtCurrencyExact(financialIntelligence.dailyLunch)} + Lanches/Água ${fmtCurrencyExact(financialIntelligence.dailySnack)} por dia trabalhado`,
+                      tip: 'Levar garrafa térmica com água e lanches rápidos de casa economiza em média R$ 300 por mês no seu bolso.',
+                    },
+                    {
+                      id: 'docs',
+                      name: 'Reserva Documentos & IPVA',
+                      shortName: 'Documentos',
+                      icon: '📄',
+                      color: '#38bdf8',
+                      colorClass: 'text-sky-400',
+                      bgClass: 'bg-sky-500/15 border-sky-500/40 text-sky-400',
+                      amount: financialIntelligence.dailyDocsReserve,
+                      monthly: financialIntelligence.monthlyDocsReserve,
+                      pct: Math.max(1, financialIntelligence.docsPctOfGross),
+                      desc: 'Parcelamento diário invisível para quitar IPVA, licenciamento CRLV-e, MEI e seguro sem aperto no final do ano.',
+                      formulaInfo: `Custo anual de ${fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)} rateado pelos dias de trabalho`,
+                      tip: 'Pagar o IPVA à vista em cota única garante desconto de até 3% a 5% em diversos estados.',
+                    },
+                    {
+                      id: 'emergency',
+                      name: 'Reserva de Emergência',
+                      shortName: 'Emergência',
+                      icon: '🛡️',
+                      color: '#c084fc',
+                      colorClass: 'text-purple-400',
+                      bgClass: 'bg-purple-500/15 border-purple-500/40 text-purple-400',
+                      amount: financialIntelligence.dailyEmergencyReserve,
+                      monthly: financialIntelligence.monthlyEmergencyReserve,
+                      pct: Math.max(1, financialIntelligence.emergencyPct),
+                      desc: 'Fundo de blindagem para imprevistos pessoais, dias de chuva torrencial, doença ou descanso merecido.',
+                      formulaInfo: `${financialIntelligence.emergencyPct}% do faturamento bruto retidos para segurança financeira`,
+                      tip: 'Ter 1 mês de custos fixos guardados evita recorrer a empréstimos com juros abusivos quando a moto precisar parar.',
+                    },
+                    {
+                      id: 'net_profit',
+                      name: 'Lucro Líquido Real Livre',
+                      shortName: 'Lucro Livre',
+                      icon: '💰',
+                      color: '#10b981',
+                      colorClass: 'text-emerald-400',
+                      bgClass: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400',
+                      amount: financialIntelligence.dailyNetProfit,
+                      monthly: financialIntelligence.monthlyNetProfit,
+                      pct: Math.max(0, financialIntelligence.netMarginPct),
+                      desc: 'O dinheiro 100% LIMPO que sobra no seu bolso para levar para casa, pagar despesas da família e realizar seus sonhos.',
+                      formulaInfo: `Bruto (${fmtCurrencyExact(financialIntelligence.dailyGross)}) - Total de Custos e Reservas (${fmtCurrencyExact(financialIntelligence.dailyFuelCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyFoodCost + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)})`,
+                      tip: 'Separe a conta do trabalho da conta de casa. Nunca gaste reservas de manutenção com compras pessoais do dia a dia.',
+                    },
+                  ];
+
+                  const activeItem = raioXItems.find(i => i.id === selectedRaioXCategory) || raioXItems[0];
+
+                  return (
+                    <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800/50">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-base sm:text-lg font-black">
+                              Raio-X do Faturamento Diário: Para Onde Vai Seu Dinheiro?
+                            </h2>
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              Interativo · Clique para Explorar
+                            </span>
+                          </div>
+                          <p className={`text-xs mt-0.5 ${mutedText}`}>
+                            Divisão inteligente de cada dia rodado. Clique nas fatias do gráfico ou nas categorias para ver os detalhes
+                          </p>
+                        </div>
+                        <span className="text-xs font-black px-3 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 self-start sm:self-center shrink-0">
+                          Margem Real Livre: {financialIntelligence.netMarginPct}%
+                        </span>
+                      </div>
+
+                      {/* Seletor Rápido em Botões / Abas */}
+                      <div className="flex flex-wrap gap-1.5 mb-4">
+                        {raioXItems.map(item => {
+                          const isSelected = item.id === selectedRaioXCategory;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setSelectedRaioXCategory(item.id)}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isSelected
+                                  ? `${item.bgClass} font-black shadow-md scale-102`
+                                  : `${surfaceSubtle} ${mutedText} hover:text-white hover:border-slate-700`
+                              }`}
+                            >
+                              <span>{item.icon}</span>
+                              <span>{item.shortName}</span>
+                              <span className="text-[10px] font-black opacity-80">({item.pct}%)</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Layout Central do Gráfico Interativo + Painel Inspetor Detalhado */}
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+                        {/* GRÁFICO DONUT INTERATIVO (RECHARTS PIE CHART COM DESTAQUE AO CLICAR) */}
+                        <div className="lg:col-span-5 flex flex-col items-center justify-center p-2 relative">
+                          <div className="w-full max-w-[280px] h-[260px] relative flex items-center justify-center">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={raioXItems}
+                                  dataKey="amount"
+                                  nameKey="name"
+                                  cx="50%"
+                                  cy="50%"
+                                  innerRadius={68}
+                                  outerRadius={96}
+                                  paddingAngle={3}
+                                  stroke={isDark ? '#0b0d13' : '#ffffff'}
+                                  strokeWidth={2}
+                                  onClick={(entry: any) => {
+                                    if (entry && entry.id) {
+                                      setSelectedRaioXCategory(entry.id);
+                                    }
+                                  }}
+                                  cursor="pointer"
+                                  animationDuration={700}
+                                  animationEasing="ease-out"
+                                >
+                                  {raioXItems.map(entry => {
+                                    const isSelected = entry.id === selectedRaioXCategory;
+                                    return (
+                                      <Cell
+                                        key={entry.id}
+                                        fill={entry.color}
+                                        opacity={isSelected ? 1 : 0.65}
+                                        style={{
+                                          filter: isSelected ? `drop-shadow(0px 0px 8px ${entry.color}90)` : 'none',
+                                          transition: 'all 0.3s ease',
+                                        }}
+                                      />
+                                    );
+                                  })}
+                                </Pie>
+                                <Tooltip
+                                  content={({ active, payload }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    const data = payload[0].payload;
+                                    return (
+                                      <div className={`p-2.5 rounded-xl text-xs font-bold shadow-lg border ${
+                                        isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                      }`}>
+                                        <div className="flex items-center gap-1.5 mb-1">
+                                          <span>{data.icon}</span>
+                                          <span>{data.name}</span>
+                                        </div>
+                                        <div className="text-[#FF6A1A] font-black">{fmtCurrencyExact(data.amount)} / dia</div>
+                                        <div className={`text-[10px] ${mutedText}`}>{data.pct}% do faturamento diário</div>
+                                      </div>
+                                    );
+                                  }}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+
+                            {/* Conteúdo Central do Donut com a Categoria Selecionada */}
+                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none text-center px-4">
+                              <span className="text-2xl animate-bounce-short">{activeItem.icon}</span>
+                              <span className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${activeItem.colorClass}`}>
+                                {fmtCurrencyExact(activeItem.amount)}
+                              </span>
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                                {activeItem.pct}% do dia
+                              </span>
+                            </div>
+                          </div>
+                          <span className={`text-[11px] font-semibold mt-1 ${mutedText}`}>
+                            Toque em qualquer fatia para inspecionar
+                          </span>
+                        </div>
+
+                        {/* PAINEL INSPETOR DETALHADO DO ITEM SELECIONADO */}
+                        <div className="lg:col-span-7 flex flex-col gap-3">
+                          <div className={`rounded-2xl p-4 sm:p-5 border-2 transition-all ${
+                            isDark ? 'bg-slate-900/60' : 'bg-slate-50'
+                          }`} style={{ borderColor: `${activeItem.color}80` }}>
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div className="flex items-center gap-2.5">
+                                <span className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: `${activeItem.color}25` }}>
+                                  {activeItem.icon}
+                                </span>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="text-sm sm:text-base font-black">
+                                      {activeItem.name}
+                                    </h3>
+                                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md text-black" style={{ backgroundColor: activeItem.color }}>
+                                      {activeItem.pct}% do dia
+                                    </span>
+                                  </div>
+                                  <p className={`text-xs mt-0.5 ${mutedText}`}>
+                                    {activeItem.desc}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Valores Diário, Mensal e Anual Projetados */}
+                            <div className="grid grid-cols-3 gap-2 my-3 p-3 rounded-xl bg-black/20 border border-slate-800/60 text-center">
+                              <div>
+                                <span className={`block text-[10px] font-bold ${mutedText}`}>Por Dia Rodado</span>
+                                <span className={`text-sm sm:text-base font-black tabular-nums ${activeItem.colorClass}`}>
+                                  {fmtCurrencyExact(activeItem.amount)}
+                                </span>
+                              </div>
+                              <div className="border-x border-slate-800/60 px-1">
+                                <span className={`block text-[10px] font-bold ${mutedText}`}>Por Mês ({finPlan.workDaysPerMonth}d)</span>
+                                <span className="text-sm sm:text-base font-black tabular-nums">
+                                  {fmtCurrencyExact(activeItem.monthly)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className={`block text-[10px] font-bold ${mutedText}`}>Em 12 Meses</span>
+                                <span className="text-sm sm:text-base font-black tabular-nums text-slate-300">
+                                  {fmtMoney(activeItem.monthly * 12)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Base de Cálculo desta Categoria */}
+                            <div className={`p-2.5 rounded-xl text-xs mb-2.5 flex items-center justify-between gap-2 ${
+                              isDark ? 'bg-slate-800/40 text-slate-300' : 'bg-white text-slate-700'
+                            }`}>
+                              <span className="font-semibold text-[11px] flex items-center gap-1.5">
+                                <Calculator className="w-3.5 h-3.5 text-[#FF6A1A]" />
+                                <span>Cálculo Base:</span>
+                              </span>
+                              <span className="font-bold text-[11px] tabular-nums truncate">
+                                {activeItem.formulaInfo}
+                              </span>
+                            </div>
+
+                            {/* Dica Prática de Economia para o Motoboy */}
+                            <div className={`p-3 rounded-xl text-xs flex items-start gap-2.5 ${
+                              isDark ? 'bg-[#FF6A1A]/10 border border-[#FF6A1A]/30 text-amber-200' : 'bg-amber-50 border border-amber-200 text-amber-900'
+                            }`}>
+                              <Sparkles className="w-4 h-4 text-[#FF6A1A] shrink-0 mt-0.5" />
+                              <div className="leading-snug">
+                                <strong className="font-black text-[#FF6A1A] mr-1">💡 Dica de Ouro do Motoboy:</strong>
+                                <span>{activeItem.tip}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Barra Visual Proporcional Interativa (com clique) */}
+                      <div className="mt-4 pt-3 border-t border-slate-800/40">
+                        <div className="flex items-center justify-between text-xs font-bold mb-1.5">
+                          <span className={mutedText}>Distribuição Proporcional do Faturamento</span>
+                          <span className="text-[#FF6A1A] font-black">{financialIntelligence.baseLabel}</span>
+                        </div>
+                        <div className="w-full h-4 rounded-full bg-slate-800 overflow-hidden flex p-0.5 gap-0.5">
+                          {raioXItems.map(item => {
+                            const isSelected = item.id === selectedRaioXCategory;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => setSelectedRaioXCategory(item.id)}
+                                style={{
+                                  width: `${Math.max(2, item.pct)}%`,
+                                  backgroundColor: item.color,
+                                }}
+                                className={`h-full transition-all cursor-pointer hover:opacity-100 ${
+                                  isSelected ? 'opacity-100 ring-2 ring-white scale-y-110 z-10' : 'opacity-70'
+                                }`}
+                                title={`${item.name}: ${item.pct}%`}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 6 Cards Resumo do Raio-X Diário e Mensal com Destaque Dinâmico */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
+                        {raioXItems.map(item => {
+                          const isSelected = item.id === selectedRaioXCategory;
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => setSelectedRaioXCategory(item.id)}
+                              className={`rounded-2xl p-3.5 border-l-4 transition-all cursor-pointer ${
+                                isSelected
+                                  ? `${item.bgClass} border-2 ring-2 ring-[#FF6A1A]/40 scale-101 shadow-md`
+                                  : `${surfaceSubtle} hover:border-slate-700`
+                              }`}
+                              style={{ borderLeftColor: item.color }}
+                            >
+                              <div className="flex items-center justify-between text-xs font-bold">
+                                <span className="flex items-center gap-1.5 truncate">
+                                  <span>{item.icon}</span>
+                                  <span className="truncate">{item.name}</span>
+                                </span>
+                                <span className="font-black shrink-0 ml-1" style={{ color: item.color }}>
+                                  {item.pct}%
+                                </span>
+                              </div>
+                              <div className="text-base sm:text-lg font-black tabular-nums mt-1" style={{ color: item.color }}>
+                                {item.id === 'net_profit' ? '= ' : '- '}
+                                {fmtCurrencyExact(item.amount)} / dia
+                              </div>
+                              <div className={`text-[11px] mt-1 ${mutedText} truncate`}>
+                                {fmtCurrencyExact(item.monthly)}/mês · {item.shortName}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* GRÁFICO DE ÁREA (RECHARTS): TENDÊNCIA DO LUCRO LÍQUIDO REAL NOS ÚLTIMOS 30 DIAS */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
@@ -6705,16 +7899,16 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* GRÁFICO DE BARRAS (RECHARTS): COMPARATIVO DE FATURAMENTO DOS ÚLTIMOS 6 MESES & SAZONALIDADE */}
+                {/* GRÁFICO DE BARRAS (RECHARTS): COMPARATIVO DE FATURAMENTO POR PERÍODO & SAZONALIDADE COM FILTRO DE DATAS */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/50">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h2 className="text-base sm:text-lg font-black">
-                          Sazonalidade: Faturamento Total dos Últimos 6 Meses
+                          Sazonalidade: Faturamento por Período
                         </h2>
                         <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
-                          Gráfico de Barras · 6 Meses
+                          {sixMonthSeasonality.filterLabel}
                         </span>
                       </div>
                       <p className={`text-xs mt-0.5 ${mutedText}`}>
@@ -6722,26 +7916,83 @@ export default function App() {
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 shrink-0">
-                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
-                        <div className={`text-[10px] font-semibold ${mutedText}`}>Total (6 Meses)</div>
-                        <div className="text-xs sm:text-sm font-black tabular-nums text-[#FF6A1A]">
-                          {fmtCurrencyExact(sixMonthSeasonality.total6MonthsRev)}
-                        </div>
+                    {/* Filtro de Datas Interativo */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1 p-1 bg-slate-900/60 rounded-xl border border-slate-800/80">
+                        {[
+                          { id: '3m', label: '3 Meses' },
+                          { id: '6m', label: '6 Meses' },
+                          { id: '12m', label: '12 Meses' },
+                          { id: 'ytd', label: 'Ano Atual' },
+                          { id: 'custom', label: 'Personalizado' },
+                        ].map(f => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => setSeasonalityFilter(f.id as any)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              seasonalityFilter === f.id
+                                ? 'bg-[#FF6A1A] text-black font-black shadow-xs'
+                                : `${mutedText} hover:text-white`
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
                       </div>
-                      <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
-                        <div className={`text-[10px] font-semibold ${mutedText}`}>Média Mensal</div>
-                        <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400">
-                          {fmtCurrencyExact(sixMonthSeasonality.avgMonthlyRev)}
-                        </div>
+                    </div>
+                  </div>
+
+                  {/* Seleção de Mês Inicial e Final se Personalizado */}
+                  {seasonalityFilter === 'custom' && (
+                    <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-2xl bg-slate-900/40 border border-slate-800/60 text-xs">
+                      <span className="font-bold flex items-center gap-1.5 text-[#FF6A1A]">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Intervalo de Meses:</span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <label className={`text-[11px] font-bold ${mutedText}`}>De:</label>
+                        <input
+                          type="month"
+                          value={seasonalityCustomStart}
+                          onChange={e => setSeasonalityCustomStart(e.target.value)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold outline-none ${inputSurface}`}
+                        />
                       </div>
-                      <div className={`rounded-xl px-3 py-2 col-span-2 sm:col-span-1 ${surfaceSubtle}`}>
-                        <div className={`text-[10px] font-semibold ${mutedText}`}>Melhor Mês (Pico)</div>
-                        <div className="text-xs sm:text-sm font-black tabular-nums text-emerald-400 truncate">
-                          {sixMonthSeasonality.peakMonth
-                            ? `${sixMonthSeasonality.peakMonth.label} · ${fmtMoney(sixMonthSeasonality.peakMonth.faturamento)}`
-                            : 'Sem registros'}
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <label className={`text-[11px] font-bold ${mutedText}`}>Até:</label>
+                        <input
+                          type="month"
+                          value={seasonalityCustomEnd}
+                          onChange={e => setSeasonalityCustomEnd(e.target.value)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold outline-none ${inputSurface}`}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Métricas Resumo do Período Filtrado */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+                    <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                      <div className={`text-[10px] font-semibold ${mutedText}`}>
+                        Total ({sixMonthSeasonality.months.length} {sixMonthSeasonality.months.length === 1 ? 'Mês' : 'Meses'})
+                      </div>
+                      <div className="text-xs sm:text-sm font-black tabular-nums text-[#FF6A1A]">
+                        {fmtCurrencyExact(sixMonthSeasonality.total6MonthsRev)}
+                      </div>
+                    </div>
+                    <div className={`rounded-xl px-3 py-2 ${surfaceSubtle}`}>
+                      <div className={`text-[10px] font-semibold ${mutedText}`}>Média Mensal</div>
+                      <div className="text-xs sm:text-sm font-black tabular-nums text-sky-400">
+                        {fmtCurrencyExact(sixMonthSeasonality.avgMonthlyRev)}
+                      </div>
+                    </div>
+                    <div className={`rounded-xl px-3 py-2 col-span-2 sm:col-span-1 ${surfaceSubtle}`}>
+                      <div className={`text-[10px] font-semibold ${mutedText}`}>Melhor Mês (Pico)</div>
+                      <div className="text-xs sm:text-sm font-black tabular-nums text-emerald-400 truncate">
+                        {sixMonthSeasonality.peakMonth
+                          ? `${sixMonthSeasonality.peakMonth.label} · ${fmtMoney(sixMonthSeasonality.peakMonth.faturamento)}`
+                          : 'Sem registros'}
                       </div>
                     </div>
                   </div>
@@ -6890,426 +8141,220 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* SEÇÃO DUPLA: (1) ALIMENTAÇÃO, MANUTENÇÃO & EMERGÊNCIA | (2) DOCUMENTO DA MOTO, IPVA & LICENCIAMENTO */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                  {/* CARD ESQUERDO: CONFIGURAR RESERVAS DE ALMOÇO, LANCHE, MANUTENÇÃO E EMERGÊNCIA */}
-                  <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col justify-between gap-4 ${surfaceCard}`}>
+                {/* CONFIGURAÇÃO E AJUSTE DOS PARÂMETROS DAS RESERVAS (ALIMENTAÇÃO, MANUTENÇÃO E DOCUMENTOS) */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
                     <div>
-                      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
-                        <div>
-                          <h2 className="text-sm sm:text-base font-black text-[#FF6A1A]">
-                            🍱 Alimentação na Rua, Manutenção & Emergência
-                          </h2>
-                          <p className={`text-xs ${mutedText}`}>
-                            {isEditingFoodMaintPlan
-                              ? 'Ajuste quanto você gasta com almoço/lanche e o percentual das suas reservas diárias'
-                              : 'Valores diários calculados para cobrir suas despesas de rua e segurança'}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingFoodMaintPlan(prev => !prev)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                            isEditingFoodMaintPlan
-                              ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-xs'
-                              : 'bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30'
-                          }`}
-                        >
-                          {isEditingFoodMaintPlan ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>Salvar</span>
-                            </>
-                          ) : (
-                            <>
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Ajustar</span>
-                            </>
-                          )}
-                        </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
+                          <SlidersHorizontal className="w-5 h-5 text-[#FF6A1A]" />
+                          <span>Ajustar Parâmetros de Custos & Reservas</span>
+                        </h2>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          Exibidos no Topo do Início
+                        </span>
                       </div>
-
-                      {/* Se estiver no modo de edição (expandido) */}
-                      {isEditingFoodMaintPlan ? (
-                        <div className="mt-4 p-3.5 rounded-2xl bg-slate-900/40 border border-slate-800/60">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Almoço / Marmita por Dia (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="1"
-                                value={finPlan.dailyLunchBudget}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Lanche / Café / Água por Dia (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="1"
-                                value={finPlan.dailySnackBudget}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Reserva de Emergência (% do Bruto)
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <FreeNumberInput
-                                  step="1"
-                                  value={finPlan.emergencyReservePct}
-                                  onValueChange={val =>
-                                    updateFinancialPlan({
-                                      emergencyReservePct: Math.max(0, val),
-                                    })
-                                  }
-                                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                                />
-                                <span className="text-xs font-black text-purple-400 shrink-0">
-                                  = {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
-                                </span>
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Margem Extra Imprevisto Mecânico (%)
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <FreeNumberInput
-                                  step="1"
-                                  value={finPlan.maintenanceExtraBufferPct}
-                                  onValueChange={val =>
-                                    updateFinancialPlan({
-                                      maintenanceExtraBufferPct: Math.max(0, val),
-                                    })
-                                  }
-                                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                                />
-                                <span className="text-xs font-black text-amber-400 shrink-0">
-                                  +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setIsEditingFoodMaintPlan(false)}
-                              className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black flex items-center gap-1.5 cursor-pointer shadow-xs"
-                            >
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>Salvar & Recolher</span>
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        /* Modo Minimizado: Mostra o RESULTADO exato que o motoboy precisa separar */
-                        <div className="mt-4 flex flex-col gap-3">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>🍱 Almoço / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-orange-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyLunch)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtCurrencyExact(financialIntelligence.dailyLunch * financialIntelligence.workDaysPerMonth)}/mês
-                              </div>
-                            </div>
-
-                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>☕ Lanche & Água</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-orange-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailySnack)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtCurrencyExact(financialIntelligence.dailySnack * financialIntelligence.workDaysPerMonth)}/mês
-                              </div>
-                            </div>
-
-                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>🛠️ Manutenção / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-amber-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
-                              </div>
-                            </div>
-
-                            <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>🛡️ Emergência / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-purple-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Detalhamento Automático da Reserva de Manutenção por Peça da Aba Moto */}
-                      <div className={`mt-3 rounded-2xl p-3.5 ${surfaceSubtle}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-extrabold text-amber-400">
-                            🛠️ Detalhamento da Reserva de Manutenção por Peça
-                          </span>
-                          <span className="text-xs font-black tabular-nums">
-                            Total: {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}/dia
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {financialIntelligence.maintBreakdown.map(m => (
-                            <div
-                              key={m.id}
-                              className={`rounded-xl px-3 py-2 flex items-center justify-between text-xs ${
-                                isDark ? 'bg-slate-900/70' : 'bg-white'
-                              }`}
-                            >
-                              <span className="truncate font-semibold flex items-center gap-1.5">
-                                <span>{m.icon}</span>
-                                <span className="truncate">{m.name}</span>
-                              </span>
-                              <span className="font-black text-amber-400 tabular-nums shrink-0 ml-2">
-                                {fmtCurrencyExact(m.dailyReserve)}/dia
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Ajuste seus custos diários e anuais. Os valores consolidados a reservar por dia são calculados automaticamente e exibidos em destaque no topo da Tela de Início
+                      </p>
                     </div>
 
-                    <div className={`rounded-2xl p-3.5 flex items-center justify-between text-xs ${
-                      isDark ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-purple-50 border border-purple-200'
-                    }`}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('dashboard')}
+                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5 shrink-0"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" />
+                      <span>Ver Cards no Início</span>
+                    </button>
+                  </div>
+
+                  {/* Banner de Direcionamento Visual */}
+                  <div className={`mt-4 p-3.5 rounded-2xl flex items-center justify-between gap-3 ${
+                    isDark ? 'bg-[#FF6A1A]/10 border border-[#FF6A1A]/30 text-amber-200' : 'bg-amber-50 border border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex items-center gap-2.5 text-xs">
+                      <span className="text-xl shrink-0">📌</span>
                       <div>
-                        <div className="font-black text-purple-400">
-                          🛡️ Fundo de Emergência Pessoal (Doença / Chuva / Moto Parada)
-                        </div>
-                        <div className={`text-[11px] mt-0.5 ${mutedText}`}>
-                          Guardando {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia você acumula{' '}
-                          <strong className="text-current">{fmtCurrencyExact(financialIntelligence.emergencyIn6Months)}</strong> em 6 meses e{' '}
-                          <strong className="text-current">{fmtCurrencyExact(financialIntelligence.emergencyIn12Months)}</strong> em 1 ano.
-                        </div>
+                        <strong className="font-black text-[#FF6A1A]">Valores Movidos para o Topo do Início:</strong>
+                        <span className="ml-1">
+                          Alimentação na Rua ({fmtCurrencyExact(financialIntelligence.dailyFoodCost)}/dia), Manutenção ({fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}/dia) e Documentos ({fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}/dia) agora ficam fixados no topo do painel principal para você nunca esquecer de guardar.
+                        </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* CARD DIREITO: DOCUMENTO DA MOTO, IPVA, LICENCIAMENTO, MEI & TAXAS */}
-                  <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col justify-between gap-4 ${surfaceCard}`}>
-                    <div>
-                      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
+                  {/* Grid de Configuração dos Custos e Reservas */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mt-4">
+                    {/* Bloco 1: Alimentação & Margem Mecânica */}
+                    <div className={`rounded-2xl p-4 sm:p-5 border ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <h3 className="text-xs font-black uppercase tracking-wider text-orange-400 flex items-center gap-1.5 mb-3">
+                        <span>🍱</span>
+                        <span>Alimentação na Rua & Segurança Mecânica</span>
+                      </h3>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                          <h2 className="text-sm sm:text-base font-black text-sky-400">
-                            📄 Documento da Moto: IPVA, Licenciamento & MEI/Seguro
-                          </h2>
-                          <p className={`text-xs ${mutedText}`}>
-                            {isEditingDocsPlan
-                              ? 'Informe seus custos anuais com documentos para calcular a separação diária'
-                              : 'Objetivos financeiros e valores a separar diariamente para pagar tudo à vista'}
-                          </p>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Almoço / Marmita por Dia (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="1"
+                            value={finPlan.dailyLunchBudget}
+                            onValueChange={val =>
+                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingDocsPlan(prev => !prev)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                            isEditingDocsPlan
-                              ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-xs'
-                              : 'bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30'
-                          }`}
-                        >
-                          {isEditingDocsPlan ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>Salvar</span>
-                            </>
-                          ) : (
-                            <>
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Ajustar</span>
-                            </>
-                          )}
-                        </button>
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Lanche / Café / Água por Dia (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="1"
+                            value={finPlan.dailySnackBudget}
+                            onValueChange={val =>
+                              updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Reserva de Emergência (% do Bruto)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <FreeNumberInput
+                              step="1"
+                              value={finPlan.emergencyReservePct}
+                              onValueChange={val =>
+                                updateFinancialPlan({
+                                  emergencyReservePct: Math.max(0, val),
+                                })
+                              }
+                              className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                            <span className="text-xs font-black text-purple-400 shrink-0">
+                              ={fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Margem Extra Imprevisto Mecânico (%)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <FreeNumberInput
+                              step="1"
+                              value={finPlan.maintenanceExtraBufferPct}
+                              onValueChange={val =>
+                                updateFinancialPlan({
+                                  maintenanceExtraBufferPct: Math.max(0, val),
+                                })
+                              }
+                              className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                            />
+                            <span className="text-xs font-black text-amber-400 shrink-0">
+                              +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      {/* Se estiver no modo de edição (expandido) */}
-                      {isEditingDocsPlan ? (
-                        <div className="mt-4 p-3.5 rounded-2xl bg-slate-900/40 border border-slate-800/60">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                IPVA Anual da Moto (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="10"
-                                value={finPlan.ipvaAnnual}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Licenciamento Anual CRLV-e (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="5"
-                                value={finPlan.licensingAnnual}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                DAS MEI / Seguro / Rastreador Mensal (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="5"
-                                value={finPlan.insuranceOrMeiMonthly}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div>
-                              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                                Outras Taxas Anuais / CNH / Detran (R$)
-                              </label>
-                              <FreeNumberInput
-                                step="10"
-                                value={finPlan.otherDocsAnnual}
-                                onValueChange={val =>
-                                  updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
-                                }
-                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                              />
-                            </div>
-
-                            <div className="sm:col-span-2">
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <label className={`text-xs font-bold ${mutedText}`}>
-                                  Meses até o vencimento do IPVA / Licenciamento:
-                                </label>
-                                <span className="text-xs font-black text-sky-400">
-                                  {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {[1, 2, 3, 6, 9, 12].map(mVal => (
-                                  <button
-                                    key={mVal}
-                                    type="button"
-                                    onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
-                                      finPlan.docsTargetMonths === mVal
-                                        ? 'bg-sky-400 text-black'
-                                        : `${surfaceSubtle} hover:border-sky-400`
-                                    }`}
-                                  >
-                                    {mVal} {mVal === 1 ? 'mês' : 'meses'}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setIsEditingDocsPlan(false)}
-                              className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black flex items-center gap-1.5 cursor-pointer shadow-xs"
-                            >
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>Salvar & Recolher</span>
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        /* Modo Minimizado: Mostra apenas os OBJETIVOS FINANCEIROS e valores a separar */
-                        <div className="mt-4 flex flex-col gap-3">
-                          <div className="text-xs font-extrabold text-sky-400">
-                            Quanto separar por dia trabalhado para cada obrigação:
-                          </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>IPVA / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyIpvaReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtMoney(finPlan.ipvaAnnual)}/ano
-                              </div>
-                            </div>
-                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>Licenciam. / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyLicensingReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtMoney(finPlan.licensingAnnual)}/ano
-                              </div>
-                            </div>
-                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>MEI & Seguro / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyMeiInsuranceReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtMoney(finPlan.insuranceOrMeiMonthly)}/mês
-                              </div>
-                            </div>
-                            <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/70' : 'bg-white'}`}>
-                              <div className={`text-[10px] font-bold ${mutedText}`}>CNH & Taxas / dia</div>
-                              <div className="text-sm sm:text-base font-black tabular-nums text-sky-400 mt-1">
-                                {fmtCurrencyExact(financialIntelligence.dailyOtherDocsReserve)}
-                              </div>
-                              <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                                {fmtMoney(finPlan.otherDocsAnnual)}/ano
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
-                    <div className={`rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                      isDark ? 'bg-sky-500/10 border border-sky-500/30' : 'bg-sky-50 border border-sky-200'
-                    }`}>
-                      <div>
-                        <div className="text-xs font-black text-sky-400">
-                          Total a Guardar p/ Documentação & Proteção
+                    {/* Bloco 2: Documentos da Moto, IPVA & MEI */}
+                    <div className={`rounded-2xl p-4 sm:p-5 border ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <h3 className="text-xs font-black uppercase tracking-wider text-sky-400 flex items-center gap-1.5 mb-3">
+                        <span>📄</span>
+                        <span>Documentos Anuais & Obrigações (IPVA/MEI)</span>
+                      </h3>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            IPVA Anual da Moto (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="10"
+                            value={finPlan.ipvaAnnual}
+                            onValueChange={val =>
+                              updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
                         </div>
-                        <div className={`text-[11px] ${mutedText}`}>
-                          Custo anual total: {fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)}/ano ({finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} p/ juntar)
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Licenciamento Anual CRLV-e (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="5"
+                            value={finPlan.licensingAnnual}
+                            onValueChange={val =>
+                              updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
                         </div>
-                      </div>
-                      <div className="text-left sm:text-right">
-                        <div className="text-base sm:text-lg font-black text-sky-400 tabular-nums">
-                          {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} / dia
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            DAS MEI / Seguro / Rastreador Mensal (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="5"
+                            value={finPlan.insuranceOrMeiMonthly}
+                            onValueChange={val =>
+                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
                         </div>
-                        <div className={`text-[11px] font-bold ${mutedText}`}>
-                          {fmtCurrencyExact(financialIntelligence.weeklyDocsReserve)}/sem · {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
+
+                        <div>
+                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                            Outras Taxas Anuais / CNH / Detran (R$)
+                          </label>
+                          <FreeNumberInput
+                            step="10"
+                            value={finPlan.otherDocsAnnual}
+                            onValueChange={val =>
+                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
+                            }
+                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2 pt-1 border-t border-slate-800/40">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <label className={`text-[11px] font-bold ${mutedText}`}>
+                              Prazo até o vencimento do IPVA / Licenciamento:
+                            </label>
+                            <span className="text-xs font-black text-sky-400">
+                              {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[1, 2, 3, 6, 9, 12].map(mVal => (
+                              <button
+                                key={mVal}
+                                type="button"
+                                onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                                  finPlan.docsTargetMonths === mVal
+                                    ? 'bg-sky-400 text-black'
+                                    : `${surfaceSubtle} hover:border-sky-400`
+                                }`}
+                              >
+                                {mVal} {mVal === 1 ? 'mês' : 'meses'}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -7871,10 +8916,15 @@ export default function App() {
                   </div>
 
                   <div className="flex items-baseline justify-between gap-2 mt-2">
-                    <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A]">
-                      {fmtCurrencyExact(progressAnalytics.customCurrent)}
+                    <div>
+                      <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A]">
+                        {fmtCurrencyExact(progressAnalytics.customCurrent)}
+                      </div>
+                      <span className={`text-[10px] block font-semibold ${mutedText}`}>
+                        Saldo Atual (Ganhos {fmtMoney(progressAnalytics.customGross)} - Gastos {fmtMoney(progressAnalytics.customExpenses)})
+                      </span>
                     </div>
-                    <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
+                    <div className={`text-xs font-bold tabular-nums ${mutedText} text-right`}>
                       de {fmtMoney(progressAnalytics.customGoalTarget)}
                     </div>
                   </div>
@@ -10449,6 +11499,8 @@ export default function App() {
         expenses={dbState.expenses}
         currentUser={currentUser}
         fuelConfig={dbState.fuelConfig}
+        allApps={allApps}
+        allCategories={allCategories}
         isDark={isDark}
       />
 

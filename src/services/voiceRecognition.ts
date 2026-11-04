@@ -114,12 +114,12 @@ export function parseVoiceInput(text: string): ParsedVoiceEntry {
   let appOrCategoryName = '';
   if (mode === 'ganho') {
     if (clean.includes('ifood') || clean.includes('i food')) appOrCategoryName = 'iFood';
-    else if (clean.includes('uber')) appOrCategoryName = 'Uber';
-    else if (clean.includes('99') || clean.includes('noventa e nove')) appOrCategoryName = '99';
+    else if (clean.includes('99') || clean.includes('noventa e nove')) appOrCategoryName = '99 Moto';
+    else if (clean.includes('lalamove') || clean.includes('lala')) appOrCategoryName = 'Lalamove';
+    else if (clean.includes('ze delivery') || clean.includes('zé delivery') || clean.includes('ze')) appOrCategoryName = 'Zé Delivery';
     else if (clean.includes('rappi')) appOrCategoryName = 'Rappi';
     else if (clean.includes('keeta')) appOrCategoryName = 'Keeta';
-    else if (clean.includes('lalamove')) appOrCategoryName = 'Lalamove';
-    else if (clean.includes('particular')) appOrCategoryName = 'Particular';
+    else if (clean.includes('particular') || clean.includes('direto') || clean.includes('fixo')) appOrCategoryName = 'Particular / Fixo';
     else if (clean.includes('pizzaria') || clean.includes('restaurante')) appOrCategoryName = 'Restaurante';
   } else {
     if (clean.includes('gasolina') || clean.includes('combustivel') || clean.includes('posto')) appOrCategoryName = 'Combustível';
