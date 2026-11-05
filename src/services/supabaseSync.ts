@@ -76,6 +76,82 @@ export interface ShiftDefinition {
   name: string;
 }
 
+export interface HouseholdExpenseItem {
+  id: string;
+  name: string;
+  category: 'moradia' | 'utilidades' | 'alimentacao' | 'conectividade' | 'saude' | 'outros';
+  monthlyAmount: number;
+  dueDay?: number;
+  icon?: string;
+  isActive: boolean;
+}
+
+export const DEFAULT_HOUSEHOLD_EXPENSES: HouseholdExpenseItem[] = [
+  {
+    id: 'aluguel',
+    name: 'Aluguel / Habitação',
+    category: 'moradia',
+    monthlyAmount: 850,
+    dueDay: 10,
+    icon: '🏠',
+    isActive: true,
+  },
+  {
+    id: 'mercado',
+    name: 'Supermercado & Feira (Casa)',
+    category: 'alimentacao',
+    monthlyAmount: 900,
+    dueDay: 5,
+    icon: '🛒',
+    isActive: true,
+  },
+  {
+    id: 'luz',
+    name: 'Energia Elétrica (Luz)',
+    category: 'utilidades',
+    monthlyAmount: 140,
+    dueDay: 15,
+    icon: '⚡',
+    isActive: true,
+  },
+  {
+    id: 'agua',
+    name: 'Água & Saneamento',
+    category: 'utilidades',
+    monthlyAmount: 65,
+    dueDay: 20,
+    icon: '💧',
+    isActive: true,
+  },
+  {
+    id: 'internet',
+    name: 'Internet Fibra / Telefone',
+    category: 'conectividade',
+    monthlyAmount: 110,
+    dueDay: 18,
+    icon: '📶',
+    isActive: true,
+  },
+  {
+    id: 'gas',
+    name: 'Gás de Cozinha / Botijão',
+    category: 'utilidades',
+    monthlyAmount: 120,
+    dueDay: 25,
+    icon: '🔥',
+    isActive: true,
+  },
+  {
+    id: 'farmacia',
+    name: 'Farmácia & Cuidados Pessoais',
+    category: 'saude',
+    monthlyAmount: 80,
+    dueDay: 28,
+    icon: '💊',
+    isActive: true,
+  },
+];
+
 export interface FinancialPlanningConfig {
   workDaysPerMonth: number;
   dailyLunchBudget: number;
@@ -123,6 +199,7 @@ export interface LocalRoomDatabaseState {
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
   financialPlan?: FinancialPlanningConfig;
+  householdExpenses?: HouseholdExpenseItem[];
   customApps: AppDefinition[];
   customCategories: CategoryDefinition[];
   appOverrides: Record<string, { name: string; icon: string }>;

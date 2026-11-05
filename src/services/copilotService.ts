@@ -196,21 +196,28 @@ export async function askFinancialAdvisorAI(prompt: string, financialContext: an
   const dailyFood = Number(fc.dailyFoodCost || 0);
   const dailyDocs = Number(fc.dailyDocsReserve || 0);
   const dailyEmerg = Number(fc.dailyEmergencyReserve || 0);
+  const dailyHouse = Number(fc.dailyHouseholdReserve || 0);
+  const monthlyHouse = Number(fc.monthlyHouseholdCost || 0);
+  const breakEven = Number(fc.breakEvenDaily || (dailyFuel + dailyMaint + dailyFood + dailyDocs + dailyHouse));
   const margin = Number(fc.netMarginPct || 0);
 
   return [
-    `📊 1. Diagnóstico do Seu Lucro Líquido Real (${margin}% de margem livre):`,
-    `• De cada R$ ${dailyGross.toFixed(2)} faturados no dia, sobram R$ ${dailyNet.toFixed(2)} limpos no seu bolso após descontar gasolina (R$ ${dailyFuel.toFixed(2)}), manutenção da moto (R$ ${dailyMaint.toFixed(2)}), alimentação (R$ ${dailyFood.toFixed(2)}), documentação IPVA/Licenciamento (R$ ${dailyDocs.toFixed(2)}) e reserva de emergência (R$ ${dailyEmerg.toFixed(2)}).`,
-    `• Projeção de ganho livre mensal (${fc.workDaysPerMonth || 24} dias): R$ ${monthlyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`,
+    `📊 1. Diagnóstico do Seu Lucro Líquido Real (${margin}% de margem 100% livre):`,
+    `• De cada R$ ${dailyGross.toFixed(2)} faturados no dia, sobram R$ ${dailyNet.toFixed(2)} limpos no seu bolso após pagar os custos da moto (R$ ${(dailyFuel + dailyMaint + dailyFood + dailyDocs).toFixed(2)}/dia), as despesas da casa (R$ ${dailyHouse.toFixed(2)}/dia) e a reserva de emergência (R$ ${dailyEmerg.toFixed(2)}/dia).`,
+    `• Projeção de lucro 100% livre no mês (${fc.workDaysPerMonth || 24} dias de trabalho): R$ ${monthlyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`,
     ``,
-    `🛠️ 2. Blindagem da Moto & Manutenção Preventiva:`,
-    `• Seu custo de desgaste das peças é de R$ ${Number(fc.maintCostPerKm || 0).toFixed(2)} por KM. Separando R$ ${dailyMaint.toFixed(2)} por dia em uma conta separada, você terá o valor à vista quando precisar trocar óleo, pneu, relação ou pastilha.`,
+    `🏠 2. Despesas da Casa & Família (Custo de Vida):`,
+    `• Suas despesas domésticas ativas somam R$ ${monthlyHouse.toFixed(2)}/mês (aluguel, água, luz, internet, supermercado, gás).`,
+    `• Rateio diário obrigatório: R$ ${dailyHouse.toFixed(2)}/dia trabalhado. Separar essa quantia todo dia garante que você chegue ao final do mês com todas as contas da casa pagas sem atrasos ou juros.`,
     ``,
-    `📄 3. Documentos em Dia (IPVA, Licenciamento e MEI/Seguro):`,
-    `• Guardando R$ ${dailyDocs.toFixed(2)} por dia trabalhado (ou R$ ${(dailyDocs * 6).toFixed(2)} por semana), você quita IPVA (R$ ${Number(fc.ipvaAnnual || 0).toFixed(0)}) e Licenciamento (R$ ${Number(fc.licensingAnnual || 0).toFixed(0)}) à vista e com desconto, sem comprometer o orçamento da família.`,
+    `⚖️ 3. Seu Ponto de Equilíbrio Diário (Meta Mínima de Sobrevivência):`,
+    `• Seu valor diário inegociável é R$ ${breakEven.toFixed(2)}/dia. Faturando isso, você paga a operação da moto e quita todas as contas de casa. Tudo o que vier acima de R$ ${breakEven.toFixed(2)} é lucro limpo e reserva para prosperar.`,
     ``,
-    `🍱 4. Alimentação & Reserva de Emergência:`,
-    `• Seu orçamento diário de rua (Almoço R$ ${Number(fc.dailyLunch || 0).toFixed(2)} + Lanche R$ ${Number(fc.dailySnack || 0).toFixed(2)}) representa ${dailyGross > 0 ? Math.round((dailyFood / dailyGross) * 100) : 0}% do seu bruto. Guardando R$ ${dailyEmerg.toFixed(2)}/dia de emergência, em 6 meses você acumula R$ ${Math.round(dailyEmerg * (fc.workDaysPerMonth || 24) * 6).toLocaleString('pt-BR')} de proteção financeira.`,
+    `🛠️ 4. Blindagem da Moto & Manutenção Preventiva:`,
+    `• Desgaste de peças calculado em R$ ${Number(fc.maintCostPerKm || 0).toFixed(2)}/km. Separando R$ ${dailyMaint.toFixed(2)}/dia de manutenção e R$ ${dailyDocs.toFixed(2)}/dia para IPVA/Licenciamento, você nunca mais será pego de surpresa na oficina ou blitz.`,
+    ``,
+    `🍱 5. Alimentação & Reserva de Emergência:`,
+    `• Orçamento de turno na rua: R$ ${dailyFood.toFixed(2)}/dia. Guardando R$ ${dailyEmerg.toFixed(2)}/dia de emergência (${fc.emergencyPct || 10}%), em 6 meses você terá R$ ${Math.round(dailyEmerg * (fc.workDaysPerMonth || 24) * 6).toLocaleString('pt-BR')} para imprevistos ou descanso.`,
   ].join('\n');
 }
 

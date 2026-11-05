@@ -64,6 +64,10 @@ import {
   MapPin,
   ShieldCheck,
   Info,
+  Wallet,
+  CreditCard,
+  Receipt,
+  Shield,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -91,6 +95,8 @@ import {
   FuelDiagnosticsConfig,
   FinancialPlanningConfig,
   DEFAULT_FINANCIAL_PLAN,
+  HouseholdExpenseItem,
+  DEFAULT_HOUSEHOLD_EXPENSES,
   AppDefinition,
   CategoryDefinition,
   ShiftDefinition,
@@ -321,6 +327,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
       bikeModelName: cleanBike,
     },
     financialPlan: { ...DEFAULT_FINANCIAL_PLAN },
+    householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item })),
     customApps: [],
     customCategories: [],
     appOverrides: {},
@@ -353,6 +360,11 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         ...DEFAULT_FUEL_CONFIG,
         bikeModelName: user?.bikeModel || DEFAULT_FUEL_CONFIG.bikeModelName,
       };
+
+      const houseExpenses: HouseholdExpenseItem[] =
+        Array.isArray(parsed.householdExpenses) && parsed.householdExpenses.length > 0
+          ? parsed.householdExpenses
+          : DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item }));
 
       const cleanEntries = Array.isArray(parsed.entries)
         ? parsed.entries
@@ -388,6 +400,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
           ...DEFAULT_FINANCIAL_PLAN,
           ...(parsed.financialPlan || {}),
         },
+        householdExpenses: houseExpenses,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
         appOverrides: parsed.appOverrides || {},
@@ -564,7 +577,19 @@ export default function App() {
 
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [householdCategoryFilter, setHouseholdCategoryFilter] = useState<string>('all');
+  const [showHouseholdModal, setShowHouseholdModal] = useState<boolean>(false);
+  const [editingHouseholdItem, setEditingHouseholdItem] = useState<HouseholdExpenseItem | null>(null);
+  const [householdDraft, setHouseholdDraft] = useState<HouseholdExpenseItem>({
+    id: '',
+    name: '',
+    category: 'moradia',
+    monthlyAmount: 0,
+    dueDay: 10,
+    icon: '🏠',
+    isActive: true,
+  });
   const [selectedFinanceMonth, setSelectedFinanceMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1712,6 +1737,83 @@ export default function App() {
       fuelConfig: sanitized,
     });
     setIsEditingFuelCard(false);
+  };
+
+  // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
+  const openNewHouseholdExpenseModal = () => {
+    setEditingHouseholdItem(null);
+    setHouseholdDraft({
+      id: 'house_' + Date.now(),
+      name: '',
+      category: 'moradia',
+      monthlyAmount: 0,
+      dueDay: 10,
+      icon: '🏠',
+      isActive: true,
+    });
+    setShowHouseholdModal(true);
+  };
+
+  const openEditHouseholdExpenseModal = (item: HouseholdExpenseItem) => {
+    setEditingHouseholdItem(item);
+    setHouseholdDraft({ ...item });
+    setShowHouseholdModal(true);
+  };
+
+  const saveHouseholdExpense = () => {
+    const list =
+      Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+        ? [...dbState.householdExpenses]
+        : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
+
+    const sanitized: HouseholdExpenseItem = {
+      id: householdDraft.id || 'house_' + Date.now(),
+      name: householdDraft.name.trim() || 'Despesa Doméstica',
+      category: householdDraft.category || 'outros',
+      monthlyAmount: Math.max(0, Number(householdDraft.monthlyAmount) || 0),
+      dueDay: Math.max(1, Math.min(31, Number(householdDraft.dueDay) || 10)),
+      icon: householdDraft.icon?.trim() || '🏠',
+      isActive: householdDraft.isActive !== false,
+    };
+
+    const existingIndex = list.findIndex(h => h.id === sanitized.id);
+    if (existingIndex >= 0) {
+      list[existingIndex] = sanitized;
+    } else {
+      list.push(sanitized);
+    }
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: list,
+    });
+    setShowHouseholdModal(false);
+    setEditingHouseholdItem(null);
+  };
+
+  const deleteHouseholdExpense = (id: string) => {
+    const list = (dbState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES).filter(h => h.id !== id);
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: list,
+    });
+  };
+
+  const toggleHouseholdExpense = (id: string) => {
+    const list = (dbState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES).map(h =>
+      h.id === id ? { ...h, isActive: !h.isActive } : h
+    );
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: list,
+    });
+  };
+
+  const resetDefaultHouseholdExpenses = () => {
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h })),
+    });
   };
 
   // ================= ADD / EDIT RIDE OR EXPENSE MODAL STATE =================
@@ -3223,20 +3325,56 @@ export default function App() {
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
     const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
-    // 5. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
+    // 5. Despesas da Casa & Família (Fora da Moto: Aluguel, Luz, Água, Mercado, Internet, etc.)
+    const rawHouseholdExpenses: HouseholdExpenseItem[] =
+      Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+        ? dbState.householdExpenses
+        : DEFAULT_HOUSEHOLD_EXPENSES;
+    const activeHouseholdExpenses = rawHouseholdExpenses.filter(h => h.isActive);
+    const monthlyHouseholdCost = activeHouseholdExpenses.reduce(
+      (sum, h) => sum + Math.max(0, Number(h.monthlyAmount) || 0),
+      0
+    );
+    const dailyHouseholdReserve = monthlyHouseholdCost / workDaysPerMonth;
+    const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+    const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
+
+    // Subtotal Moto & Operação (Combustível + Manutenção + Docs/IPVA + Alimentação no Turno)
+    const dailyBikeCostsTotal =
+      dailyFuelCost + dailyMaintReserve + dailyDocsReserve + dailyFoodCost;
+    const monthlyBikeCostsTotal =
+      monthlyFuelCost + monthlyMaintReserve + monthlyDocsReserve + monthlyFoodCost;
+    const bikePctOfGross = dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
+
+    // 6. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
     const emergencyPct = Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) ?? 10));
     const dailyEmergencyReserve = dailyGross * (emergencyPct / 100);
     const monthlyEmergencyReserve = dailyEmergencyReserve * workDaysPerMonth;
     const emergencyIn6Months = monthlyEmergencyReserve * 6;
     const emergencyIn12Months = monthlyEmergencyReserve * 12;
 
-    // 6. Lucro Líquido Real (O Que Sobra de Fato no Bolso do Motoboy)
+    // 7. Consolidação das Reservas Totais (Tudo o que deve reservar: Moto + Casa + Emergência)
     const totalDailyCostsAndReserves =
-      dailyFuelCost + dailyMaintReserve + dailyFoodCost + dailyDocsReserve + dailyEmergencyReserve;
+      dailyBikeCostsTotal + dailyHouseholdReserve + dailyEmergencyReserve;
+    const totalMonthlyCostsAndReserves =
+      monthlyBikeCostsTotal + monthlyHouseholdCost + monthlyEmergencyReserve;
+    const totalReservesPctOfGross =
+      dailyGross > 0 ? Math.round((totalDailyCostsAndReserves / dailyGross) * 100) : 0;
+
+    // 8. Lucro Líquido Real 100% Livre (O Que Sobra de Fato Limpo no Bolso do Piloto)
     const dailyNetProfit = dailyGross - totalDailyCostsAndReserves;
     const weeklyNetProfit = dailyNetProfit * Math.min(7, Math.round(workDaysPerMonth / 4));
     const monthlyNetProfit = dailyNetProfit * workDaysPerMonth;
     const netMarginPct = dailyGross > 0 ? Math.round((dailyNetProfit / dailyGross) * 100) : 0;
+
+    // Pontos de Equilíbrio (Break-Even Real)
+    // Nível 1: Break-even da Moto (R$/dia para não pagar para trabalhar)
+    const breakEvenBikeDaily = dailyBikeCostsTotal;
+    // Nível 2: Break-even Total (Moto + Casa: R$/dia para pagar trabalho e contas da casa)
+    const breakEvenDaily = dailyBikeCostsTotal + dailyHouseholdReserve;
+    const breakEvenMonthly = monthlyBikeCostsTotal + monthlyHouseholdCost;
+    // Nível 3: Ponto de Blindagem (Moto + Casa + Emergência)
+    const shieldDaily = totalDailyCostsAndReserves;
 
     const avgDailyHours = progressAnalytics.avgHoursPerDay > 0 ? progressAnalytics.avgHoursPerDay : 8;
     const realNetPerHour = avgDailyHours > 0 ? dailyNetProfit / avgDailyHours : 0;
@@ -3288,16 +3426,33 @@ export default function App() {
       weeklyDocsReserve,
       monthlyDocsReserve,
       docsPctOfGross,
+      // Despesas da Casa & Família
+      rawHouseholdExpenses,
+      activeHouseholdExpenses,
+      monthlyHouseholdCost,
+      dailyHouseholdReserve,
+      weeklyHouseholdReserve,
+      housePctOfGross,
+      // Subtotais Moto e Totais Consolidados
+      dailyBikeCostsTotal,
+      monthlyBikeCostsTotal,
+      bikePctOfGross,
       emergencyPct,
       dailyEmergencyReserve,
       monthlyEmergencyReserve,
       emergencyIn6Months,
       emergencyIn12Months,
       totalDailyCostsAndReserves,
+      totalMonthlyCostsAndReserves,
+      totalReservesPctOfGross,
       dailyNetProfit,
       weeklyNetProfit,
       monthlyNetProfit,
       netMarginPct,
+      breakEvenBikeDaily,
+      breakEvenDaily,
+      breakEvenMonthly,
+      shieldDaily,
       avgDailyHours,
       realNetPerHour,
       realNetPerKm,
@@ -3642,6 +3797,10 @@ export default function App() {
         licensingAnnual: financialIntelligence.licensingAnnual,
         insuranceMonthly: financialIntelligence.insuranceMonthly,
         dailyDocsReserve: financialIntelligence.dailyDocsReserve,
+        dailyHouseholdReserve: financialIntelligence.dailyHouseholdReserve,
+        monthlyHouseholdCost: financialIntelligence.monthlyHouseholdCost,
+        dailyBikeCostsTotal: financialIntelligence.dailyBikeCostsTotal,
+        breakEvenDaily: financialIntelligence.breakEvenDaily,
         emergencyPct: financialIntelligence.emergencyPct,
         dailyEmergencyReserve: financialIntelligence.dailyEmergencyReserve,
         dailyNetProfit: financialIntelligence.dailyNetProfit,
@@ -4508,121 +4667,205 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Grid dos Cards de Reserva em Destaque */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+              {/* Grid dos Cards de Reserva em Destaque (Moto, Casa, Emergência e Total) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
                 {/* 1. Reserva Alimentação na Rua */}
-                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1.5 text-orange-400 font-black">
+                    <span className="flex items-center gap-1 text-orange-400 font-black">
                       <span>🍱</span>
-                      <span>Alimentação na Rua</span>
+                      <span className="truncate">Alimentação Rua</span>
                     </span>
                     <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
-                      {financialIntelligence.foodPctOfGross}% do dia
+                      {financialIntelligence.foodPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-xl sm:text-2xl font-black text-orange-400 tabular-nums">
+                  <div className="text-lg sm:text-xl font-black text-orange-400 tabular-nums">
                     {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês estimado
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
                   </div>
-                  <div className={`text-[11px] mt-1 ${mutedText}`}>
-                    Almoço, lanches e água no turno
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Almoço e água no turno
                   </div>
                 </div>
 
                 {/* 2. Reserva Manutenção da Moto */}
-                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1.5 text-amber-400 font-black">
+                    <span className="flex items-center gap-1 text-amber-400 font-black">
                       <span>🛠️</span>
-                      <span>Manutenção Preventiva</span>
+                      <span className="truncate">Manutenção Moto</span>
                     </span>
                     <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
-                      {financialIntelligence.maintPctOfGross}% do dia
+                      {financialIntelligence.maintPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
+                  <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums">
                     {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês preventivo
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
                   </div>
-                  <div className={`text-[11px] mt-1 ${mutedText}`}>
-                    Desgaste de óleo, pneus e relação
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Óleo, pneus e relação
                   </div>
                 </div>
 
                 {/* 3. Reserva Documentos da Moto */}
-                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1.5 text-sky-400 font-black">
+                    <span className="flex items-center gap-1 text-sky-400 font-black">
                       <span>📄</span>
-                      <span>Documentos & IPVA</span>
+                      <span className="truncate">Documentos & IPVA</span>
                     </span>
                     <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-400">
-                      {financialIntelligence.docsPctOfGross}% do dia
+                      {financialIntelligence.docsPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-xl sm:text-2xl font-black text-sky-400 tabular-nums">
+                  <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums">
                     {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês · Total {fmtMoney(financialIntelligence.totalAnnualDocsWithInsurance)}/ano
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
                   </div>
-                  <div className={`text-[11px] mt-1 ${mutedText}`}>
-                    IPVA, licenciamento e DAS MEI
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    IPVA, CRLV e DAS MEI
                   </div>
                 </div>
 
-                {/* 4. Reserva de Emergência */}
-                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
+                {/* 4. Reserva Despesas da Casa & Família (NOVO) */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('despesas_casa');
+                  }}
+                  className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group`}
+                  title="Clique para gerenciar suas contas de casa"
+                >
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1.5 text-purple-400 font-black">
+                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300">
+                      <span>🏠</span>
+                      <span className="truncate">Contas da Casa</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
+                      {financialIntelligence.housePctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-blue-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold text-blue-300`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês total
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Aluguel, luz, água e mercado ↗
+                  </div>
+                </div>
+
+                {/* 5. Reserva de Emergência */}
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-purple-400 font-black">
                       <span>🛡️</span>
-                      <span>Reserva de Emergência</span>
+                      <span className="truncate">Emergência</span>
                     </span>
                     <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
-                      {financialIntelligence.emergencyPct}% do dia
+                      {financialIntelligence.emergencyPct}%
                     </span>
                   </div>
-                  <div className="text-xl sm:text-2xl font-black text-purple-400 tabular-nums">
+                  <div className="text-lg sm:text-xl font-black text-purple-400 tabular-nums">
                     {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês acumulado
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
                   </div>
-                  <div className={`text-[11px] mt-1 ${mutedText}`}>
-                    Imprevistos, dias parados ou saúde
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Imprevistos e dias parados
                   </div>
                 </div>
 
-                {/* 5. Total a Reservar por Dia */}
-                <div className="rounded-2xl p-3.5 sm:p-4 border-2 border-emerald-500/40 bg-emerald-500/10">
+                {/* 6. Total Diário a Separar (Moto + Casa + Emergência) */}
+                <div className="rounded-2xl p-3 sm:p-3.5 border-2 border-emerald-500/40 bg-emerald-500/10">
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1.5 text-emerald-400 font-black">
+                    <span className="flex items-center gap-1 text-emerald-400 font-black">
                       <span>🔒</span>
-                      <span>Total Diário a Guardar</span>
+                      <span className="truncate">Total a Guardar</span>
                     </span>
                     <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-                      Proteção
+                      Blindagem
                     </span>
                   </div>
-                  <div className="text-xl sm:text-2xl font-black text-emerald-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)}
-                    <span className="text-xs font-semibold ml-1 text-emerald-300">/ dia</span>
+                  <div className="text-lg sm:text-xl font-black text-emerald-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
+                    <span className="text-xs font-semibold ml-1 text-emerald-300">/dia</span>
                   </div>
-                  <div className="text-xs mt-1 font-semibold text-emerald-400/90">
-                    Alimentação + Manutenção + Docs + Emergência
+                  <div className="text-[11px] mt-1 font-semibold text-emerald-400/90 truncate">
+                    {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês total
                   </div>
-                  <div className={`text-[11px] mt-1 ${mutedText}`}>
-                    Separe todo dia antes do lucro livre
+                  <div className={`text-[10px] mt-0.5 truncate text-emerald-300/80`}>
+                    Moto + Casa + Emergência
                   </div>
+                </div>
+              </div>
+
+              {/* PAINEL CONSOLIDADO DAS 3 DIVISÕES DO DINHEIRO DO MOTOBOY */}
+              <div className={`mt-3.5 pt-3.5 border-t border-slate-800/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 p-3 rounded-2xl ${
+                isDark ? 'bg-slate-900/60' : 'bg-slate-100/80'
+              }`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase text-[#FF6A1A] tracking-wider">
+                    Divisão do Dinheiro:
+                  </span>
+                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
+                    <span className="text-rose-400 flex items-center gap-1">
+                      <span>🏍️ Moto:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}/dia</strong>
+                      <span className="text-[10px] opacity-75">({financialIntelligence.bikePctOfGross}%)</span>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-blue-400 flex items-center gap-1">
+                      <span>🏠 Casa:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia</strong>
+                      <span className="text-[10px] opacity-75">({financialIntelligence.housePctOfGross}%)</span>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-purple-400 flex items-center gap-1">
+                      <span>🛡️ Emergência:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia</strong>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-emerald-400 flex items-center gap-1 font-black">
+                      <span>💵 Lucro Limpo no Bolso:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">
+                        {financialIntelligence.netMarginPct}% livre
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto justify-end">
+                  <span className={`text-[11px] font-bold ${mutedText}`}>
+                    Ponto de Sobrevivência (Moto + Casa):
+                    <strong className="text-amber-400 ml-1 tabular-nums">{fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('billing');
+                      setBillingSubTab('despesas_casa');
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 transition-colors cursor-pointer"
+                  >
+                    Gerenciar Casa ↗
+                  </button>
                 </div>
               </div>
             </div>
@@ -6468,6 +6711,7 @@ export default function App() {
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
                   { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
+                  { id: 'despesas_casa', label: '🏠 Despesas da Casa' },
                   { id: 'planejamento', label: 'Planejamento & IA' },
                   { id: 'ganhos', label: 'Ganhos por App' },
                   { id: 'gastos', label: 'Gastos por Categoria' },
@@ -6891,6 +7135,44 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* FAIXA DE RECONCILIAÇÃO FINANCEIRA: MOTO + CASA + LUCRO LIMPO */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black uppercase tracking-wider text-blue-400 text-[11px] flex items-center gap-1">
+                      <span>🏠</span>
+                      <span>Provisão das Contas da Casa:</span>
+                    </span>
+                    <span className="font-extrabold text-blue-400 tabular-nums">
+                      {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
+                    </span>
+                    <span className={`text-[10px] ${mutedText}`}>
+                      ({financialIntelligence.activeHouseholdExpenses.length} contas ativas · {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia trabalhado)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 self-stretch md:self-auto justify-end flex-wrap">
+                    <span className={`text-[11px] font-bold ${mutedText}`}>
+                      Saldo 100% Livre (Após Moto + Casa):
+                    </span>
+                    <span className={`text-sm font-black tabular-nums ${
+                      selectedMonthFinancials.currentBalance - financialIntelligence.monthlyHouseholdCost >= 0
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}>
+                      {fmtMoney(selectedMonthFinancials.currentBalance - financialIntelligence.monthlyHouseholdCost)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setBillingSubTab('despesas_casa')}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/30 transition-colors cursor-pointer"
+                    >
+                      Ver Contas da Casa ↗
+                    </button>
+                  </div>
+                </div>
+
                 {/* 4. CAMPO PRINCIPAL: TODOS OS GANHOS DO MÊS (LISTA COM FILTROS) */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
                   {/* Cabeçalho da Lista */}
@@ -7119,6 +7401,400 @@ export default function App() {
               </div>
             )}
 
+            {/* ================= SUB-ABA: DESPESAS DA CASA & CUSTO DE VIDA DA FAMÍLIA ================= */}
+            {billingSubTab === 'despesas_casa' && (
+              <div className="flex flex-col gap-4 sm:gap-6">
+                {/* TOPO: CARDS DE RESUMO DO CUSTO DE VIDA DA CASA */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center text-lg">
+                          🏠
+                        </span>
+                        <h2 className="text-base sm:text-lg font-black">
+                          Despesas da Casa & Custo de Vida
+                        </h2>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                          Vida Pessoal & Família
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-1 ${mutedText}`}>
+                        Cadastre aluguel, luz, água, internet, supermercado e outras contas. O app rateia o valor pelos seus dias de trabalho para você nunca passar aperto no final do mês!
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={openNewHouseholdExpenseModal}
+                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-blue-600/25"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Nova Despesa da Casa</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetDefaultHouseholdExpenses}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-slate-700`}
+                        title="Restaurar lista com contas sugeridas (aluguel, luz, água, internet, mercado)"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline ml-1">Restaurar Padrão</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4 Cards de Métricas do Custo de Vida */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-4">
+                    {/* 1. Total Mensal das Contas */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-blue-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-blue-400 flex items-center gap-1.5 font-black">
+                          <span>🏠</span>
+                          <span>Total Contas / Mês</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
+                          {financialIntelligence.activeHouseholdExpenses.length} ativas
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-blue-400 tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        Compromissos fixos da sua residência
+                      </div>
+                    </div>
+
+                    {/* 2. Rateio Diário Obrigatório */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-sky-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-sky-400 flex items-center gap-1.5 font-black">
+                          <span>📅</span>
+                          <span>Separar por Dia</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">
+                          {financialIntelligence.workDaysPerMonth} dias úteis
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-sky-400 tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
+                        <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.weeklyHouseholdReserve)}/semana estimada
+                      </div>
+                    </div>
+
+                    {/* 3. % do Faturamento Comprometido */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-purple-400 flex items-center gap-1.5 font-black">
+                          <span>📊</span>
+                          <span>Impacto no Ganho</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
+                          Custo de Vida
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-purple-400 tabular-nums">
+                        {financialIntelligence.housePctOfGross}%
+                        <span className="text-xs font-semibold ml-1 text-slate-400">do bruto</span>
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        Base de {fmtCurrencyExact(financialIntelligence.dailyGross)}/dia
+                      </div>
+                    </div>
+
+                    {/* 4. Meta de Sobrevivência (Break-Even Moto + Casa) */}
+                    <div className="rounded-2xl p-3.5 sm:p-4 border-2 border-amber-500/40 bg-amber-500/10">
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-amber-400 flex items-center gap-1.5 font-black">
+                          <span>⚖️</span>
+                          <span>Ponto de Sobrevivência</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                          Mínimo
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}
+                        <span className="text-xs font-semibold ml-1 text-amber-300">/dia</span>
+                      </div>
+                      <div className="text-xs mt-1 font-semibold text-amber-300/90 truncate">
+                        Moto ({fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}) + Casa ({fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)})
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Banner Explicativo da Metodologia dos 3 Pilares */}
+                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                    isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100/80 border-slate-200'
+                  }`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-xl shrink-0 mt-0.5">💡</span>
+                      <div>
+                        <strong className="text-[#FF6A1A] block font-black mb-0.5">
+                          O Segredo do Motoboy Próspero: Separar o Dinheiro em 3 Caixinhas
+                        </strong>
+                        <p className={mutedText}>
+                          1. <strong>Caixa da Moto</strong> (Gasolina, peças, documentos, almoço) · 2. <strong>Caixa da Casa</strong> (Aluguel, luz, água, mercado) · 3. <strong>Seu Lucro 100% Livre</strong>. Separando os <strong>{fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia</strong> da casa, você nunca mais terá que escolher entre pagar o aluguel ou consertar a moto!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FILTRO POR CATEGORIA E LISTAGEM DAS CONTAS DA CASA */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/50">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm sm:text-base font-black">
+                        Suas Contas e Despesas Domésticas
+                      </h3>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                        {financialIntelligence.rawHouseholdExpenses.length} cadastradas
+                      </span>
+                    </div>
+
+                    {/* Filtros Rápidos de Categoria */}
+                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
+                      {[
+                        { id: 'all', label: 'Todas' },
+                        { id: 'moradia', label: '🏠 Moradia' },
+                        { id: 'utilidades', label: '⚡ Utilidades' },
+                        { id: 'alimentacao', label: '🛒 Alimentação' },
+                        { id: 'conectividade', label: '📶 Internet/Cel' },
+                        { id: 'saude', label: '💊 Saúde' },
+                        { id: 'outros', label: 'Outros' },
+                      ].map(cat => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setHouseholdCategoryFilter(cat.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            householdCategoryFilter === cat.id
+                              ? 'bg-blue-600 text-white font-black'
+                              : `${surfaceSubtle} ${mutedText} hover:text-current`
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Grid das Contas Cadastradas */}
+                  {(() => {
+                    const filteredList = financialIntelligence.rawHouseholdExpenses.filter(item => {
+                      if (householdCategoryFilter === 'all') return true;
+                      return item.category === householdCategoryFilter;
+                    });
+
+                    if (filteredList.length === 0) {
+                      return (
+                        <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
+                          <span className="text-3xl">🏠</span>
+                          <p className={`text-xs ${mutedText}`}>
+                            Nenhuma despesa encontrada nesta categoria.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={openNewHouseholdExpenseModal}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-blue-600 text-white cursor-pointer"
+                          >
+                            + Cadastrar Nova Conta
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    const today = new Date();
+                    const currentDay = today.getDate();
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                        {filteredList.map(item => {
+                          const dueDay = Number(item.dueDay) || 10;
+                          const daysUntilDue = dueDay - currentDay;
+                          const isNearDue = daysUntilDue >= 0 && daysUntilDue <= 4;
+                          const isToday = daysUntilDue === 0;
+                          const isPastDue = daysUntilDue < 0 && daysUntilDue >= -5;
+                          const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+
+                          const categoryColors: Record<string, { label: string; badge: string }> = {
+                            moradia: { label: 'Moradia', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+                            utilidades: { label: 'Utilidades', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                            alimentacao: { label: 'Alimentação', badge: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+                            conectividade: { label: 'Conectividade', badge: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
+                            saude: { label: 'Saúde', badge: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
+                            outros: { label: 'Outros', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
+                          };
+                          const catMeta = categoryColors[item.category] || categoryColors.outros;
+
+                          return (
+                            <div
+                              key={item.id}
+                              className={`rounded-2xl p-4 border transition-all ${
+                                !item.isActive
+                                  ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  : isDark
+                                  ? 'bg-slate-900/60 border-slate-800 hover:border-blue-500/40'
+                                  : 'bg-slate-50 border-slate-200 hover:border-blue-400'
+                              } flex flex-col justify-between gap-3 shadow-xs`}
+                            >
+                              <div>
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                      {item.icon || '🏠'}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <h4 className="text-sm font-black truncate leading-tight">
+                                        {item.name}
+                                      </h4>
+                                      <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border mt-0.5 ${catMeta.badge}`}>
+                                        {catMeta.label}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Toggle Ativar / Desativar */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleHouseholdExpense(item.id)}
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                                      item.isActive
+                                        ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                    title={item.isActive ? 'Clique para desativar esta conta' : 'Clique para ativar esta conta'}
+                                  >
+                                    {item.isActive ? 'Ativa' : 'Inativa'}
+                                  </button>
+                                </div>
+
+                                {/* Valores Mensal e Diário */}
+                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between">
+                                  <div>
+                                    <span className={`text-[10px] font-bold block ${mutedText}`}>
+                                      Valor Mensal
+                                    </span>
+                                    <span className="text-lg font-black text-blue-400 tabular-nums">
+                                      {fmtCurrencyExact(item.monthlyAmount)}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className={`text-[10px] font-bold block ${mutedText}`}>
+                                      Rateio Diário
+                                    </span>
+                                    <span className="text-xs font-extrabold text-sky-400 tabular-nums">
+                                      {fmtCurrencyExact(dailyShare)}/dia
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Status de Vencimento */}
+                                <div className="mt-2">
+                                  <span
+                                    className={`text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
+                                      isToday
+                                        ? 'bg-rose-500/25 text-rose-300 animate-pulse'
+                                        : isNearDue
+                                        ? 'bg-amber-500/20 text-amber-300'
+                                        : isPastDue
+                                        ? 'bg-purple-500/20 text-purple-300'
+                                        : `${surfaceSubtle} ${mutedText}`
+                                    }`}
+                                  >
+                                    <Calendar className="w-3 h-3" />
+                                    <span>
+                                      {isToday
+                                        ? '🚨 Vence Hoje (dia ' + dueDay + ')!'
+                                        : isNearDue
+                                        ? `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`
+                                        : `Vencimento: todo dia ${dueDay}`}
+                                    </span>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Ações: Editar e Excluir */}
+                              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditHouseholdExpenseModal(item)}
+                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-blue-500 text-blue-400 cursor-pointer flex items-center gap-1`}
+                                  title="Editar esta conta"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Editar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`Deseja remover a conta "${item.name}" das suas despesas domésticas?`)) {
+                                      deleteHouseholdExpense(item.id);
+                                    }
+                                  }}
+                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
+                                  title="Excluir esta conta"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Excluir</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* CALENDÁRIO VISUAL DE VENCIMENTOS DO MÊS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <CalendarDays className="w-5 h-5 text-blue-400" />
+                    <div>
+                      <h3 className="text-sm sm:text-base font-black">
+                        Cronograma Mensal de Vencimentos das Contas
+                      </h3>
+                      <p className={`text-xs ${mutedText}`}>
+                        Acompanhe quando cada conta vence no mês para organizar os saques dos aplicativos e pagar sem juros
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 mt-3">
+                    {(() => {
+                      const activeSorted = [...financialIntelligence.activeHouseholdExpenses].sort(
+                        (a, b) => (Number(a.dueDay) || 10) - (Number(b.dueDay) || 10)
+                      );
+
+                      return activeSorted.map(item => (
+                        <div
+                          key={'timeline_' + item.id}
+                          className={`p-2.5 rounded-xl border text-center flex flex-col justify-between gap-1 ${
+                            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <div className="text-[10px] font-black uppercase text-blue-400 tracking-wider">
+                            Dia {item.dueDay || 10}
+                          </div>
+                          <span className="text-xl">{item.icon || '🏠'}</span>
+                          <span className="text-xs font-black truncate">{item.name}</span>
+                          <span className="text-xs font-bold text-slate-300 tabular-nums">
+                            {fmtCurrencyExact(item.monthlyAmount)}
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {billingSubTab === 'planejamento' && (
               <>
                 {/* BASE DO CÁLCULO FINANCEIRO OPERACIONAL (COMPLETO, TRANSPARENTE E SEM ABA DE SIMULAÇÃO) */}
@@ -7250,22 +7926,26 @@ export default function App() {
                     </div>
 
                     <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
-                      <div className={`text-[10px] font-bold ${mutedText}`}>⚙️ Custo Operacional Total/KM</div>
-                      <div className="text-sm sm:text-base font-black text-sky-400 tabular-nums mt-0.5">
-                        R$ {(financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm).toFixed(2)}/km
+                      <div className={`text-[10px] font-bold ${mutedText}`}>🏠 Despesas da Casa / Dia</div>
+                      <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-0.5">
+                        {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                        Gasolina + Desgaste por km rodado
+                        {financialIntelligence.housePctOfGross}% do faturamento · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
                       </div>
                     </div>
 
-                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
-                      <div className={`text-[10px] font-bold ${mutedText}`}>⚖️ Ponto de Equilíbrio (Break-Even)</div>
-                      <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-0.5">
-                        {fmtCurrencyExact(financialIntelligence.dailyFuelCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyFoodCost + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)}/dia
+                    <div className={`rounded-xl p-3 border ${
+                      isDark ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                    }`}>
+                      <div className={`text-[10px] font-black text-amber-400 uppercase tracking-wider`}>
+                        ⚖️ Ponto de Sobrevivência
+                      </div>
+                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-0.5">
+                        {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                        Mínimo a faturar p/ cobrir custos do dia
+                        Mínimo p/ Moto ({fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}) + Casa ({fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)})
                       </div>
                     </div>
                   </div>
@@ -7288,36 +7968,36 @@ export default function App() {
                         isDark ? 'bg-slate-900/80 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
                       }`}>
                         <div className="font-black text-[#FF6A1A] mb-1.5 text-sm">
-                          📐 A Matemática Real do Bolso do Motoboy
+                          📐 A Matemática Real do Bolso do Motoboy (Três Caixinhas)
                         </div>
                         <p className="mb-2">
-                          Muitos entregadores acham que faturar <strong>R$ 200/dia</strong> significa ter <strong>R$ 200 no bolso</strong>. Mas na realidade, o dinheiro precisa ser blindado antes que uma quebra ou imposto surpreenda você.
+                          Muitos entregadores acham que faturar <strong>R$ 200/dia</strong> significa ter <strong>R$ 200 no bolso</strong>. Mas na realidade, o dinheiro precisa ser blindado em 3 caixinhas (Moto, Casa e Emergência) antes de gastar o lucro livre.
                         </p>
-                        <div className="p-3 rounded-xl bg-black/30 border border-slate-800/80 font-mono text-[11px] mb-2 space-y-1">
-                          <div className="text-[#FF6A1A] font-black">
+                        <div className="p-3 rounded-xl bg-black/30 border border-slate-800/80 font-mono text-[11px] mb-2 space-y-1.5">
+                          <div className="text-[#FF6A1A] font-black text-xs">
                             Faturamento Bruto ({fmtCurrencyExact(financialIntelligence.dailyGross)})
                           </div>
                           <div className="text-rose-400">
-                            - Combustível do Dia: {fmtCurrencyExact(financialIntelligence.dailyFuelCost)} ({financialIntelligence.fuelPctOfGross}%)
+                            - 🏍️ Custos Operacionais da Moto: {fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)} ({financialIntelligence.bikePctOfGross}%)
+                            <span className="text-[10px] block pl-3 text-rose-300/80">
+                              (Gasolina {fmtCurrencyExact(financialIntelligence.dailyFuelCost)} + Manutenção {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)} + Alimentação {fmtCurrencyExact(financialIntelligence.dailyFoodCost)} + Docs {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)})
+                            </span>
                           </div>
-                          <div className="text-amber-400">
-                            - Reserva Manutenção da Moto: {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)} ({financialIntelligence.maintPctOfGross}%)
-                          </div>
-                          <div className="text-orange-400">
-                            - Alimentação na Rua: {fmtCurrencyExact(financialIntelligence.dailyFoodCost)} ({financialIntelligence.foodPctOfGross}%)
-                          </div>
-                          <div className="text-sky-400">
-                            - Provisão Documentos & IPVA: {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)} ({financialIntelligence.docsPctOfGross}%)
+                          <div className="text-blue-400">
+                            - 🏠 Despesas da Casa & Família: {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)} ({financialIntelligence.housePctOfGross}%)
+                            <span className="text-[10px] block pl-3 text-blue-300/80">
+                              (Aluguel, Luz, Água, Mercado, Internet · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês rateados)
+                            </span>
                           </div>
                           <div className="text-purple-400">
-                            - Reserva de Emergência: {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)} ({financialIntelligence.emergencyPct}%)
+                            - 🛡️ Reserva de Emergência: {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)} ({financialIntelligence.emergencyPct}%)
                           </div>
-                          <div className="pt-1.5 border-t border-slate-700 text-emerald-400 font-black text-xs">
-                            = Lucro Líquido Real Limpo: {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} ({financialIntelligence.netMarginPct}% livre)
+                          <div className="pt-2 border-t border-slate-700 text-emerald-400 font-black text-xs">
+                            = 💵 Lucro Líquido Real 100% Limpo: {fmtCurrencyExact(financialIntelligence.dailyNetProfit)} ({financialIntelligence.netMarginPct}% livre no bolso)
                           </div>
                         </div>
                         <p className="text-[11px]">
-                          💡 Este valor líquido de <strong>{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong> é o que realmente é seu para pagar as despesas de casa, mercado e lazer sem se endividar!
+                          💡 Este valor líquido de <strong>{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong> é o seu dinheiro 100% LIMPO e desimpedido para levar para casa, fazer poupança ou lazer, já com o aluguel, a comida de casa, a gasolina e a manutenção da moto pagos!
                         </p>
                       </div>
                     )}
@@ -7388,6 +8068,21 @@ export default function App() {
                       tip: 'Pagar o IPVA à vista em cota única garante desconto de até 3% a 5% em diversos estados.',
                     },
                     {
+                      id: 'household',
+                      name: 'Despesas da Casa & Custo de Vida',
+                      shortName: 'Casa & Família',
+                      icon: '🏠',
+                      color: '#3b82f6',
+                      colorClass: 'text-blue-400',
+                      bgClass: 'bg-blue-500/15 border-blue-500/40 text-blue-400',
+                      amount: financialIntelligence.dailyHouseholdReserve,
+                      monthly: financialIntelligence.monthlyHouseholdCost,
+                      pct: Math.max(1, financialIntelligence.housePctOfGross),
+                      desc: 'Rateio diário das contas da sua residência: aluguel, energia elétrica, água, compras de supermercado, internet e botijão de gás.',
+                      formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)} rateado por ${financialIntelligence.workDaysPerMonth} dias de trabalho = ${fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia`,
+                      tip: 'Separar o rateio do aluguel e da luz todo dia evita desespero ou atrasos com juros no final do mês.',
+                    },
+                    {
                       id: 'emergency',
                       name: 'Reserva de Emergência',
                       shortName: 'Emergência',
@@ -7413,8 +8108,8 @@ export default function App() {
                       amount: financialIntelligence.dailyNetProfit,
                       monthly: financialIntelligence.monthlyNetProfit,
                       pct: Math.max(0, financialIntelligence.netMarginPct),
-                      desc: 'O dinheiro 100% LIMPO que sobra no seu bolso para levar para casa, pagar despesas da família e realizar seus sonhos.',
-                      formulaInfo: `Bruto (${fmtCurrencyExact(financialIntelligence.dailyGross)}) - Total de Custos e Reservas (${fmtCurrencyExact(financialIntelligence.dailyFuelCost + financialIntelligence.dailyMaintReserve + financialIntelligence.dailyFoodCost + financialIntelligence.dailyDocsReserve + financialIntelligence.dailyEmergencyReserve)})`,
+                      desc: 'O dinheiro 100% LIMPO que sobra no seu bolso depois de pagar a operação da moto, quitar o aluguel e contas de casa e blindar a emergência!',
+                      formulaInfo: `Bruto (${fmtCurrencyExact(financialIntelligence.dailyGross)}) - Moto (${fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}) - Casa (${fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}) - Emergência (${fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)})`,
                       tip: 'Separe a conta do trabalho da conta de casa. Nunca gaste reservas de manutenção com compras pessoais do dia a dia.',
                     },
                   ];
@@ -11466,6 +12161,7 @@ export default function App() {
         fuelConfig={dbState.fuelConfig}
         maintenanceItems={dbState.maintenanceItems}
         financialPlan={finPlan}
+        householdMonthlyCost={financialIntelligence.monthlyHouseholdCost}
         currentDailyGoal={dbState.dailyGoal}
         onApplyDailyGoal={(newDailyGoal) => {
           persistAndEnqueueWorkManager({
@@ -11806,6 +12502,172 @@ export default function App() {
                 >
                   <Check className="w-4 h-4 stroke-[2.5]" />
                   <span>Salvar Dados da Moto</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA (CENTRALIZADO, MODERNO) */}
+      {showHouseholdModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => setShowHouseholdModal(false)}
+        >
+          <div
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-blue-500/15 border border-blue-500/40 flex items-center justify-center text-blue-400 text-xl shrink-0">
+                  {householdDraft.icon || '🏠'}
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-400">
+                    Custo de Vida & Família
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    {editingHouseholdItem ? 'Editar Despesa da Casa' : 'Nova Despesa da Casa'}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHouseholdModal(false)}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-4">
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Nome da Conta / Despesa
+                </label>
+                <input
+                  type="text"
+                  value={householdDraft.name}
+                  onChange={e => setHouseholdDraft({ ...householdDraft, name: e.target.value })}
+                  placeholder="Ex: Aluguel, Supermercado, Luz, Internet..."
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Valor Mensal (R$)
+                  </label>
+                  <FreeNumberInput
+                    step="10"
+                    value={householdDraft.monthlyAmount}
+                    onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                    Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                  </span>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Dia do Vencimento no Mês
+                  </label>
+                  <FreeNumberInput
+                    step="1"
+                    value={householdDraft.dueDay || 10}
+                    onValueChange={val => setHouseholdDraft({ ...householdDraft, dueDay: Math.max(1, Math.min(31, val)) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                    Dia do mês em que a conta vence (1 a 31)
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Categoria
+                  </label>
+                  <select
+                    value={householdDraft.category}
+                    onChange={e => setHouseholdDraft({ ...householdDraft, category: e.target.value as any })}
+                    className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                  >
+                    <option value="moradia">🏠 Moradia (Aluguel, Condomínio)</option>
+                    <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
+                    <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
+                    <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
+                    <option value="saude">💊 Saúde (Farmácia, Plano)</option>
+                    <option value="outros">📄 Outros Compromissos</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Ícone Representativo
+                  </label>
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                    {['🏠', '🛒', '⚡', '💧', '📶', '🔥', '💊', '💳', '🎓', '🛡️', '📄', '📺'].map(ic => (
+                      <button
+                        key={ic}
+                        type="button"
+                        onClick={() => setHouseholdDraft({ ...householdDraft, icon: ic })}
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg cursor-pointer border transition-all ${
+                          householdDraft.icon === ic
+                            ? 'bg-blue-600 border-blue-400 text-white scale-110'
+                            : `${surfaceSubtle} hover:border-slate-600`
+                        }`}
+                      >
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div>
+                  <span className={`text-[10px] block font-bold ${mutedText}`}>Status da Conta</span>
+                  <span className={`text-xs font-black ${householdDraft.isActive ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {householdDraft.isActive ? '✓ Ativa no cálculo das reservas' : 'Inativa (Não afeta o rateio)'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHouseholdDraft({ ...householdDraft, isActive: !householdDraft.isActive })}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-colors ${
+                    householdDraft.isActive
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {householdDraft.isActive ? 'Ativa' : 'Desativada'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+                <button
+                  type="button"
+                  onClick={() => setShowHouseholdModal(false)}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={saveHouseholdExpense}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-blue-600 text-white hover:bg-blue-500 transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Salvar Conta da Casa</span>
                 </button>
               </div>
             </div>

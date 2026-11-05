@@ -23,6 +23,7 @@ interface MetaReversaModalProps {
   fuelConfig: FuelDiagnosticsConfig;
   maintenanceItems: MaintenanceItem[];
   financialPlan: FinancialPlanningConfig;
+  householdMonthlyCost?: number;
   currentDailyGoal: number;
   onApplyDailyGoal: (newDailyGoal: number) => void;
   isDark: boolean;
@@ -34,6 +35,7 @@ export function MetaReversaModal({
   fuelConfig,
   maintenanceItems,
   financialPlan,
+  householdMonthlyCost = 0,
   currentDailyGoal,
   onApplyDailyGoal,
   isDark,
@@ -42,6 +44,7 @@ export function MetaReversaModal({
   const [diasMes, setDiasMes] = useState<number>(financialPlan.workDaysPerMonth || 24);
   const [horasDia, setHorasDia] = useState<number>(8);
   const [kmMedioDia, setKmMedioDia] = useState<number>(100);
+  const [includeHousehold, setIncludeHousehold] = useState<boolean>(true);
 
   // Calculations for reverse financial engineering
   const results = useMemo(() => {
@@ -80,8 +83,13 @@ export function MetaReversaModal({
     const totalAnnualDocsWithMei = annualDocs + monthlyMei * 12;
     const dailyDocsCost = totalAnnualDocsWithMei / Math.max(12, days * 12);
 
+    // Household cost per day
+    const dailyHouseholdCost = includeHousehold
+      ? Math.max(0, Number(householdMonthlyCost) || 0) / days
+      : 0;
+
     // Non-emergency base gross
-    const fixedCostsDaily = dailyFuelCost + dailyMaintCost + dailyFood + dailyDocsCost;
+    const fixedCostsDaily = dailyFuelCost + dailyMaintCost + dailyFood + dailyDocsCost + dailyHouseholdCost;
     const emergencyPct = Math.min(30, Math.max(0, Number(financialPlan.emergencyReservePct || 10))) / 100;
 
     // (Gross * (1 - emergencyPct)) = netTargetDaily + fixedCostsDaily
@@ -102,13 +110,14 @@ export function MetaReversaModal({
       dailyMaintCost,
       dailyFood,
       dailyDocsCost,
+      dailyHouseholdCost,
       dailyEmergencyCost,
       neededDailyGross,
       neededMonthlyGross,
       neededPerHour,
       fixedCostsDaily,
     };
-  }, [desejadoMensal, diasMes, horasDia, kmMedioDia, fuelConfig, maintenanceItems, financialPlan]);
+  }, [desejadoMensal, diasMes, horasDia, kmMedioDia, fuelConfig, maintenanceItems, financialPlan, householdMonthlyCost, includeHousehold]);
 
   if (!isOpen) return null;
 
@@ -243,9 +252,24 @@ export function MetaReversaModal({
 
         {/* Transparent Cost Breakdown */}
         <div className="mt-3">
-          <span className={`block text-[11px] font-bold uppercase mb-2 ${mutedText}`}>
-            Divisão Diária: Onde vai o faturamento de R$ {results.neededDailyGross}?
-          </span>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className={`block text-[11px] font-bold uppercase ${mutedText}`}>
+              Divisão Diária: Onde vai o faturamento de R$ {results.neededDailyGross}?
+            </span>
+            {householdMonthlyCost > 0 && (
+              <button
+                type="button"
+                onClick={() => setIncludeHousehold(!includeHousehold)}
+                className={`text-[10px] font-black px-2 py-0.5 rounded-lg border transition-colors cursor-pointer ${
+                  includeHousehold
+                    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                {includeHousehold ? '✓ Contas Casa Inclusas' : '+ Incluir Contas Casa'}
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold">
@@ -286,6 +310,18 @@ export function MetaReversaModal({
                 R$ {results.dailyDocsCost.toFixed(2)}
               </span>
             </div>
+
+            {includeHousehold && results.dailyHouseholdCost > 0 && (
+              <div className={`p-2.5 rounded-xl border border-blue-500/30 ${isDark ? 'bg-blue-500/10' : 'bg-blue-50'}`}>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
+                  <span>🏠</span>
+                  <span>Contas da Casa</span>
+                </div>
+                <span className="text-xs sm:text-sm font-black tabular-nums block mt-1 text-blue-400">
+                  R$ {results.dailyHouseholdCost.toFixed(2)}
+                </span>
+              </div>
+            )}
 
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold">
