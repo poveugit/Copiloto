@@ -4509,7 +4509,7 @@ export default function App() {
               </div>
 
               {/* Grid dos Cards de Reserva em Destaque */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
                 {/* 1. Reserva Alimentação na Rua */}
                 <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
@@ -4579,7 +4579,30 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 4. Total a Reservar por Dia */}
+                {/* 4. Reserva de Emergência */}
+                <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1.5 text-purple-400 font-black">
+                      <span>🛡️</span>
+                      <span>Reserva de Emergência</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
+                      {financialIntelligence.emergencyPct}% do dia
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-purple-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/ dia</span>
+                  </div>
+                  <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês acumulado
+                  </div>
+                  <div className={`text-[11px] mt-1 ${mutedText}`}>
+                    Imprevistos, dias parados ou saúde
+                  </div>
+                </div>
+
+                {/* 5. Total a Reservar por Dia */}
                 <div className="rounded-2xl p-3.5 sm:p-4 border-2 border-emerald-500/40 bg-emerald-500/10">
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
                     <span className="flex items-center gap-1.5 text-emerald-400 font-black">
@@ -6337,7 +6360,8 @@ export default function App() {
             </div>
 
             {/* 100% EDITABLE FUEL & DIAGNOSTICS CARD */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} ${isEditingFuelCard ? 'ring-2 ring-[#FF6A1A]' : ''}`}>
+            {/* 100% EDITABLE FUEL & DIAGNOSTICS CARD */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 sm:pb-5 border-b border-slate-800/50">
                 <div className="flex items-center gap-3">
                   <Fuel className="w-5 h-5 sm:w-6 sm:h-6 text-[#FF6A1A] shrink-0" />
@@ -6352,147 +6376,78 @@ export default function App() {
                   </div>
                 </div>
 
-                {!isEditingFuelCard ? (
-                  <button
-                    onClick={startEditFuelCard}
-                    className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[40px] sm:min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] self-start sm:self-auto`}
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Editar Combustível</span>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-2 self-start sm:self-auto">
-                    <button
-                      onClick={() => setIsEditingFuelCard(false)}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      onClick={saveFuelCardEdit}
-                      className="px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Check className="w-4 h-4 stroke-[2.5]" />
-                      <span>Salvar Parâmetros</span>
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={startEditFuelCard}
+                  className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[40px] sm:min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] self-start sm:self-auto`}
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Editar Dados da Moto</span>
+                </button>
               </div>
 
-              {isEditingFuelCard ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mt-4 sm:mt-5">
-                  <div className="lg:col-span-1">
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Modelo da Moto</label>
-                    <input
-                      type="text"
-                      value={fuelDraft.bikeModelName}
-                      onChange={e => setFuelDraft({ ...fuelDraft, bikeModelName: e.target.value })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Média da Moto (km/L)</label>
-                    <FreeNumberInput
-                      step="0.5"
-                      value={fuelDraft.kmPerLiter}
-                      onValueChange={val => setFuelDraft({ ...fuelDraft, kmPerLiter: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço Gasolina (R$/L)</label>
-                    <FreeNumberInput
-                      step="0.05"
-                      value={fuelDraft.fuelPrice}
-                      onValueChange={val => setFuelDraft({ ...fuelDraft, fuelPrice: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Tanque (Litros)</label>
-                    <FreeNumberInput
-                      step="0.5"
-                      value={fuelDraft.tankCapacityLiters}
-                      onValueChange={val => setFuelDraft({ ...fuelDraft, tankCapacityLiters: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Odômetro Base Inicial (KM)</label>
-                    <FreeNumberInput
-                      step="10"
-                      value={fuelDraft.odometerBaseKm}
-                      onValueChange={val => setFuelDraft({ ...fuelDraft, odometerBaseKm: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4 mt-4 sm:mt-5">
+                <div
+                  onClick={startEditFuelCard}
+                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                >
+                  <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Consumo Total</div>
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums truncate">
+                    {(totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)).toLocaleString('pt-BR', {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}{' '}
+                    L
                   </div>
                 </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4 mt-4 sm:mt-5">
-                    <div
-                      onClick={startEditFuelCard}
-                      className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
-                    >
-                      <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Consumo Total</div>
-                      <div className="text-base sm:text-xl font-black mt-1 tabular-nums truncate">
-                        {(totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)).toLocaleString('pt-BR', {
-                          minimumFractionDigits: 1,
-                          maximumFractionDigits: 1,
-                        })}{' '}
-                        L
-                      </div>
-                    </div>
-                    <div
-                      onClick={startEditFuelCard}
-                      className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
-                    >
-                      <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Gasto Estimado</div>
-                      <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-[#FF6A1A] truncate">
-                        {fmtCurrencyExact(
-                          (totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)) *
-                            (dbState.fuelConfig.fuelPrice || 5.8)
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      onClick={startEditFuelCard}
-                      className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
-                    >
-                      <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Custo / KM</div>
-                      <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-emerald-400 truncate">
-                        R$ {bikeDiagnostics.costPerKm.toFixed(2)}/km
-                      </div>
-                    </div>
-                    <div
-                      onClick={startEditFuelCard}
-                      className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
-                    >
-                      <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Média & Preço</div>
-                      <div className="text-xs sm:text-base font-black mt-1 tabular-nums truncate">
-                        {dbState.fuelConfig.kmPerLiter} km/L · R$ {dbState.fuelConfig.fuelPrice.toFixed(2)}
-                      </div>
-                    </div>
-                    <div
-                      onClick={startEditFuelCard}
-                      className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50 col-span-2 sm:col-span-1`}
-                    >
-                      <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Autonomia / Tanque</div>
-                      <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-sky-400 truncate">
-                        ~{bikeDiagnostics.autonomyKm} km
-                      </div>
-                    </div>
+                <div
+                  onClick={startEditFuelCard}
+                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                >
+                  <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Gasto Estimado</div>
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-[#FF6A1A] truncate">
+                    {fmtCurrencyExact(
+                      (totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)) *
+                        (dbState.fuelConfig.fuelPrice || 5.8)
+                    )}
                   </div>
+                </div>
+                <div
+                  onClick={startEditFuelCard}
+                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                >
+                  <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Custo / KM</div>
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-emerald-400 truncate">
+                    R$ {bikeDiagnostics.costPerKm.toFixed(2)}/km
+                  </div>
+                </div>
+                <div
+                  onClick={startEditFuelCard}
+                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                >
+                  <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Média & Preço</div>
+                  <div className="text-xs sm:text-base font-black mt-1 tabular-nums truncate">
+                    {dbState.fuelConfig.kmPerLiter} km/L · R$ {dbState.fuelConfig.fuelPrice.toFixed(2)}
+                  </div>
+                </div>
+                <div
+                  onClick={startEditFuelCard}
+                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50 col-span-2 sm:col-span-1`}
+                >
+                  <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Autonomia / Tanque</div>
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-sky-400 truncate">
+                    ~{bikeDiagnostics.autonomyKm} km
+                  </div>
+                </div>
+              </div>
 
-                  <div className="mt-4 sm:mt-5 flex flex-col gap-2">
-                    {bikeDiagnostics.tips.map((tip, idx) => (
-                      <div key={idx} className={`rounded-xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium leading-relaxed ${surfaceSubtle}`}>
-                        {tip}
-                      </div>
-                    ))}
+              <div className="mt-4 sm:mt-5 flex flex-col gap-2">
+                {bikeDiagnostics.tips.map((tip, idx) => (
+                  <div key={idx} className={`rounded-xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium leading-relaxed ${surfaceSubtle}`}>
+                    {tip}
                   </div>
-                </>
-              )}
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -11706,6 +11661,151 @@ export default function App() {
                       ? 'Conectando ao GPS...'
                       : 'Ativar Localização GPS Agora'}
                   </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE EDIÇÃO DOS DADOS DA MOTO (CENTRALIZADO, ABRE DIRETO NA TELA SEM PRECISAR ROLAR) */}
+      {isEditingFuelCard && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => setIsEditingFuelCard(false)}
+        >
+          <div
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                  <SlidersHorizontal className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A]">
+                    Configuração da Moto
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    Dados da Moto & Combustível
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditingFuelCard(false)}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-4">
+              <p className={`text-xs sm:text-sm leading-relaxed ${mutedText}`}>
+                Personalize os dados da sua moto. Esses valores são usados no cálculo de combustível, autonomia, custo por KM e desgaste mecânico.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="sm:col-span-2">
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Modelo da Moto (Nome / Cilindrada)
+                  </label>
+                  <input
+                    type="text"
+                    value={fuelDraft.bikeModelName}
+                    onChange={e => setFuelDraft({ ...fuelDraft, bikeModelName: e.target.value })}
+                    placeholder="Ex: Honda CG 160 Fan, Yamaha Fazer 250..."
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Consumo Médio (KM / Litro)
+                  </label>
+                  <FreeNumberInput
+                    step="0.5"
+                    value={fuelDraft.kmPerLiter}
+                    onValueChange={val => setFuelDraft({ ...fuelDraft, kmPerLiter: Math.max(1, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>Ex: 35 ou 40 km/L</span>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Preço da Gasolina (R$ / Litro)
+                  </label>
+                  <FreeNumberInput
+                    step="0.05"
+                    value={fuelDraft.fuelPrice}
+                    onValueChange={val => setFuelDraft({ ...fuelDraft, fuelPrice: Math.max(0.1, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>Preço pago na bomba</span>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Capacidade do Tanque (Litros)
+                  </label>
+                  <FreeNumberInput
+                    step="0.5"
+                    value={fuelDraft.tankCapacityLiters}
+                    onValueChange={val => setFuelDraft({ ...fuelDraft, tankCapacityLiters: Math.max(1, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>Capacidade total com reserva</span>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Odômetro Base Inicial (KM)
+                  </label>
+                  <FreeNumberInput
+                    step="10"
+                    value={fuelDraft.odometerBaseKm}
+                    onValueChange={val => setFuelDraft({ ...fuelDraft, odometerBaseKm: Math.max(0, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>KM da moto antes de usar o app</span>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div>
+                  <span className={`text-[10px] block font-bold ${mutedText}`}>Custo Estimado / KM</span>
+                  <span className="text-sm font-black text-rose-400 tabular-nums">
+                    R$ {(Math.max(0.1, Number(fuelDraft.fuelPrice) || 5.8) / Math.max(1, Number(fuelDraft.kmPerLiter) || 35)).toFixed(2)}/km
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className={`text-[10px] block font-bold ${mutedText}`}>Autonomia c/ Tanque Cheio</span>
+                  <span className="text-sm font-black text-sky-400 tabular-nums">
+                    ~{Math.round(Math.max(1, Number(fuelDraft.kmPerLiter) || 35) * Math.max(1, Number(fuelDraft.tankCapacityLiters) || 16.1))} km
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingFuelCard(false)}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={saveFuelCardEdit}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/25"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Salvar Dados da Moto</span>
                 </button>
               </div>
             </div>
