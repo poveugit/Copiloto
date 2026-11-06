@@ -829,6 +829,7 @@ export default function App() {
   const [showKotlinInspector, setShowKotlinInspector] = useState<boolean>(false);
   const [selectedKotlinFileIndex, setSelectedKotlinFileIndex] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [showReserveBreakdown, setShowReserveBreakdown] = useState<boolean>(false);
 
   // ================= AUTHENTICATION (LOGIN, CADASTRO, REDEFINIR SENHA & LEMBRAR DADOS) STATE =================
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getActiveSessionUser());
@@ -5871,10 +5872,80 @@ export default function App() {
                             style={{ width: `${reserveProgress}%` }}
                           />
                         </div>
-                        <div className={`flex justify-between text-[10px] font-bold mt-1.5 tabular-nums ${mutedText}`}>
+                        <div className={`flex items-center justify-between text-[10px] font-bold mt-1.5 tabular-nums ${mutedText}`}>
                           <span>Saldo: {fmtMoney(Math.max(0, curBalance))}</span>
-                          <span>Meta Reservas: {fmtMoney(monthlyObligations)}</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowReserveBreakdown(prev => !prev)}
+                            className="text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1 font-black"
+                            title="Ver detalhes de como esta meta de reservas foi calculada"
+                          >
+                            <span>Meta Reservas: {fmtMoney(monthlyObligations)}</span>
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-[#FF6A1A]/15 text-[#FF6A1A]">
+                              {showReserveBreakdown ? '▲ fechar' : '▼ de onde vem?'}
+                            </span>
+                          </button>
                         </div>
+
+                        {/* Breakdown Explicativo das 3 Caixinhas de Blindagem */}
+                        {showReserveBreakdown && (
+                          <div className={`mt-2.5 pt-2 border-t border-slate-700/40 text-[10px] space-y-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                            <div className="font-black text-[#FF6A1A] flex items-center justify-between">
+                              <span>Composição da Meta de Blindagem do Mês:</span>
+                              <span className="text-[9px] font-normal text-slate-400">3 Caixinhas</span>
+                            </div>
+                            <div className="flex justify-between items-center py-0.5">
+                              <span className="flex items-center gap-1">
+                                <span>🏍️</span>
+                                <span>Moto & Operação:</span>
+                              </span>
+                              <span className="font-extrabold text-orange-400 tabular-nums">
+                                {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}
+                              </span>
+                            </div>
+                            <div className="text-[9px] text-slate-400 pl-4 pb-0.5">
+                              Peças ({fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}) + Gasolina ({fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}) + IPVA/Docs ({fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}) + Marmita ({fmtCurrencyExact(financialIntelligence.monthlyFoodCost)})
+                            </div>
+
+                            <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40">
+                              <span className="flex items-center gap-1">
+                                <span>🏠</span>
+                                <span>Despesas da Casa & Família:</span>
+                              </span>
+                              <span className="font-extrabold text-blue-400 tabular-nums">
+                                {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}
+                              </span>
+                            </div>
+                            <div className="text-[9px] text-slate-400 pl-4 pb-0.5">
+                              Aluguel, Luz, Água, Mercado, Internet e Gás
+                            </div>
+
+                            <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40">
+                              <span className="flex items-center gap-1">
+                                <span>🛡️</span>
+                                <span>Reserva de Emergência ({financialIntelligence.emergencyPct}%):</span>
+                              </span>
+                              <span className="font-extrabold text-purple-400 tabular-nums">
+                                {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}
+                              </span>
+                            </div>
+
+                            <div className="pt-1.5 border-t border-slate-700/60 flex justify-between items-center font-black text-xs text-[#FF6A1A]">
+                              <span>= Meta Total para o Mês:</span>
+                              <span className="tabular-nums">{fmtCurrencyExact(monthlyObligations)}</span>
+                            </div>
+
+                            <div className="pt-1 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('billing')}
+                                className="text-[9px] text-[#FF6A1A] hover:underline font-bold cursor-pointer"
+                              >
+                                Personalizar contas na Central de Finanças ➔
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
