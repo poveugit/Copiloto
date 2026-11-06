@@ -8115,43 +8115,202 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* FAIXA DE RECONCILIAÇÃO FINANCEIRA: MOTO + CASA + LUCRO LIMPO */}
-                <div className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs ${
-                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-                }`}>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black uppercase tracking-wider text-blue-400 text-[11px] flex items-center gap-1">
-                      <span>🏠</span>
-                      <span>Provisão das Contas da Casa:</span>
-                    </span>
-                    <span className="font-extrabold text-blue-400 tabular-nums">
-                      {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
-                    </span>
-                    <span className={`text-[10px] ${mutedText}`}>
-                      ({financialIntelligence.activeHouseholdExpenses.length} contas ativas · {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia trabalhado)
-                    </span>
-                  </div>
+                {/* CARD DETALHADO DE RECONCILIAÇÃO FINANCEIRA: SALDO DO MÊS VS. PROVISÃO DA CASA E MOTO */}
+                {(() => {
+                  const houseMonthly = financialIntelligence.monthlyHouseholdCost;
+                  const bikeMonthly = financialIntelligence.monthlyBikeExpensesTotal;
+                  const curBal = selectedMonthFinancials.currentBalance;
+                  const netAfterHouse = curBal - houseMonthly;
+                  const isCovered = netAfterHouse >= 0;
+                  const missingForHouse = Math.max(0, houseMonthly - curBal);
+                  const houseCoveragePct = houseMonthly > 0
+                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, curBal) / houseMonthly) * 100)))
+                    : 100;
+                  const remainingWorkDays = Math.max(
+                    1,
+                    financialIntelligence.workDaysPerMonth - selectedMonthFinancials.activeDays
+                  );
+                  const dailyNeededToCoverHouse = missingForHouse > 0 ? missingForHouse / remainingWorkDays : 0;
 
-                  <div className="flex items-center gap-2.5 self-stretch md:self-auto justify-end flex-wrap">
-                    <span className={`text-[11px] font-bold ${mutedText}`}>
-                      Saldo 100% Livre (Após Moto + Casa):
-                    </span>
-                    <span className={`text-sm font-black tabular-nums ${
-                      selectedMonthFinancials.currentBalance - financialIntelligence.monthlyHouseholdCost >= 0
-                        ? 'text-emerald-400'
-                        : 'text-rose-400'
+                  return (
+                    <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border text-xs flex flex-col gap-3.5 shadow-xs ${
+                      isDark ? 'bg-slate-900/70 border-slate-800' : 'bg-slate-50 border-slate-200'
                     }`}>
-                      {fmtMoney(selectedMonthFinancials.currentBalance - financialIntelligence.monthlyHouseholdCost)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setBillingSubTab('despesas_casa')}
-                      className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/30 transition-colors cursor-pointer"
-                    >
-                      Ver Contas da Casa ↗
-                    </button>
-                  </div>
-                </div>
+                      {/* Topo do Card: Título, Status e Botões de Atalho */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-800/50">
+                        <div className="flex items-start sm:items-center gap-2.5 flex-wrap">
+                          <span className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center text-base shrink-0">
+                            🏠
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-blue-400">
+                                Provisão das Contas da Casa & Saldo 100% Livre
+                              </h3>
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                                isCovered
+                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                              }`}>
+                                {isCovered ? '✅ Contas da Casa Cobertas!' : `⏳ ${houseCoveragePct}% das Contas da Casa Coberto`}
+                              </span>
+                            </div>
+                            <p className={`text-[11px] mt-0.5 ${mutedText}`}>
+                              Mostra quanto sobra livre no seu bolso após descontar do seu <strong>Saldo Atual do Mês</strong> todas as contas fixas da sua residência.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 self-start sm:self-auto shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setBillingSubTab('despesas_casa')}
+                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/30 transition-colors cursor-pointer"
+                          >
+                            🏠 Editar Contas da Casa ↗
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBillingSubTab('despesas_moto')}
+                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 transition-colors cursor-pointer"
+                          >
+                            🏍️ Despesas da Moto ↗
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Grid da Equação Matemática Passo a Passo */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+                        {/* Bloco 1: Saldo Atual do Mês */}
+                        <div className={`rounded-xl p-3 border ${surfaceSubtle}`}>
+                          <div className={`text-[10px] font-bold uppercase ${mutedText}`}>
+                            1. Saldo Atual em {selectedMonthFinancials.formattedLabel}
+                          </div>
+                          <div className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
+                            curBal >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {fmtMoney(curBal)}
+                          </div>
+                          <div className={`text-[10px] mt-1 ${mutedText}`}>
+                            Ganhos ({fmtMoney(selectedMonthFinancials.totalRevenue)}) − Gastos lançados ({fmtMoney(selectedMonthFinancials.totalExpenses)})
+                          </div>
+                        </div>
+
+                        {/* Bloco 2: Provisão Mensal das Contas da Casa */}
+                        <div className={`rounded-xl p-3 border border-blue-500/25 bg-blue-500/5`}>
+                          <div className="text-[10px] font-bold uppercase text-blue-400 flex items-center justify-between">
+                            <span>2. (−) Provisão Contas da Casa</span>
+                            <span>{financialIntelligence.activeHouseholdExpenses.length} ativas</span>
+                          </div>
+                          <div className="text-base sm:text-lg font-black tabular-nums text-blue-400 mt-0.5">
+                            - {fmtCurrencyExact(houseMonthly)}
+                          </div>
+                          <div className={`text-[10px] mt-1 ${mutedText}`}>
+                            Rateio: {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia útil ({financialIntelligence.workDaysPerMonth} dias)
+                          </div>
+                        </div>
+
+                        {/* Bloco 3: Resultado = Saldo 100% Livre (Após Moto + Casa) */}
+                        <div className={`rounded-xl p-3 border ${
+                          isCovered
+                            ? 'bg-emerald-500/10 border-emerald-500/30'
+                            : 'bg-rose-500/10 border-rose-500/30'
+                        }`}>
+                          <div className={`text-[10px] font-black uppercase ${
+                            isCovered ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            3. (=) Saldo 100% Livre no Bolso
+                          </div>
+                          <div className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
+                            isCovered ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {fmtMoney(netAfterHouse)}
+                          </div>
+                          <div className={`text-[10px] mt-1 font-semibold ${
+                            isCovered ? 'text-emerald-300/90' : 'text-rose-300/90'
+                          }`}>
+                            {isCovered
+                              ? 'Dinheiro limpo após pagar todas as contas da casa!'
+                              : `Faltam ${fmtMoney(missingForHouse)} para cobrir as contas da casa`}
+                          </div>
+                        </div>
+
+                        {/* Bloco 4: Ritmo Necessário & Reserva da Moto */}
+                        <div className={`rounded-xl p-3 border ${surfaceSubtle}`}>
+                          <div className={`text-[10px] font-bold uppercase ${mutedText}`}>
+                            4. Meta p/ Quitar Casa no Mês
+                          </div>
+                          <div className="text-base sm:text-lg font-black tabular-nums text-[#FF6A1A] mt-0.5">
+                            {isCovered ? 'R$ 0,00/dia' : `${fmtCurrencyExact(dailyNeededToCoverHouse)}/dia`}
+                          </div>
+                          <div className={`text-[10px] mt-1 ${mutedText}`}>
+                            {isCovered
+                              ? 'Meta residencial concluída neste mês!'
+                              : `Nos próximos ~${remainingWorkDays} dias úteis (+ Moto: ${fmtCurrencyExact(financialIntelligence.dailyBikeExpensesReserve)}/dia)`}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Barra de Progresso da Cobertura das Contas da Casa */}
+                      <div>
+                        <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                          <span className={mutedText}>
+                            Progresso para cobrir o custo de vida da casa ({fmtMoney(Math.max(0, curBal))} de {fmtMoney(houseMonthly)})
+                          </span>
+                          <span className={isCovered ? 'text-emerald-400 font-black' : 'text-blue-400 font-black'}>
+                            {houseCoveragePct}%
+                          </span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              isCovered ? 'bg-emerald-400' : 'bg-gradient-to-r from-blue-500 to-sky-400'
+                            }`}
+                            style={{ width: `${houseCoveragePct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Lista Rápida das Contas da Casa que compõem a Provisão + Explicação do Valor */}
+                      <div className="pt-2 border-t border-slate-800/40 flex flex-col gap-2">
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
+                            Contas da Casa incluídas nesta provisão ({fmtCurrencyExact(houseMonthly)}/mês · + Reserva Moto {fmtCurrencyExact(bikeMonthly)}/mês):
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {financialIntelligence.activeHouseholdExpenses.map(item => (
+                            <button
+                              key={'pill_house_' + item.id}
+                              type="button"
+                              onClick={() => {
+                                setBillingSubTab('despesas_casa');
+                                openEditHouseholdExpenseModal(item);
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1.5 cursor-pointer transition-colors hover:border-blue-400 ${
+                                isDark ? 'bg-slate-800/70 border-slate-700/70 text-slate-200' : 'bg-white border-slate-200 text-slate-700'
+                              }`}
+                              title="Clique para editar o valor desta conta da casa"
+                            >
+                              <span>{item.icon || '🏠'}</span>
+                              <span>{item.name}:</span>
+                              <strong className="text-blue-400 tabular-nums">{fmtMoney(item.monthlyAmount)}</strong>
+                            </button>
+                          ))}
+                        </div>
+
+                        {!isCovered && (
+                          <div className={`p-2.5 rounded-xl border text-[11px] leading-relaxed ${
+                            isDark ? 'bg-amber-500/5 border-amber-500/20 text-amber-200/90' : 'bg-amber-50 border-amber-200 text-amber-900'
+                          }`}>
+                            💡 <strong>Por que o Saldo 100% Livre está em {fmtMoney(netAfterHouse)}?</strong> Porque o aplicativo já abate antecipadamente todas as suas contas fixas da casa do mês inteiro (<strong>{fmtMoney(houseMonthly)}</strong>) sobre o seu Saldo Atual acumulado até hoje (<strong>{fmtMoney(curBal)}</strong>). À medida que você lançar novas corridas ao longo do mês, esse valor negativo vai subindo até zerar e virar lucro positivo 100% livre!
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 4. CAMPO PRINCIPAL: TODOS OS GANHOS DO MÊS (LISTA COM FILTROS) */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
