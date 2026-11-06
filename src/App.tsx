@@ -96,6 +96,7 @@ import {
   FinancialPlanningConfig,
   DEFAULT_FINANCIAL_PLAN,
   HouseholdExpenseItem,
+  HouseholdCategory,
   DEFAULT_HOUSEHOLD_EXPENSES,
   AppDefinition,
   CategoryDefinition,
@@ -1029,9 +1030,26 @@ export default function App() {
     return combined.length > 0 ? combined : BASE_SHIFTS;
   }, [dbState.shiftOverrides, dbState.customShifts, dbState.deletedShiftIds]);
 
-  const allCategories = useMemo(() => {
+  const motoCategories = useMemo(() => {
     return [...BASE_EXPENSE_CATEGORIES, ...dbState.customCategories];
   }, [dbState.customCategories]);
+
+  const allCategories = useMemo(() => {
+    const list: CategoryDefinition[] = [...BASE_EXPENSE_CATEGORIES, ...dbState.customCategories];
+    if (Array.isArray(dbState.householdExpenses)) {
+      dbState.householdExpenses.forEach(h => {
+        if (!list.some(c => c.id === h.name || c.id === h.id || c.name.toLowerCase() === h.name.toLowerCase())) {
+          list.push({ id: h.name, name: h.name });
+        }
+      });
+    }
+    dbState.expenses.forEach(e => {
+      if (e.category && !list.some(c => c.id === e.category || c.name.toLowerCase() === e.category.toLowerCase())) {
+        list.push({ id: e.category, name: e.category });
+      }
+    });
+    return list;
+  }, [dbState.customCategories, dbState.householdExpenses, dbState.expenses]);
 
   // Active Shift Session State (persisted in localStorage, tracks real-time GPS odometer)
   const [activeShiftSession, setActiveShiftSession] = useState<ShiftSession | null>(() => getStoredShiftSession());
@@ -1830,6 +1848,12 @@ export default function App() {
   const [expenseAmount, setExpenseAmount] = useState<string>('');
   const [fuelLiters, setFuelLiters] = useState<string>('');
   const [fuelPricePerLiter, setFuelPricePerLiter] = useState<string>('');
+  const [expenseType, setExpenseType] = useState<'moto' | 'casa'>('moto');
+  const [expenseDescription, setExpenseDescription] = useState<string>('');
+  const [selectedHouseholdExpenseId, setSelectedHouseholdExpenseId] = useState<string>('');
+  const [showNewHouseholdInModal, setShowNewHouseholdInModal] = useState<boolean>(false);
+  const [newHouseholdNameInModal, setNewHouseholdNameInModal] = useState<string>('');
+  const [newHouseholdCatInModal, setNewHouseholdCatInModal] = useState<HouseholdCategory>('outros');
   const [entryModalFeedback, setEntryModalFeedback] = useState<string | null>(null);
 
   // App / Local Add & Edit States
@@ -2162,6 +2186,11 @@ export default function App() {
     setExpenseAmount('');
     setFuelLiters('');
     setFuelPricePerLiter(String(dbState.fuelConfig.fuelPrice || 5.8));
+    setExpenseType('moto');
+    setExpenseDescription('');
+    setSelectedHouseholdExpenseId('');
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
     setEntryModalFeedback(null);
     setShowNewAppInput(false);
     setNewCustomAppName('');
@@ -2186,6 +2215,11 @@ export default function App() {
   const openNewFuelModal = () => {
     setEditingEntryId(null);
     setEntryMode('gasto');
+    setExpenseType('moto');
+    setExpenseDescription('');
+    setSelectedHouseholdExpenseId('');
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
     setSelectedCategory('combustivel');
     setEntryDate(todayStr());
     setExpenseAmount('');
@@ -2194,6 +2228,21 @@ export default function App() {
     setEntryModalFeedback(null);
     setShowNewCatInput(false);
     setNewCustomCatName('');
+    setShowEntryModal(true);
+  };
+
+  const openNewHouseholdPaymentModal = (item: HouseholdExpenseItem) => {
+    setEditingEntryId(null);
+    setEntryMode('gasto');
+    setExpenseType('casa');
+    setSelectedHouseholdExpenseId(item.id);
+    setSelectedCategory(item.name);
+    setEntryDate(todayStr());
+    setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+    setExpenseDescription('');
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
+    setEntryModalFeedback(null);
     setShowEntryModal(true);
   };
 
@@ -2210,6 +2259,8 @@ export default function App() {
     setNewCustomShiftName('');
     setIsEditingShifts(false);
     setEditingShiftId(null);
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
     if (type === 'ganho') {
       setSelectedApp(item.app);
       setSelectedShift(item.shift || (allShifts[0]?.id ?? BASE_SHIFTS[0].id));
@@ -2227,6 +2278,16 @@ export default function App() {
           ? (item.amount / item.liters).toFixed(2)
           : String(dbState.fuelConfig.fuelPrice || 5.8)
       );
+      const isHousehold =
+        item.expenseType === 'casa' ||
+        (dbState.householdExpenses || []).some(
+          (h: HouseholdExpenseItem) =>
+            h.id === item.householdExpenseId ||
+            h.name.toLowerCase() === (item.category || '').toLowerCase()
+        );
+      setExpenseType(item.expenseType || (isHousehold ? 'casa' : 'moto'));
+      setExpenseDescription(item.description || '');
+      setSelectedHouseholdExpenseId(item.householdExpenseId || '');
     }
     setShowEntryModal(true);
   };
@@ -2503,18 +2564,55 @@ export default function App() {
 
       persistAndEnqueueWorkManager({ ...nextDb, entries: updatedEntries });
     } else {
+      // Auto-save pending new custom household account if user typed it in modal
+      if (expenseType === 'casa' && showNewHouseholdInModal && newHouseholdNameInModal.trim()) {
+        const trimmedHName = newHouseholdNameInModal.trim();
+        const existingH = (nextDb.householdExpenses || []).find(
+          h => h.name.toLowerCase() === trimmedHName.toLowerCase()
+        );
+        if (existingH) {
+          finalCategoryId = existingH.name;
+          setSelectedHouseholdExpenseId(existingH.id);
+        } else {
+          const newHId = 'house_' + Date.now();
+          const iconMap: Record<HouseholdCategory, string> = {
+            moradia: '🏠',
+            utilidades: '⚡',
+            alimentacao: '🛒',
+            conectividade: '📶',
+            saude: '💊',
+            outros: '📋',
+          };
+          const newHItem: HouseholdExpenseItem = {
+            id: newHId,
+            name: trimmedHName,
+            category: newHouseholdCatInModal,
+            monthlyAmount: Number(expenseAmount) || 0,
+            dueDay: 10,
+            isActive: true,
+            icon: iconMap[newHouseholdCatInModal] || '🏠',
+          };
+          nextDb.householdExpenses = [...(nextDb.householdExpenses || []), newHItem];
+          finalCategoryId = trimmedHName;
+          setSelectedHouseholdExpenseId(newHId);
+        }
+        setShowNewHouseholdInModal(false);
+        setNewHouseholdNameInModal('');
+        savedPendingMeta = true;
+      }
+
       const amountVal = Number(expenseAmount) || 0;
       if (amountVal <= 0) {
         if (savedPendingMeta) {
           persistAndEnqueueWorkManager(nextDb);
-          setEntryModalFeedback('Nova categoria salva! Informe o Valor (R$) para registrar a despesa.');
+          setEntryModalFeedback('Nova conta/categoria salva! Informe o Valor (R$) para registrar a despesa.');
         } else {
           setEntryModalFeedback('Informe o Valor (R$) da despesa para salvar.');
         }
         return;
       }
 
-      const isFuel = finalCategoryId === 'combustivel';
+      const isFuel = expenseType === 'moto' && finalCategoryId === 'combustivel';
       let litersVal: number | undefined = undefined;
       let pricePerLiterVal: number | undefined = undefined;
 
@@ -2528,7 +2626,7 @@ export default function App() {
         }
       }
 
-      const updatedExpenses =
+      const updatedExpenses: ExpenseEntry[] =
         editingEntryId !== null
           ? nextDb.expenses.map(e =>
               e.id === editingEntryId
@@ -2537,13 +2635,22 @@ export default function App() {
                     date: entryDate,
                     category: finalCategoryId,
                     amount: amountVal,
+                    expenseType: expenseType,
+                    description: expenseDescription.trim() || undefined,
+                    householdExpenseId:
+                      expenseType === 'casa'
+                        ? selectedHouseholdExpenseId || undefined
+                        : undefined,
                     ...(isFuel
                       ? {
                           liters: litersVal,
                           pricePerLiter: pricePerLiterVal,
                           odometerKm: e.odometerKm !== undefined ? e.odometerKm : totals.totalKm,
                         }
-                      : {}),
+                      : {
+                          liters: undefined,
+                          pricePerLiter: undefined,
+                        }),
                   }
                 : e
             )
@@ -2554,6 +2661,12 @@ export default function App() {
                 date: entryDate,
                 category: finalCategoryId,
                 amount: amountVal,
+                expenseType: expenseType,
+                description: expenseDescription.trim() || undefined,
+                householdExpenseId:
+                  expenseType === 'casa'
+                    ? selectedHouseholdExpenseId || undefined
+                    : undefined,
                 ...(isFuel
                   ? {
                       liters: litersVal,
@@ -2582,6 +2695,8 @@ export default function App() {
     setEntryModalFeedback(null);
     setShowEntryModal(false);
     setEditingEntryId(null);
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
   };
 
   // History Filters
@@ -7719,8 +7834,17 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Ações: Editar e Excluir */}
+                              {/* Ações: Lançar Gasto, Editar e Excluir */}
                               <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
+                                <button
+                                  type="button"
+                                  onClick={() => openNewHouseholdPaymentModal(item)}
+                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                  title="Registrar pagamento desta conta como gasto real"
+                                >
+                                  <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                  <span>Lançar Gasto</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => openEditHouseholdExpenseModal(item)}
@@ -9152,32 +9276,85 @@ export default function App() {
 
             {billingSubTab === 'gastos' && (
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex items-center justify-between mb-4 sm:mb-5">
-                  <h2 className="text-sm sm:text-base font-extrabold">Despesas Lançadas por Categoria</h2>
-                  <span className="text-base sm:text-lg font-black text-rose-400 tabular-nums">
-                    {fmtMoney(totals.totalExpense)}
-                  </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-5">
+                  <div>
+                    <h2 className="text-sm sm:text-base font-extrabold">Despesas Lançadas por Categoria</h2>
+                    <p className={`text-xs ${mutedText}`}>Consolidado de gastos operacionais da moto e despesas da casa</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs font-bold text-slate-400 block">Total Geral de Despesas</span>
+                    <span className="text-base sm:text-xl font-black text-rose-400 tabular-nums">
+                      {fmtMoney(totals.totalExpense)}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2.5 sm:gap-3">
                   {allCategories
-                    .map(c => ({ ...c, val: totals.expenseByCat[c.id] || 0 }))
+                    .map(c => {
+                      const val = totals.expenseByCat[c.id] || 0;
+                      const isHousehold = (dbState.householdExpenses || []).some(
+                        h => h.name.toLowerCase() === c.name.toLowerCase() || h.id === c.id
+                      );
+                      const householdItem = (dbState.householdExpenses || []).find(
+                        h => h.name.toLowerCase() === c.name.toLowerCase() || h.id === c.id
+                      );
+                      return {
+                        ...c,
+                        val,
+                        isHousehold,
+                        icon: isHousehold
+                          ? householdItem?.icon || '🏠'
+                          : c.id === 'combustivel'
+                          ? '⛽'
+                          : c.id === 'manutencao'
+                          ? '🔧'
+                          : c.id === 'pecas'
+                          ? '⚙️'
+                          : c.id === 'seguro'
+                          ? '🛡️'
+                          : c.id === 'documentacao'
+                          ? '📄'
+                          : c.id === 'lavagem'
+                          ? '🧼'
+                          : '🛵',
+                      };
+                    })
+                    .filter(c => c.val > 0)
                     .sort((a, b) => b.val - a.val)
                     .map(cat => {
                       const pct = totals.totalExpense > 0 ? Math.round((cat.val / totals.totalExpense) * 100) : 0;
                       return (
                         <div key={cat.id} className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
                           <div className="flex items-center justify-between text-xs sm:text-sm font-bold mb-1.5 sm:mb-2">
-                            <span className="truncate">{cat.name}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-base shrink-0">{cat.icon}</span>
+                              <span className="truncate">{cat.name}</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold border ${
+                                cat.isHousehold
+                                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                  : 'bg-orange-500/15 text-orange-400 border-orange-500/30'
+                              }`}>
+                                {cat.isHousehold ? 'Casa' : 'Moto'}
+                              </span>
+                            </div>
                             <span className="tabular-nums whitespace-nowrap">
                               {fmtMoney(cat.val)} <span className={`text-[11px] ${mutedText}`}>· {pct}%</span>
                             </span>
                           </div>
                           <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                            <div className="h-full bg-rose-500 rounded-full" style={{ width: `${pct}%` }} />
+                            <div
+                              className={`h-full rounded-full ${cat.isHousehold ? 'bg-amber-500' : 'bg-rose-500'}`}
+                              style={{ width: `${pct}%` }}
+                            />
                           </div>
                         </div>
                       );
                     })}
+                  {totals.totalExpense === 0 && (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      Nenhuma despesa registrada ainda. Use o botão <strong>+ Gasto</strong> para lançar despesas da moto ou da casa.
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -9297,19 +9474,60 @@ export default function App() {
                         </div>
                       );
                     } else {
+                      const isHousehold =
+                        item.expenseType === 'casa' ||
+                        (dbState.householdExpenses || []).some(
+                          (h: HouseholdExpenseItem) =>
+                            h.id === item.householdExpenseId ||
+                            h.name.toLowerCase() === (item.category || '').toLowerCase()
+                        );
+                      const householdItem = (dbState.householdExpenses || []).find(
+                        (h: HouseholdExpenseItem) =>
+                          h.id === item.householdExpenseId ||
+                          h.name.toLowerCase() === (item.category || '').toLowerCase()
+                      );
+
+                      const getExpenseIcon = () => {
+                        if (isHousehold) {
+                          return householdItem?.icon || '🏠';
+                        }
+                        if (item.category === 'combustivel') return '⛽';
+                        if (item.category === 'manutencao') return '🔧';
+                        if (item.category === 'pecas') return '⚙️';
+                        if (item.category === 'seguro') return '🛡️';
+                        if (item.category === 'documentacao') return '📄';
+                        if (item.category === 'lavagem') return '🧼';
+                        return '🛵';
+                      };
+
                       const cat = allCategories.find(c => c.id === item.category) || { name: item.category };
+                      const displayTitle = householdItem?.name || cat.name || item.category;
+
                       return (
                         <div
                           key={`gasto-${item.id}`}
                           className="py-3 sm:py-4 flex items-center justify-between gap-2.5"
                         >
                           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-                            <span className="text-lg sm:text-xl shrink-0">⛽</span>
+                            <span className="text-lg sm:text-xl shrink-0 p-1 rounded-lg bg-slate-800/40">
+                              {getExpenseIcon()}
+                            </span>
                             <div className="min-w-0 flex-1">
                               <div className="text-xs sm:text-sm font-bold truncate">
-                                {cat.name} · {d}/{m}
+                                {displayTitle} · {d}/{m}
                               </div>
-                              <div className={`text-[11px] sm:text-xs ${mutedText} truncate`}>Despesa Operacional</div>
+                              <div className={`text-[11px] sm:text-xs ${mutedText} truncate flex items-center gap-1.5 mt-0.5`}>
+                                <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
+                                  isHousehold
+                                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                    : 'bg-orange-500/15 text-orange-400 border-orange-500/30'
+                                }`}>
+                                  {isHousehold ? '🏠 Casa & Família' : '🛵 Despesa Moto'}
+                                </span>
+                                {item.description && (
+                                  <span className="truncate italic">· {item.description}</span>
+                                )}
+                              </div>
                             </div>
                           </div>
 
@@ -11385,76 +11603,368 @@ export default function App() {
               </div>
             ) : (
               <div className="flex flex-col gap-4">
-                <div>
-                  <label className={`block text-xs font-bold mb-2 ${mutedText}`}>Categoria da Despesa</label>
-                  <div className="flex flex-wrap gap-2">
-                    {allCategories.map(c => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setSelectedCategory(c.id)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
-                          selectedCategory === c.id ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
-                        }`}
-                      >
-                        {c.name}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setShowNewCatInput(prev => !prev)}
-                      className="px-3.5 py-2 rounded-xl text-xs font-bold border border-[#FF6A1A] text-[#FF6A1A] cursor-pointer"
-                    >
-                      + Nova Categoria
-                    </button>
-                  </div>
-                  {showNewCatInput && (
-                    <div className="flex gap-2 mt-2">
-                      <input
-                        type="text"
-                        value={newCustomCatName}
-                        onChange={e => setNewCustomCatName(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (!newCustomCatName.trim()) return;
-                            const id = 'cat_' + Date.now();
-                            const nextCats = [...dbState.customCategories, { id, name: newCustomCatName.trim() }];
-                            persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
-                            setSelectedCategory(id);
-                            setNewCustomCatName('');
-                            setShowNewCatInput(false);
-                            setEntryModalFeedback(`Categoria "${newCustomCatName.trim()}" salva e selecionada!`);
-                          }
-                        }}
-                        placeholder="Nome da Categoria"
-                        className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!newCustomCatName.trim()) return;
-                          const id = 'cat_' + Date.now();
-                          const nextCats = [...dbState.customCategories, { id, name: newCustomCatName.trim() }];
-                          persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
-                          setSelectedCategory(id);
-                          setNewCustomCatName('');
-                          setShowNewCatInput(false);
-                          setEntryModalFeedback(`Categoria "${newCustomCatName.trim()}" salva e selecionada!`);
-                        }}
-                        className="px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black cursor-pointer"
-                      >
-                        Salvar
-                      </button>
-                    </div>
-                  )}
+                {/* TIPO DE GASTO: MOTO OU CASA */}
+                <div className="flex p-1 rounded-2xl bg-black/25 border border-slate-700/60">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpenseType('moto');
+                      if (!motoCategories.some(c => c.id === selectedCategory)) {
+                        setSelectedCategory(BASE_EXPENSE_CATEGORIES[0].id);
+                      }
+                      setSelectedHouseholdExpenseId('');
+                    }}
+                    className={`flex-1 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      expenseType === 'moto'
+                        ? 'bg-[#FF6A1A] text-black shadow-md'
+                        : `${mutedText} hover:text-white`
+                    }`}
+                  >
+                    <span className="text-base">🏍️</span>
+                    <span>Despesa da Moto</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpenseType('casa');
+                      const householdList = dbState.householdExpenses || [];
+                      if (householdList.length > 0) {
+                        const found =
+                          householdList.find(h => h.id === selectedHouseholdExpenseId) ||
+                          householdList[0];
+                        setSelectedHouseholdExpenseId(found.id);
+                        setSelectedCategory(found.name);
+                        if (!expenseAmount && found.monthlyAmount > 0) {
+                          setExpenseAmount(String(found.monthlyAmount));
+                        }
+                      } else {
+                        setSelectedCategory('Casa & Família');
+                      }
+                    }}
+                    className={`flex-1 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      expenseType === 'casa'
+                        ? 'bg-amber-400 text-black shadow-md'
+                        : `${mutedText} hover:text-white`
+                    }`}
+                  >
+                    <span className="text-base">🏠</span>
+                    <span>Despesa da Casa</span>
+                  </button>
                 </div>
 
-                {selectedCategory === 'combustivel' ? (
-                  <div className="flex flex-col gap-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {expenseType === 'moto' ? (
+                  <>
+                    <div>
+                      <label className={`block text-xs font-bold mb-2 ${mutedText}`}>Categoria da Moto</label>
+                      <div className="flex flex-wrap gap-2">
+                        {motoCategories.map(c => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setSelectedCategory(c.id)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                              selectedCategory === c.id ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
+                            }`}
+                          >
+                            {c.name}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setShowNewCatInput(prev => !prev)}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold border border-[#FF6A1A] text-[#FF6A1A] cursor-pointer"
+                        >
+                          + Nova Categoria
+                        </button>
+                      </div>
+                      {showNewCatInput && (
+                        <div className="flex gap-2 mt-2">
+                          <input
+                            type="text"
+                            value={newCustomCatName}
+                            onChange={e => setNewCustomCatName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                if (!newCustomCatName.trim()) return;
+                                const id = 'cat_' + Date.now();
+                                const nextCats = [...dbState.customCategories, { id, name: newCustomCatName.trim() }];
+                                persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
+                                setSelectedCategory(id);
+                                setNewCustomCatName('');
+                                setShowNewCatInput(false);
+                                setEntryModalFeedback(`Categoria "${newCustomCatName.trim()}" salva e selecionada!`);
+                              }
+                            }}
+                            placeholder="Nome da Categoria da Moto"
+                            className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newCustomCatName.trim()) return;
+                              const id = 'cat_' + Date.now();
+                              const nextCats = [...dbState.customCategories, { id, name: newCustomCatName.trim() }];
+                              persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
+                              setSelectedCategory(id);
+                              setNewCustomCatName('');
+                              setShowNewCatInput(false);
+                              setEntryModalFeedback(`Categoria "${newCustomCatName.trim()}" salva e selecionada!`);
+                            }}
+                            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black cursor-pointer"
+                          >
+                            Salvar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedCategory === 'combustivel' ? (
+                      <div className="flex flex-col gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Abastecimento</label>
+                            <input
+                              type="date"
+                              value={entryDate}
+                              onChange={e => setEntryDate(e.target.value)}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                              Preço Pago Total (R$) <span className="text-amber-400">*</span>
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ex: 50.00"
+                              value={expenseAmount}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setExpenseAmount(val);
+                                const numVal = parseFloat(val);
+                                const priceVal = parseFloat(fuelPricePerLiter);
+                                if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
+                                  setFuelLiters((numVal / priceVal).toFixed(2));
+                                }
+                              }}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                              Litros Abastecidos (L) <span className="text-[#FF6A1A]">*</span>
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ex: 8.5"
+                              value={fuelLiters}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setFuelLiters(val);
+                                const litersNum = parseFloat(val);
+                                const amountNum = parseFloat(expenseAmount);
+                                const priceNum = parseFloat(fuelPricePerLiter);
+                                if (!isNaN(litersNum) && litersNum > 0) {
+                                  if (!isNaN(amountNum) && amountNum > 0) {
+                                    setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
+                                  } else if (!isNaN(priceNum) && priceNum > 0) {
+                                    setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                  }
+                                }
+                              }}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço por Litro (R$/L)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ex: 5.89"
+                              value={fuelPricePerLiter}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setFuelPricePerLiter(val);
+                                const priceNum = parseFloat(val);
+                                const amountNum = parseFloat(expenseAmount);
+                                const litersNum = parseFloat(fuelLiters);
+                                if (!isNaN(priceNum) && priceNum > 0) {
+                                  if (!isNaN(amountNum) && amountNum > 0) {
+                                    setFuelLiters((amountNum / priceNum).toFixed(2));
+                                  } else if (!isNaN(litersNum) && litersNum > 0) {
+                                    setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                  }
+                                }
+                              }}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM Atual do Odômetro</label>
+                            <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums flex items-center justify-between ${surfaceSubtle}`}>
+                              <span>{totals.totalKm.toLocaleString('pt-BR')} km</span>
+                              <span className="text-[10px] text-emerald-400 font-extrabold uppercase">Registrado</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Telemetria e Estimativa de Autonomia em Tempo Real */}
+                        {(() => {
+                          const ltr = parseFloat(fuelLiters) || (parseFloat(expenseAmount) && parseFloat(fuelPricePerLiter) ? parseFloat(expenseAmount) / parseFloat(fuelPricePerLiter) : 0);
+                          const kmL = Number(dbState.fuelConfig.kmPerLiter) || 35;
+                          const estKm = Math.round(ltr * kmL);
+                          return (
+                            <div className={`p-3 rounded-xl border text-xs flex items-center justify-between flex-wrap gap-2 ${
+                              isDark ? 'bg-sky-950/40 border-sky-800/50 text-sky-200' : 'bg-sky-100/80 border-sky-300 text-sky-950'
+                            }`}>
+                              <div className="flex items-center gap-2">
+                                <Fuel className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0" />
+                                <span>
+                                  Autonomia Estimada: <strong className="text-sky-950 dark:text-sky-100 font-black">~{estKm.toLocaleString('pt-BR')} km</strong>{' '}
+                                  <span className="opacity-80 font-semibold">({kmL} km/L médio)</span>
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-black text-sky-800 dark:text-sky-300">
+                                Custo: R$ {((parseFloat(fuelPricePerLiter) || 5.8) / kmL).toFixed(2)}/km
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data</label>
+                            <input
+                              type="date"
+                              value={entryDate}
+                              onChange={e => setEntryDate(e.target.value)}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Valor (R$)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ex: 35.00"
+                              value={expenseAmount}
+                              onChange={e => setExpenseAmount(e.target.value)}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Descrição / Detalhe (opcional)
+                          </label>
+                          <input
+                            type="text"
+                            value={expenseDescription}
+                            onChange={e => setExpenseDescription(e.target.value)}
+                            placeholder="Ex: Troca de pastilhas dianteiras, Óleo Yamalube..."
+                            className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* DESPESAS DA CASA / FAMÍLIA */
+                  <div className="flex flex-col gap-3.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className={`block text-xs font-bold ${mutedText}`}>
+                          Selecione a Conta da Casa
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowNewHouseholdInModal(prev => !prev)}
+                          className="text-[11px] font-bold text-amber-400 hover:underline cursor-pointer"
+                        >
+                          {showNewHouseholdInModal ? 'Cancelar' : '+ Nova Conta da Casa'}
+                        </button>
+                      </div>
+
+                      {/* Chips rápidos das contas da casa */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {(dbState.householdExpenses || []).map(item => {
+                          const isSelected =
+                            selectedHouseholdExpenseId === item.id ||
+                            selectedCategory.toLowerCase() === item.name.toLowerCase();
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedHouseholdExpenseId(item.id);
+                                setSelectedCategory(item.name);
+                                if (!expenseAmount || selectedHouseholdExpenseId !== item.id) {
+                                  setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+                                }
+                              }}
+                              className={`p-2.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col gap-1 ${
+                                isSelected
+                                  ? 'bg-amber-500/20 border-amber-400 text-amber-200 shadow-xs'
+                                  : `${surfaceSubtle} border-slate-700/50 hover:border-slate-500`
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-base shrink-0">{item.icon || '🏠'}</span>
+                                <span className="text-xs font-bold truncate leading-tight">
+                                  {item.name}
+                                </span>
+                              </div>
+                              <span className={`text-[10px] tabular-nums font-semibold ${isSelected ? 'text-amber-300' : mutedText}`}>
+                                {item.monthlyAmount > 0 ? fmtMoney(item.monthlyAmount) : 'Variável'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Formulário inline para criar nova conta da casa se o motoboy quiser */}
+                      {showNewHouseholdInModal && (
+                        <div className={`mt-3 p-3 rounded-2xl border ${isDark ? 'bg-amber-950/20 border-amber-800/40' : 'bg-amber-50 border-amber-200'} flex flex-col gap-2.5`}>
+                          <div className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                            <span>🏠</span>
+                            <span>Cadastrar Nova Conta Doméstica</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              value={newHouseholdNameInModal}
+                              onChange={e => setNewHouseholdNameInModal(e.target.value)}
+                              placeholder="Nome (Ex: Gás, Farmácia, Feira...)"
+                              className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                            />
+                            <select
+                              value={newHouseholdCatInModal}
+                              onChange={e => setNewHouseholdCatInModal(e.target.value as HouseholdCategory)}
+                              className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                            >
+                              <option value="moradia">🏠 Moradia (Aluguel, IPTU)</option>
+                              <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
+                              <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
+                              <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
+                              <option value="saude">💊 Saúde (Farmácia, Convênio)</option>
+                              <option value="outros">📋 Outros Domésticos</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Abastecimento</label>
+                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Pagamento</label>
                         <input
                           type="date"
                           value={entryDate}
@@ -11464,131 +11974,39 @@ export default function App() {
                       </div>
                       <div>
                         <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                          Preço Pago Total (R$) <span className="text-amber-400">*</span>
+                          Valor Pago (R$) <span className="text-amber-400">*</span>
                         </label>
                         <input
                           type="number"
                           step="0.01"
-                          placeholder="Ex: 50.00"
+                          placeholder="Ex: 150.00"
                           value={expenseAmount}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setExpenseAmount(val);
-                            const numVal = parseFloat(val);
-                            const priceVal = parseFloat(fuelPricePerLiter);
-                            if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
-                              setFuelLiters((numVal / priceVal).toFixed(2));
-                            }
-                          }}
-                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                          Litros Abastecidos (L) <span className="text-[#FF6A1A]">*</span>
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="Ex: 8.5"
-                          value={fuelLiters}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setFuelLiters(val);
-                            const litersNum = parseFloat(val);
-                            const amountNum = parseFloat(expenseAmount);
-                            const priceNum = parseFloat(fuelPricePerLiter);
-                            if (!isNaN(litersNum) && litersNum > 0) {
-                              if (!isNaN(amountNum) && amountNum > 0) {
-                                setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
-                              } else if (!isNaN(priceNum) && priceNum > 0) {
-                                setExpenseAmount((litersNum * priceNum).toFixed(2));
-                              }
-                            }
-                          }}
+                          onChange={e => setExpenseAmount(e.target.value)}
                           className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                         />
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço por Litro (R$/L)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="Ex: 5.89"
-                          value={fuelPricePerLiter}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setFuelPricePerLiter(val);
-                            const priceNum = parseFloat(val);
-                            const amountNum = parseFloat(expenseAmount);
-                            const litersNum = parseFloat(fuelLiters);
-                            if (!isNaN(priceNum) && priceNum > 0) {
-                              if (!isNaN(amountNum) && amountNum > 0) {
-                                setFuelLiters((amountNum / priceNum).toFixed(2));
-                              } else if (!isNaN(litersNum) && litersNum > 0) {
-                                setExpenseAmount((litersNum * priceNum).toFixed(2));
-                              }
-                            }
-                          }}
-                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM Atual do Odômetro</label>
-                        <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums flex items-center justify-between ${surfaceSubtle}`}>
-                          <span>{totals.totalKm.toLocaleString('pt-BR')} km</span>
-                          <span className="text-[10px] text-emerald-400 font-extrabold uppercase">Registrado</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Telemetria e Estimativa de Autonomia em Tempo Real */}
-                    {(() => {
-                      const ltr = parseFloat(fuelLiters) || (parseFloat(expenseAmount) && parseFloat(fuelPricePerLiter) ? parseFloat(expenseAmount) / parseFloat(fuelPricePerLiter) : 0);
-                      const kmL = Number(dbState.fuelConfig.kmPerLiter) || 35;
-                      const estKm = Math.round(ltr * kmL);
-                      return (
-                        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between flex-wrap gap-2 ${
-                          isDark ? 'bg-sky-950/40 border-sky-800/50 text-sky-200' : 'bg-sky-100/80 border-sky-300 text-sky-950'
-                        }`}>
-                          <div className="flex items-center gap-2">
-                            <Fuel className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0" />
-                            <span>
-                              Autonomia Estimada: <strong className="text-sky-950 dark:text-sky-100 font-black">~{estKm.toLocaleString('pt-BR')} km</strong>{' '}
-                              <span className="opacity-80 font-semibold">({kmL} km/L médio)</span>
-                            </span>
-                          </div>
-                          <span className="text-[11px] font-black text-sky-800 dark:text-sky-300">
-                            Custo: R$ {((parseFloat(fuelPricePerLiter) || 5.8) / kmL).toFixed(2)}/km
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data</label>
+                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                        Descrição / Detalhe (opcional)
+                      </label>
                       <input
-                        type="date"
-                        value={entryDate}
-                        onChange={e => setEntryDate(e.target.value)}
+                        type="text"
+                        value={expenseDescription}
+                        onChange={e => setExpenseDescription(e.target.value)}
+                        placeholder="Ex: Compra quinzenal no Atacadão, Conta de luz ref. mês 10..."
                         className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
                       />
                     </div>
-                    <div>
-                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Valor (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Ex: 35.00"
-                        value={expenseAmount}
-                        onChange={e => setExpenseAmount(e.target.value)}
-                        className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                      />
+
+                    <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 ${
+                      isDark ? 'bg-amber-950/30 border-amber-800/40 text-amber-200' : 'bg-amber-50 border-amber-300 text-amber-900'
+                    }`}>
+                      <span className="text-lg shrink-0">🏠</span>
+                      <p className="leading-snug">
+                        <strong>Despesa Doméstica vinculada:</strong> será abatida no seu fechamento mensal e no saldo real livre para garantir que o sustento da sua família esteja sempre no controle.
+                      </p>
                     </div>
                   </div>
                 )}

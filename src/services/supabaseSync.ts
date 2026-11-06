@@ -28,6 +28,9 @@ export interface ExpenseEntry {
   liters?: number;
   pricePerLiter?: number;
   odometerKm?: number;
+  description?: string;
+  expenseType?: 'moto' | 'casa';
+  householdExpenseId?: string;
 }
 
 export interface MaintenanceHistoryRecord {
@@ -76,10 +79,12 @@ export interface ShiftDefinition {
   name: string;
 }
 
+export type HouseholdCategory = 'moradia' | 'utilidades' | 'alimentacao' | 'conectividade' | 'saude' | 'outros';
+
 export interface HouseholdExpenseItem {
   id: string;
   name: string;
-  category: 'moradia' | 'utilidades' | 'alimentacao' | 'conectividade' | 'saude' | 'outros';
+  category: HouseholdCategory;
   monthlyAmount: number;
   dueDay?: number;
   icon?: string;
