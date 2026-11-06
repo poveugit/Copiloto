@@ -1997,8 +1997,12 @@ export default function App() {
     const today = todayStr();
     const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
     const intDays = Math.max(1, Number(item.intervalDays) || 30);
-    const mAmt = Math.max(0, Number(item.monthlyAmount) || 0);
-    const tCost = item.totalCost !== undefined ? Number(item.totalCost) : Math.round((mAmt * (intDays / 30)) * 100) / 100;
+    const mAmt = Math.max(0, Number((item as any).monthlyCost ?? item.monthlyAmount) || 0);
+    const tCost = (item as any).totalCost !== undefined
+      ? Number((item as any).totalCost)
+      : item.totalCost !== undefined
+      ? Number(item.totalCost)
+      : Math.round((mAmt * (intDays / 30)) * 100) / 100;
     const lastPaid = item.lastPaidDate || today;
     const nextDue = item.nextDueDate || addDaysToDateStr(lastPaid, intDays);
 
@@ -2052,9 +2056,75 @@ export default function App() {
       list.push(sanitized);
     }
 
+    // Sincronização bidirecional com o planejamento financeiro e itens de manutenção preventiva
+    let updatedPlan = { ...finPlan };
+    let planChanged = false;
+    let updatedMaintItems = Array.isArray(dbState.maintenanceItems) ? [...dbState.maintenanceItems] : [];
+    let maintChanged = false;
+
+    const lowerName = sanitized.name.toLowerCase();
+    const effectiveCost = totalCostVal > 0 ? totalCostVal : computedMonthly;
+
+    // Sincronizar IPVA
+    if (sanitized.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
+      const annualVal = totalCostVal > 0 ? totalCostVal : Math.round(computedMonthly * 12);
+      if (annualVal > 0) {
+        updatedPlan.ipvaAnnual = annualVal;
+        planChanged = true;
+      }
+    }
+    // Sincronizar Licenciamento
+    if (lowerName.includes('licenciamento')) {
+      const licVal = totalCostVal > 0 ? totalCostVal : Math.round(computedMonthly * 12);
+      if (licVal > 0) {
+        updatedPlan.licensingAnnual = licVal;
+        planChanged = true;
+      }
+    }
+    // Sincronizar Seguro / MEI
+    if (sanitized.id === 'seguro_rastreador' || lowerName.includes('seguro') || lowerName.includes('rastreador')) {
+      const insMonthly = computedMonthly > 0 ? computedMonthly : Math.round(totalCostVal / 12);
+      if (insMonthly > 0) {
+        updatedPlan.insuranceOrMeiMonthly = insMonthly;
+        planChanged = true;
+      }
+    }
+
+    // Sincronizar estimativas de custo de manutenção por peça
+    if (sanitized.id === 'oleo_motor' || lowerName.includes('óleo')) {
+      const idx = updatedMaintItems.findIndex(m => m.id === 'oil');
+      if (idx >= 0 && effectiveCost > 0) {
+        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+        maintChanged = true;
+      }
+    }
+    if (sanitized.id === 'pneus_camaras' || lowerName.includes('pneu')) {
+      const idx = updatedMaintItems.findIndex(m => m.id === 'tire');
+      if (idx >= 0 && effectiveCost > 0) {
+        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+        maintChanged = true;
+      }
+    }
+    if (sanitized.id === 'kit_transmissao' || lowerName.includes('relação') || lowerName.includes('corrente')) {
+      const idx = updatedMaintItems.findIndex(m => m.id === 'chain');
+      if (idx >= 0 && effectiveCost > 0) {
+        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+        maintChanged = true;
+      }
+    }
+    if (sanitized.id === 'freios_pastilhas' || lowerName.includes('freio') || lowerName.includes('pastilha')) {
+      const idx = updatedMaintItems.findIndex(m => m.id === 'brake');
+      if (idx >= 0 && effectiveCost > 0) {
+        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+        maintChanged = true;
+      }
+    }
+
     persistAndEnqueueWorkManager({
       ...dbState,
       bikeExpenses: list,
+      ...(planChanged ? { financialPlan: updatedPlan } : {}),
+      ...(maintChanged ? { maintenanceItems: updatedMaintItems } : {}),
     });
     setShowBikeModal(false);
     setEditingBikeItem(null);
@@ -3837,19 +3907,142 @@ export default function App() {
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
     const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
-    // Despesas Cadastradas da Moto & Peças
+    // Despesas Cadastradas da Moto & Peças (Enriquecimento Proporcional Unificado com a Inteligência Financeira)
     const rawBikeExpenses: BikeExpenseItem[] =
       Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
+
+    // Enriquecimento dinâmico de cada item da moto para falar a mesma língua do Planejamento IA
+    const enrichedBikeExpenses = rawBikeExpenses.map(item => {
+      const lowerName = item.name.toLowerCase();
+      const lowerCat = (item.category || '').toLowerCase();
+
+      let dailyRateio = 0;
+      let monthlyCost = 0;
+      let totalCost = item.totalCost || 0;
+      let calculationNote = '';
+      let isProportional = false;
+
+      // 1. IPVA (Sincronizado diretamente com a reserva diária e valor anual do IPVA da IA)
+      if (item.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
+        dailyRateio = dailyIpvaReserve;
+        monthlyCost = dailyIpvaReserve * workDaysPerMonth;
+        totalCost = ipvaAnnual;
+        calculationNote = `Rateio IA: ${fmtCurrencyExact(dailyIpvaReserve)}/dia (${docsTargetMonths} meses p/ quitar ${fmtCurrencyExact(ipvaAnnual)})`;
+        isProportional = true;
+      }
+      // 2. Licenciamento CRLV-e
+      else if (lowerName.includes('licenciamento')) {
+        dailyRateio = dailyLicensingReserve;
+        monthlyCost = dailyLicensingReserve * workDaysPerMonth;
+        totalCost = licensingAnnual;
+        calculationNote = `Rateio IA: ${fmtCurrencyExact(dailyLicensingReserve)}/dia (${docsTargetMonths} meses)`;
+        isProportional = true;
+      }
+      // 3. Seguro / Proteção Veicular / MEI
+      else if (item.id === 'seguro_rastreador' || lowerCat === 'seguro' || lowerName.includes('seguro') || lowerName.includes('rastreador')) {
+        dailyRateio = dailyMeiInsuranceReserve;
+        monthlyCost = insuranceMonthly;
+        totalCost = insuranceMonthly;
+        calculationNote = `Rateio IA: ${fmtCurrencyExact(dailyMeiInsuranceReserve)}/dia (${fmtCurrencyExact(insuranceMonthly)}/mês)`;
+        isProportional = true;
+      }
+      // 4. Combustível (Sincronizado com o consumo real e KM rodados por dia)
+      else if (item.id === 'combustivel_semanal' || lowerCat === 'combustivel' || lowerName.includes('combustível') || lowerName.includes('gasolina')) {
+        dailyRateio = dailyFuelCost;
+        monthlyCost = monthlyFuelCost;
+        totalCost = monthlyFuelCost;
+        calculationNote = `Consumo real: ~${Math.round(dailyKm)} km/dia a ${kmPerLiter} km/L`;
+        isProportional = true;
+      }
+      // 5. Óleo do Motor (Desgaste proporcional real por KM rodado + cota preventiva)
+      else if (item.id === 'oleo_motor' || lowerName.includes('óleo')) {
+        const oilObj = maintBreakdown.find(m => m.id === 'oil');
+        const wearDaily = oilObj ? oilObj.dailyReserve : 0;
+        const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
+        dailyRateio = wearDaily + bufferShare;
+        monthlyCost = dailyRateio * workDaysPerMonth;
+        totalCost = oilObj ? oilObj.costEstimate : (item.totalCost || 45);
+        calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
+        isProportional = true;
+      }
+      // 6. Pneus (Desgaste proporcional real por KM rodado + cota preventiva)
+      else if (item.id === 'pneus_camaras' || lowerName.includes('pneu')) {
+        const tireObj = maintBreakdown.find(m => m.id === 'tire');
+        const wearDaily = tireObj ? tireObj.dailyReserve : 0;
+        const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
+        dailyRateio = wearDaily + bufferShare;
+        monthlyCost = dailyRateio * workDaysPerMonth;
+        totalCost = tireObj ? tireObj.costEstimate : (item.totalCost || 520);
+        calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
+        isProportional = true;
+      }
+      // 7. Kit Relação (Desgaste proporcional real por KM rodado + cota preventiva)
+      else if (item.id === 'kit_transmissao' || lowerName.includes('relação') || lowerName.includes('corrente')) {
+        const chainObj = maintBreakdown.find(m => m.id === 'chain');
+        const wearDaily = chainObj ? chainObj.dailyReserve : 0;
+        const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
+        dailyRateio = wearDaily + bufferShare;
+        monthlyCost = dailyRateio * workDaysPerMonth;
+        totalCost = chainObj ? chainObj.costEstimate : (item.totalCost || 210);
+        calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
+        isProportional = true;
+      }
+      // 8. Freios e Pastilhas (Desgaste proporcional real por KM rodado + cota preventiva)
+      else if (item.id === 'freios_pastilhas' || lowerName.includes('freio') || lowerName.includes('pastilha')) {
+        const brakeObj = maintBreakdown.find(m => m.id === 'brake');
+        const wearDaily = brakeObj ? brakeObj.dailyReserve : 0;
+        const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
+        dailyRateio = wearDaily + bufferShare;
+        monthlyCost = dailyRateio * workDaysPerMonth;
+        totalCost = brakeObj ? brakeObj.costEstimate : (item.totalCost || 75);
+        calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
+        isProportional = true;
+      }
+      // 9. Revisão Geral da Moto
+      else if (item.id === 'mecanica_revisao' || lowerName.includes('revisão')) {
+        const itemMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
+        dailyRateio = itemMonthly / workDaysPerMonth;
+        monthlyCost = itemMonthly;
+        calculationNote = `Prevenção periódica na oficina`;
+        isProportional = false;
+      }
+      // 10. Outros itens e equipamentos cadastrados pelo motoboy
+      else {
+        const itemMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
+        dailyRateio = itemMonthly / workDaysPerMonth;
+        monthlyCost = itemMonthly;
+        calculationNote = `Rateio fixo em ${workDaysPerMonth} dias úteis`;
+        isProportional = false;
+      }
+
+      return {
+        ...item,
+        dailyRateio,
+        monthlyCost,
+        totalCost: totalCost > 0 ? totalCost : monthlyCost,
+        calculationNote,
+        isProportional,
+      };
+    });
+
     const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
-    const monthlyBikeExpensesTotal = activeBikeExpenses.reduce(
-      (sum, b) => sum + Math.max(0, Number(b.monthlyAmount) || 0),
+    const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive);
+
+    // Rateio diário e mensal unificado das despesas da moto
+    const unifiedDailyBikeReserve = activeEnrichedBikeExpenses.reduce(
+      (sum, b) => sum + b.dailyRateio,
       0
     );
-    const dailyBikeExpensesReserve = monthlyBikeExpensesTotal / workDaysPerMonth;
-    const weeklyBikeExpensesReserve = dailyBikeExpensesReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
-    const bikeExpensesPctOfGross = dailyGross > 0 ? Math.round((dailyBikeExpensesReserve / dailyGross) * 100) : 0;
+    const unifiedMonthlyBikeTotal = unifiedDailyBikeReserve * workDaysPerMonth;
+    const unifiedWeeklyBikeReserve = unifiedDailyBikeReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+    const unifiedBikePctOfGross = dailyGross > 0 ? Math.round((unifiedDailyBikeReserve / dailyGross) * 100) : 0;
+
+    const monthlyBikeExpensesTotal = unifiedMonthlyBikeTotal;
+    const dailyBikeExpensesReserve = unifiedDailyBikeReserve;
+    const weeklyBikeExpensesReserve = unifiedWeeklyBikeReserve;
+    const bikeExpensesPctOfGross = unifiedBikePctOfGross;
 
     // 5. Despesas da Casa & Família (Fora da Moto: Aluguel, Luz, Água, Mercado, Internet, etc.)
     const rawHouseholdExpenses: HouseholdExpenseItem[] =
@@ -3865,11 +4058,9 @@ export default function App() {
     const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
 
-    // Subtotal Moto & Operação (Combustível + Manutenção + Docs/IPVA + Alimentação no Turno)
-    const dailyBikeCostsTotal =
-      dailyFuelCost + dailyMaintReserve + dailyDocsReserve + dailyFoodCost;
-    const monthlyBikeCostsTotal =
-      monthlyFuelCost + monthlyMaintReserve + monthlyDocsReserve + monthlyFoodCost;
+    // Subtotal Moto & Operação (Custos Operacionais da Moto + Alimentação no Turno de Rua)
+    const dailyBikeCostsTotal = unifiedDailyBikeReserve + dailyFoodCost;
+    const monthlyBikeCostsTotal = unifiedMonthlyBikeTotal + monthlyFoodCost;
     const bikePctOfGross = dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
 
     // 6. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
@@ -3955,6 +4146,8 @@ export default function App() {
       // Despesas Cadastradas da Moto
       rawBikeExpenses,
       activeBikeExpenses,
+      enrichedBikeExpenses,
+      activeEnrichedBikeExpenses,
       monthlyBikeExpensesTotal,
       dailyBikeExpensesReserve,
       weeklyBikeExpensesReserve,
@@ -7446,7 +7639,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* LEMBRETE DO DAS-MEI (Vencimento todo dia 20 do mês) + BOTÕES RÁPIDOS */}
+            {/* LEMBRETE DO DAS-MEI OTIMIZADO & COMPACTO */}
             {(() => {
               const today = new Date();
               const currentDay = today.getDate();
@@ -7456,68 +7649,67 @@ export default function App() {
 
               return (
                 <div
-                  className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md ${
+                  className={`rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all shadow-xs ${
                     isPast20
-                      ? 'bg-amber-500/10 border-amber-500/40'
+                      ? 'bg-amber-500/10 border-amber-500/30'
                       : isNearOrOver
-                      ? 'bg-purple-500/10 border-purple-500/40'
+                      ? 'bg-purple-500/10 border-purple-500/30'
                       : surfaceSubtle
                   }`}
                 >
-                  <div className="flex items-start gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border ${
                         isPast20
                           ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
                           : 'bg-purple-500/20 border-purple-500/40 text-purple-400'
                       }`}
                     >
-                      <FileText className="w-5 h-5" />
+                      <FileText className="w-3.5 h-3.5" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
-                            isPast20
-                              ? 'bg-amber-500/20 text-amber-300'
-                              : 'bg-purple-500/20 text-purple-300'
-                          }`}
-                        >
-                          {isPast20
-                            ? '⚠️ Venceu dia 20'
+                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                          isPast20
+                            ? 'bg-amber-500/20 text-amber-300'
                             : daysUntil20 === 0
-                            ? '🚨 Vence Hoje (Dia 20)!'
-                            : `Lembrete DAS-MEI · Vence dia 20 (${daysUntil20} dias)`}
-                        </span>
-                        <span className={`text-[11px] font-semibold ${mutedText}`}>
-                          Guia Mensal do MEI
-                        </span>
-                      </div>
-                      <p className="text-xs sm:text-sm font-bold mt-1">
+                            ? '🚨 Vence Hoje (20)!'
+                            : `DAS-MEI em ${daysUntil20}d`
+                        }`}
+                      >
                         {isPast20
-                          ? 'O boleto DAS-MEI deste mês venceu dia 20. Se ainda não pagou, emita a guia atualizada no portal do Simples Nacional.'
+                          ? '⚠️ Venceu dia 20'
+                          : daysUntil20 === 0
+                          ? '🚨 Vence Hoje!'
+                          : `DAS-MEI dia 20 (${daysUntil20}d)`}
+                      </span>
+                      <span className="text-xs font-bold truncate">
+                        {isPast20
+                          ? 'Guia DAS-MEI deste mês venceu dia 20. Emita no Simples Nacional.'
                           : daysUntil20 <= 5
-                          ? `Atenção: O boleto DAS-MEI vence ${daysUntil20 === 0 ? 'HOJE' : `em ${daysUntil20} dias`} (dia 20). Mantenha seu INSS e benefícios em dia!`
-                          : 'Pague sua guia DAS-MEI mensalmente até o dia 20 para garantir direitos do INSS e CNPJ regular.'}
-                      </p>
+                          ? `Atenção: Vence ${daysUntil20 === 0 ? 'HOJE' : `em ${daysUntil20} dias`}. Mantenha seu INSS regular!`
+                          : 'Pague sua guia até o dia 20 para garantir direitos previdenciários e CNPJ regular.'}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 self-stretch md:self-auto justify-end flex-wrap">
+                  <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
                     <button
                       type="button"
                       onClick={() => setShowRelatorioMeiModal(true)}
-                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-purple-600 hover:bg-purple-500 text-white transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-600/90 hover:bg-purple-500 text-white transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Emitir extrato/relatório mensal do MEI"
                     >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Extrato MEI (PDF)</span>
+                      <Printer className="w-3 h-3" />
+                      <span>Extrato MEI</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowMetaReversaModal(true)}
-                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Calcular meta reversa com base nos custos fixos"
                     >
-                      <Target className="w-3.5 h-3.5" />
+                      <Target className="w-3 h-3" />
                       <span>Meta Reversa</span>
                     </button>
                   </div>
@@ -8303,7 +8495,8 @@ export default function App() {
 
                   {/* Grid das Contas da Moto Cadastradas */}
                   {(() => {
-                    const filteredList = financialIntelligence.rawBikeExpenses.filter(item => {
+                    const sourceList = financialIntelligence.enrichedBikeExpenses || financialIntelligence.rawBikeExpenses;
+                    const filteredList = sourceList.filter(item => {
                       if (bikeCategoryFilter === 'all') return true;
                       return item.category === bikeCategoryFilter;
                     });
@@ -8330,7 +8523,9 @@ export default function App() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                         {filteredList.map(item => {
                           const dueInfo = getExpenseDueInfo(item);
-                          const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+                          const dailyShare = (item as any).dailyRateio ?? (Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth);
+                          const monthlyCost = (item as any).monthlyCost ?? Number(item.monthlyAmount || 0);
+                          const totalCost = (item as any).totalCost ?? (item.totalCost || monthlyCost);
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
@@ -8396,22 +8591,30 @@ export default function App() {
                                 <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between gap-2">
                                   <div>
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      {isInterval ? `Reserva p/ Mês (Troca: ${fmtCurrencyExact(item.totalCost || item.monthlyAmount)})` : 'Valor Mensal'}
+                                      {isInterval ? `Reserva p/ Mês (Troca: ${fmtCurrencyExact(totalCost)})` : 'Valor Mensal'}
                                     </span>
                                     <span className="text-lg font-black text-[#FF6A1A] tabular-nums">
-                                      {fmtCurrencyExact(item.monthlyAmount)}
+                                      {fmtCurrencyExact(monthlyCost)}
                                       <span className="text-[10px] font-bold text-slate-400 ml-0.5">/mês</span>
                                     </span>
                                   </div>
                                   <div className="text-right shrink-0">
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      Rateio Diário
+                                      {(item as any).isProportional ? 'Rateio Proporcional' : 'Rateio Diário'}
                                     </span>
                                     <span className="text-xs font-extrabold text-amber-400 tabular-nums">
                                       {fmtCurrencyExact(dailyShare)}/dia
                                     </span>
                                   </div>
                                 </div>
+
+                                {/* Nota de Cálculo Proporcional Inteligente */}
+                                {(item as any).calculationNote && (
+                                  <div className="mt-1.5 text-[10px] font-semibold text-slate-400 flex items-center gap-1 truncate">
+                                    <span className="text-[#FF6A1A]">⚡</span>
+                                    <span className="truncate">{(item as any).calculationNote}</span>
+                                  </div>
+                                )}
 
                                 {/* Status de Vencimento / Revisão Personalizado */}
                                 <div className="mt-2">
@@ -8503,12 +8706,14 @@ export default function App() {
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 mt-3">
                     {(() => {
-                      const activeSorted = [...financialIntelligence.activeBikeExpenses].sort(
+                      const activeList = financialIntelligence.activeEnrichedBikeExpenses || financialIntelligence.activeBikeExpenses;
+                      const activeSorted = [...activeList].sort(
                         (a, b) => getExpenseDueInfo(a).timelineSortKey - getExpenseDueInfo(b).timelineSortKey
                       );
 
                       return activeSorted.map(item => {
                         const info = getExpenseDueInfo(item);
+                        const displayMonthly = (item as any).monthlyCost ?? item.monthlyAmount;
                         return (
                           <div
                             key={'timeline_bike_' + item.id}
@@ -8524,7 +8729,7 @@ export default function App() {
                             <span className="text-xl my-0.5">{item.icon || '🏍️'}</span>
                             <span className="text-xs font-black truncate">{item.name}</span>
                             <span className="text-xs font-bold text-slate-300 tabular-nums">
-                              {fmtCurrencyExact(item.monthlyAmount)}/mês
+                              {fmtCurrencyExact(displayMonthly)}/mês
                             </span>
                             <span className={`text-[10px] font-bold truncate ${
                               info.daysRemaining <= 0 ? 'text-rose-400' : info.daysRemaining <= 7 ? 'text-amber-400' : mutedText
