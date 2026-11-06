@@ -79,6 +79,118 @@ export interface ShiftDefinition {
   name: string;
 }
 
+export type BikeExpenseCategory = 'combustivel' | 'manutencao' | 'documentacao' | 'seguro' | 'equipamento' | 'outros';
+
+export type ExpenseRecurrenceType = 'monthly' | 'interval_days' | 'specific_date';
+
+export interface BikeExpenseItem {
+  id: string;
+  name: string;
+  category: BikeExpenseCategory;
+  monthlyAmount: number;
+  recurrenceType?: ExpenseRecurrenceType;
+  dueDay?: number;
+  intervalDays?: number;
+  totalCost?: number;
+  lastPaidDate?: string;
+  nextDueDate?: string;
+  icon?: string;
+  isActive: boolean;
+}
+
+export const DEFAULT_BIKE_EXPENSES: BikeExpenseItem[] = [
+  {
+    id: 'combustivel_mensal',
+    name: 'Combustível / Abastecimentos',
+    category: 'combustivel',
+    monthlyAmount: 480,
+    dueDay: 5,
+    icon: '⛽',
+    isActive: true,
+  },
+  {
+    id: 'oleo_filtro',
+    name: 'Troca de Óleo & Filtro',
+    category: 'manutencao',
+    monthlyAmount: 90,
+    dueDay: 15,
+    icon: '🛢️',
+    isActive: true,
+  },
+  {
+    id: 'pneus_camaras',
+    name: 'Pneus (Dianteiro & Traseiro)',
+    category: 'manutencao',
+    monthlyAmount: 110,
+    dueDay: 20,
+    icon: '🛞',
+    isActive: true,
+  },
+  {
+    id: 'kit_transmissao',
+    name: 'Kit Relação (Corrente, Coroa, Pinhão)',
+    category: 'manutencao',
+    monthlyAmount: 75,
+    dueDay: 25,
+    icon: '⛓️',
+    isActive: true,
+  },
+  {
+    id: 'freios_pastilhas',
+    name: 'Freios (Pastilhas & Lonas)',
+    category: 'manutencao',
+    monthlyAmount: 50,
+    dueDay: 10,
+    icon: '🛑',
+    isActive: true,
+  },
+  {
+    id: 'seguro_rastreador',
+    name: 'Seguro / Proteção Veicular / Rastreador',
+    category: 'seguro',
+    monthlyAmount: 130,
+    dueDay: 5,
+    icon: '🛡️',
+    isActive: true,
+  },
+  {
+    id: 'ipva_licenciamento',
+    name: 'IPVA, Licenciamento & DPVAT',
+    category: 'documentacao',
+    monthlyAmount: 65,
+    dueDay: 12,
+    icon: '📄',
+    isActive: true,
+  },
+  {
+    id: 'mecanica_revisao',
+    name: 'Revisão Geral & Oficina Mecânica',
+    category: 'manutencao',
+    monthlyAmount: 85,
+    dueDay: 18,
+    icon: '🔧',
+    isActive: true,
+  },
+  {
+    id: 'lavagem_estetica',
+    name: 'Lavagem & Lubrificação Periódica',
+    category: 'outros',
+    monthlyAmount: 40,
+    dueDay: 8,
+    icon: '✨',
+    isActive: true,
+  },
+  {
+    id: 'equipamentos_piloto',
+    name: 'Equipamentos (Capacete, Capa, Luvas)',
+    category: 'equipamento',
+    monthlyAmount: 45,
+    dueDay: 28,
+    icon: '🪖',
+    isActive: true,
+  },
+];
+
 export type HouseholdCategory = 'moradia' | 'utilidades' | 'alimentacao' | 'conectividade' | 'saude' | 'outros';
 
 export interface HouseholdExpenseItem {
@@ -86,7 +198,12 @@ export interface HouseholdExpenseItem {
   name: string;
   category: HouseholdCategory;
   monthlyAmount: number;
+  recurrenceType?: ExpenseRecurrenceType;
   dueDay?: number;
+  intervalDays?: number;
+  totalCost?: number;
+  lastPaidDate?: string;
+  nextDueDate?: string;
   icon?: string;
   isActive: boolean;
 }
@@ -204,6 +321,7 @@ export interface LocalRoomDatabaseState {
   maintenanceItems: MaintenanceItem[];
   fuelConfig: FuelDiagnosticsConfig;
   financialPlan?: FinancialPlanningConfig;
+  bikeExpenses?: BikeExpenseItem[];
   householdExpenses?: HouseholdExpenseItem[];
   customApps: AppDefinition[];
   customCategories: CategoryDefinition[];

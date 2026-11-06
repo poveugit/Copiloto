@@ -95,9 +95,13 @@ import {
   FuelDiagnosticsConfig,
   FinancialPlanningConfig,
   DEFAULT_FINANCIAL_PLAN,
+  BikeExpenseItem,
+  BikeExpenseCategory,
+  DEFAULT_BIKE_EXPENSES,
   HouseholdExpenseItem,
   HouseholdCategory,
   DEFAULT_HOUSEHOLD_EXPENSES,
+  ExpenseRecurrenceType,
   AppDefinition,
   CategoryDefinition,
   ShiftDefinition,
@@ -328,6 +332,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
       bikeModelName: cleanBike,
     },
     financialPlan: { ...DEFAULT_FINANCIAL_PLAN },
+    bikeExpenses: DEFAULT_BIKE_EXPENSES.map(item => ({ ...item })),
     householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item })),
     customApps: [],
     customCategories: [],
@@ -362,8 +367,13 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         bikeModelName: user?.bikeModel || DEFAULT_FUEL_CONFIG.bikeModelName,
       };
 
+      const bikeExpensesList: BikeExpenseItem[] =
+        Array.isArray(parsed.bikeExpenses) && parsed.bikeExpenses.length > 0
+          ? parsed.bikeExpenses
+          : DEFAULT_BIKE_EXPENSES.map(item => ({ ...item }));
+
       const houseExpenses: HouseholdExpenseItem[] =
-        Array.isArray(parsed.householdExpenses) && parsed.householdExpenses.length > 0
+        Array.isArray(parsed.householdExpenses)
           ? parsed.householdExpenses
           : DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item }));
 
@@ -401,6 +411,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
           ...DEFAULT_FINANCIAL_PLAN,
           ...(parsed.financialPlan || {}),
         },
+        bikeExpenses: bikeExpensesList,
         householdExpenses: houseExpenses,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
@@ -478,6 +489,180 @@ function formatPtBrDate(dateStr: string): string {
   const parts = dateStr.split('-');
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
   return dateStr;
+}
+
+function addDaysToDateStr(dateStr: string, daysToAdd: number): string {
+  if (!dateStr) return todayStr();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  dateObj.setDate(dateObj.getDate() + Number(daysToAdd || 0));
+  const nextY = dateObj.getFullYear();
+  const nextM = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const nextD = String(dateObj.getDate()).padStart(2, '0');
+  return `${nextY}-${nextM}-${nextD}`;
+}
+
+interface ExpenseDueInfo {
+  label: string;
+  daysRemaining: number;
+  status: 'today' | 'near' | 'overdue' | 'future';
+  targetDateStr: string;
+  badgeClass: string;
+  detailNote?: string;
+  timelineSortKey: number;
+}
+
+function getExpenseDueInfo(item: {
+  recurrenceType?: ExpenseRecurrenceType;
+  dueDay?: number;
+  intervalDays?: number;
+  totalCost?: number;
+  lastPaidDate?: string;
+  nextDueDate?: string;
+}): ExpenseDueInfo {
+  const today = todayStr();
+  const currentDay = new Date().getDate();
+  const recType = item.recurrenceType || 'monthly';
+
+  if (recType === 'interval_days' && item.intervalDays && item.intervalDays > 0) {
+    const targetDate = item.nextDueDate || (item.lastPaidDate ? addDaysToDateStr(item.lastPaidDate, item.intervalDays) : addDaysToDateStr(today, item.intervalDays));
+    const daysDiff = calculateDaysDifference(today, targetDate);
+
+    if (daysDiff === 0) {
+      return {
+        label: `🚨 Troca / Vencimento Hoje (${formatPtBrDate(targetDate)})!`,
+        daysRemaining: 0,
+        status: 'today',
+        targetDateStr: targetDate,
+        badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+        detailNote: `A cada ${item.intervalDays} dias`,
+        timelineSortKey: daysDiff,
+      };
+    }
+    if (daysDiff < 0) {
+      return {
+        label: `🚨 Trocar Agora! Venceu há ${Math.abs(daysDiff)} dias (${formatPtBrDate(targetDate)})`,
+        daysRemaining: daysDiff,
+        status: 'overdue',
+        targetDateStr: targetDate,
+        badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+        detailNote: `A cada ${item.intervalDays} dias`,
+        timelineSortKey: daysDiff,
+      };
+    }
+    if (daysDiff <= 7) {
+      return {
+        label: `⚠️ Troca Próxima: faltam ${daysDiff} dias (${formatPtBrDate(targetDate)})`,
+        daysRemaining: daysDiff,
+        status: 'near',
+        targetDateStr: targetDate,
+        badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+        detailNote: `A cada ${item.intervalDays} dias`,
+        timelineSortKey: daysDiff,
+      };
+    }
+    return {
+      label: `🔄 A cada ${item.intervalDays} dias · Faltam ${daysDiff} dias (${formatPtBrDate(targetDate)})`,
+      daysRemaining: daysDiff,
+      status: 'future',
+      targetDateStr: targetDate,
+      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      detailNote: `A cada ${item.intervalDays} dias`,
+      timelineSortKey: daysDiff,
+    };
+  }
+
+  if (recType === 'specific_date' && item.nextDueDate) {
+    const daysDiff = calculateDaysDifference(today, item.nextDueDate);
+    if (daysDiff === 0) {
+      return {
+        label: `🚨 Vence Hoje (${formatPtBrDate(item.nextDueDate)})!`,
+        daysRemaining: 0,
+        status: 'today',
+        targetDateStr: item.nextDueDate,
+        badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+        detailNote: 'Data específica',
+        timelineSortKey: daysDiff,
+      };
+    }
+    if (daysDiff < 0) {
+      return {
+        label: `🚨 Venceu em ${formatPtBrDate(item.nextDueDate)} (${Math.abs(daysDiff)} dias atrás)`,
+        daysRemaining: daysDiff,
+        status: 'overdue',
+        targetDateStr: item.nextDueDate,
+        badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+        detailNote: 'Data específica',
+        timelineSortKey: daysDiff,
+      };
+    }
+    if (daysDiff <= 7) {
+      return {
+        label: `⚠️ Vence em ${daysDiff} dias (${formatPtBrDate(item.nextDueDate)})`,
+        daysRemaining: daysDiff,
+        status: 'near',
+        targetDateStr: item.nextDueDate,
+        badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+        detailNote: 'Data específica',
+        timelineSortKey: daysDiff,
+      };
+    }
+    return {
+      label: `📅 Vencimento em ${daysDiff} dias (${formatPtBrDate(item.nextDueDate)})`,
+      daysRemaining: daysDiff,
+      status: 'future',
+      targetDateStr: item.nextDueDate,
+      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      detailNote: 'Data específica',
+      timelineSortKey: daysDiff,
+    };
+  }
+
+  // Monthly default
+  const dueDay = Math.max(1, Math.min(31, Number(item.dueDay) || 10));
+  const daysUntilDue = dueDay - currentDay;
+  if (daysUntilDue === 0) {
+    return {
+      label: `🚨 Vence Hoje (todo dia ${dueDay})!`,
+      daysRemaining: 0,
+      status: 'today',
+      targetDateStr: today,
+      badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+      detailNote: `Todo dia ${dueDay}`,
+      timelineSortKey: 0,
+    };
+  }
+  if (daysUntilDue > 0 && daysUntilDue <= 4) {
+    return {
+      label: `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`,
+      daysRemaining: daysUntilDue,
+      status: 'near',
+      targetDateStr: today,
+      badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+      detailNote: `Todo dia ${dueDay}`,
+      timelineSortKey: daysUntilDue,
+    };
+  }
+  if (daysUntilDue < 0 && daysUntilDue >= -5) {
+    return {
+      label: `Venceu há ${Math.abs(daysUntilDue)} dias (dia ${dueDay})`,
+      daysRemaining: daysUntilDue,
+      status: 'overdue',
+      targetDateStr: today,
+      badgeClass: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
+      detailNote: `Todo dia ${dueDay}`,
+      timelineSortKey: daysUntilDue + 30,
+    };
+  }
+  return {
+    label: `Vencimento: todo dia ${dueDay}`,
+    daysRemaining: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
+    status: 'future',
+    targetDateStr: today,
+    badgeClass: 'bg-slate-800/60 text-slate-400 border border-slate-700/40',
+    detailNote: `Todo dia ${dueDay}`,
+    timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
+  };
 }
 
 interface CustomGoalCountdownInfo {
@@ -578,10 +763,24 @@ export default function App() {
 
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [bikeCategoryFilter, setBikeCategoryFilter] = useState<string>('all');
+  const [showBikeModal, setShowBikeModal] = useState<boolean>(false);
+  const [editingBikeItem, setEditingBikeItem] = useState<BikeExpenseItem | null>(null);
+  const [deletingBikeId, setDeletingBikeId] = useState<string | null>(null);
+  const [bikeDraft, setBikeDraft] = useState<BikeExpenseItem>({
+    id: '',
+    name: '',
+    category: 'manutencao',
+    monthlyAmount: 0,
+    dueDay: 15,
+    icon: '🏍️',
+    isActive: true,
+  });
   const [householdCategoryFilter, setHouseholdCategoryFilter] = useState<string>('all');
   const [showHouseholdModal, setShowHouseholdModal] = useState<boolean>(false);
   const [editingHouseholdItem, setEditingHouseholdItem] = useState<HouseholdExpenseItem | null>(null);
+  const [deletingHouseholdId, setDeletingHouseholdId] = useState<string | null>(null);
   const [householdDraft, setHouseholdDraft] = useState<HouseholdExpenseItem>({
     id: '',
     name: '',
@@ -597,6 +796,7 @@ export default function App() {
   });
   const [financeAppFilter, setFinanceAppFilter] = useState<string>('all');
   const [financeSortOrder, setFinanceSortOrder] = useState<'date_desc' | 'val_desc' | 'val_asc'>('date_desc');
+  const [dashboardSaldoScope, setDashboardSaldoScope] = useState<'month' | 'all'>('month');
   const [isEditingCustomGoalInFinance, setIsEditingCustomGoalInFinance] = useState<boolean>(false);
   const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(3000);
   const [tempFinanceGoalDate, setTempFinanceGoalDate] = useState<string>(() => getDefaultFutureDate(20));
@@ -1757,6 +1957,102 @@ export default function App() {
     setIsEditingFuelCard(false);
   };
 
+  // ================= BIKE / DESPESAS DA MOTO HANDLERS =================
+  const openNewBikeExpenseModal = () => {
+    setEditingBikeItem(null);
+    setBikeDraft({
+      id: 'bike_' + Date.now(),
+      name: '',
+      category: 'manutencao',
+      monthlyAmount: 0,
+      dueDay: 15,
+      icon: '🏍️',
+      isActive: true,
+    });
+    setShowBikeModal(true);
+  };
+
+  const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
+    setEditingBikeItem(item);
+    setBikeDraft({ ...item });
+    setShowBikeModal(true);
+  };
+
+  const saveBikeExpense = () => {
+    const list = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      ? [...dbState.bikeExpenses]
+      : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
+
+    const sanitized: BikeExpenseItem = {
+      id: bikeDraft.id || 'bike_' + Date.now(),
+      name: bikeDraft.name.trim() || 'Despesa da Moto',
+      category: bikeDraft.category || 'outros',
+      monthlyAmount: Math.max(0, Number(bikeDraft.monthlyAmount) || 0),
+      dueDay: Math.max(1, Math.min(31, Number(bikeDraft.dueDay) || 15)),
+      icon: bikeDraft.icon?.trim() || '🏍️',
+      isActive: bikeDraft.isActive !== false,
+    };
+
+    const existingIndex = list.findIndex(b => b.id === sanitized.id);
+    if (existingIndex >= 0) {
+      list[existingIndex] = sanitized;
+    } else {
+      list.push(sanitized);
+    }
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: list,
+    });
+    setShowBikeModal(false);
+    setEditingBikeItem(null);
+  };
+
+  const deleteBikeExpense = (id: string) => {
+    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      ? dbState.bikeExpenses
+      : DEFAULT_BIKE_EXPENSES;
+    const list = currentList.filter(b => b.id !== id);
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: list,
+    });
+  };
+
+  const toggleBikeExpense = (id: string) => {
+    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      ? dbState.bikeExpenses
+      : DEFAULT_BIKE_EXPENSES;
+    const list = currentList.map(b =>
+      b.id === id ? { ...b, isActive: !b.isActive } : b
+    );
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: list,
+    });
+  };
+
+  const resetDefaultBikeExpenses = () => {
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: DEFAULT_BIKE_EXPENSES.map(b => ({ ...b })),
+    });
+  };
+
+  const openNewBikePaymentModal = (item: BikeExpenseItem) => {
+    setEditingEntryId(null);
+    setEntryMode('gasto');
+    setExpenseType('moto');
+    setSelectedCategory(item.name);
+    setEntryDate(todayStr());
+    setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+    setExpenseDescription(`Pagamento / Manutenção: ${item.name}`);
+    setShowNewHouseholdInModal(false);
+    setNewHouseholdNameInModal('');
+    setEntryModalFeedback(null);
+    setShowEntryModal(true);
+  };
+
   // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
   const openNewHouseholdExpenseModal = () => {
     setEditingHouseholdItem(null);
@@ -1779,10 +2075,9 @@ export default function App() {
   };
 
   const saveHouseholdExpense = () => {
-    const list =
-      Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
-        ? [...dbState.householdExpenses]
-        : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
+    const list = Array.isArray(dbState.householdExpenses)
+      ? [...dbState.householdExpenses]
+      : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
 
     const sanitized: HouseholdExpenseItem = {
       id: householdDraft.id || 'house_' + Date.now(),
@@ -1810,7 +2105,10 @@ export default function App() {
   };
 
   const deleteHouseholdExpense = (id: string) => {
-    const list = (dbState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES).filter(h => h.id !== id);
+    const currentList = Array.isArray(dbState.householdExpenses)
+      ? dbState.householdExpenses
+      : DEFAULT_HOUSEHOLD_EXPENSES;
+    const list = currentList.filter(h => h.id !== id);
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: list,
@@ -1818,7 +2116,10 @@ export default function App() {
   };
 
   const toggleHouseholdExpense = (id: string) => {
-    const list = (dbState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES).map(h =>
+    const currentList = Array.isArray(dbState.householdExpenses)
+      ? dbState.householdExpenses
+      : DEFAULT_HOUSEHOLD_EXPENSES;
+    const list = currentList.map(h =>
       h.id === id ? { ...h, isActive: !h.isActive } : h
     );
     persistAndEnqueueWorkManager({
@@ -3440,9 +3741,23 @@ export default function App() {
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
     const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
+    // Despesas Cadastradas da Moto & Peças
+    const rawBikeExpenses: BikeExpenseItem[] =
+      Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+        ? dbState.bikeExpenses
+        : DEFAULT_BIKE_EXPENSES;
+    const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
+    const monthlyBikeExpensesTotal = activeBikeExpenses.reduce(
+      (sum, b) => sum + Math.max(0, Number(b.monthlyAmount) || 0),
+      0
+    );
+    const dailyBikeExpensesReserve = monthlyBikeExpensesTotal / workDaysPerMonth;
+    const weeklyBikeExpensesReserve = dailyBikeExpensesReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+    const bikeExpensesPctOfGross = dailyGross > 0 ? Math.round((dailyBikeExpensesReserve / dailyGross) * 100) : 0;
+
     // 5. Despesas da Casa & Família (Fora da Moto: Aluguel, Luz, Água, Mercado, Internet, etc.)
     const rawHouseholdExpenses: HouseholdExpenseItem[] =
-      Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+      Array.isArray(dbState.householdExpenses)
         ? dbState.householdExpenses
         : DEFAULT_HOUSEHOLD_EXPENSES;
     const activeHouseholdExpenses = rawHouseholdExpenses.filter(h => h.isActive);
@@ -3541,6 +3856,13 @@ export default function App() {
       weeklyDocsReserve,
       monthlyDocsReserve,
       docsPctOfGross,
+      // Despesas Cadastradas da Moto
+      rawBikeExpenses,
+      activeBikeExpenses,
+      monthlyBikeExpensesTotal,
+      dailyBikeExpensesReserve,
+      weeklyBikeExpensesReserve,
+      bikeExpensesPctOfGross,
       // Despesas da Casa & Família
       rawHouseholdExpenses,
       activeHouseholdExpenses,
@@ -4751,244 +5073,6 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="flex flex-col gap-4 sm:gap-6">
             {/* CARDS EM DESTAQUE NO TOPO: RESERVAS OBRIGATÓRIAS DO MOTOBOY */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800/50">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-base shrink-0">
-                    🛡️
-                  </span>
-                  <div>
-                    <h2 className="text-sm sm:text-base font-black flex items-center gap-2">
-                      <span>Reservas Financeiras Obrigatórias</span>
-                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
-                        Blindagem do Bolso
-                      </span>
-                    </h2>
-                    <p className={`text-xs mt-0.5 ${mutedText}`}>
-                      Valores diários que você deve separar do faturamento antes de gastar seu lucro
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('planejamento');
-                  }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Ajustar Parâmetros</span>
-                </button>
-              </div>
-
-              {/* Grid dos Cards de Reserva em Destaque (Moto, Casa, Emergência e Total) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
-                {/* 1. Reserva Alimentação na Rua */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-orange-400 font-black">
-                      <span>🍱</span>
-                      <span className="truncate">Alimentação Rua</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
-                      {financialIntelligence.foodPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-orange-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
-                  </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Almoço e água no turno
-                  </div>
-                </div>
-
-                {/* 2. Reserva Manutenção da Moto */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-amber-400 font-black">
-                      <span>🛠️</span>
-                      <span className="truncate">Manutenção Moto</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
-                      {financialIntelligence.maintPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
-                  </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Óleo, pneus e relação
-                  </div>
-                </div>
-
-                {/* 3. Reserva Documentos da Moto */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-sky-400 font-black">
-                      <span>📄</span>
-                      <span className="truncate">Documentos & IPVA</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-400">
-                      {financialIntelligence.docsPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
-                  </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    IPVA, CRLV e DAS MEI
-                  </div>
-                </div>
-
-                {/* 4. Reserva Despesas da Casa & Família (NOVO) */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_casa');
-                  }}
-                  className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group`}
-                  title="Clique para gerenciar suas contas de casa"
-                >
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300">
-                      <span>🏠</span>
-                      <span className="truncate">Contas da Casa</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
-                      {financialIntelligence.housePctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-blue-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
-                  </div>
-                  <div className={`text-[11px] mt-1 font-semibold text-blue-300`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês total
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Aluguel, luz, água e mercado ↗
-                  </div>
-                </div>
-
-                {/* 5. Reserva de Emergência */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-purple-400 font-black">
-                      <span>🛡️</span>
-                      <span className="truncate">Emergência</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
-                      {financialIntelligence.emergencyPct}%
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-purple-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
-                  </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Imprevistos e dias parados
-                  </div>
-                </div>
-
-                {/* 6. Total Diário a Separar (Moto + Casa + Emergência) */}
-                <div className="rounded-2xl p-3 sm:p-3.5 border-2 border-emerald-500/40 bg-emerald-500/10">
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-emerald-400 font-black">
-                      <span>🔒</span>
-                      <span className="truncate">Total a Guardar</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-                      Blindagem
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-emerald-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
-                    <span className="text-xs font-semibold ml-1 text-emerald-300">/dia</span>
-                  </div>
-                  <div className="text-[11px] mt-1 font-semibold text-emerald-400/90 truncate">
-                    {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês total
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate text-emerald-300/80`}>
-                    Moto + Casa + Emergência
-                  </div>
-                </div>
-              </div>
-
-              {/* PAINEL CONSOLIDADO DAS 3 DIVISÕES DO DINHEIRO DO MOTOBOY */}
-              <div className={`mt-3.5 pt-3.5 border-t border-slate-800/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 p-3 rounded-2xl ${
-                isDark ? 'bg-slate-900/60' : 'bg-slate-100/80'
-              }`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-black uppercase text-[#FF6A1A] tracking-wider">
-                    Divisão do Dinheiro:
-                  </span>
-                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
-                    <span className="text-rose-400 flex items-center gap-1">
-                      <span>🏍️ Moto:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}/dia</strong>
-                      <span className="text-[10px] opacity-75">({financialIntelligence.bikePctOfGross}%)</span>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-blue-400 flex items-center gap-1">
-                      <span>🏠 Casa:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia</strong>
-                      <span className="text-[10px] opacity-75">({financialIntelligence.housePctOfGross}%)</span>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-purple-400 flex items-center gap-1">
-                      <span>🛡️ Emergência:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia</strong>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-emerald-400 flex items-center gap-1 font-black">
-                      <span>💵 Lucro Limpo no Bolso:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">
-                        {financialIntelligence.netMarginPct}% livre
-                      </span>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto justify-end">
-                  <span className={`text-[11px] font-bold ${mutedText}`}>
-                    Ponto de Sobrevivência (Moto + Casa):
-                    <strong className="text-amber-400 ml-1 tabular-nums">{fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia</strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('billing');
-                      setBillingSubTab('despesas_casa');
-                    }}
-                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 transition-colors cursor-pointer"
-                  >
-                    Gerenciar Casa ↗
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
-            {/* Left Column: Hero Odometer, Level Road & Main Financials */}
-            <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
-              {/* LIVE ACTIVE SHIFT BANNER */}
               {activeShiftSession?.isActive && (
                 <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-emerald-500/15 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
                   <div className="flex items-start sm:items-center gap-3 min-w-0">
@@ -5051,7 +5135,10 @@ export default function App() {
                 </div>
               )}
 
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
+            {/* HERO DO TOPO: ODÔMETRO TOTAL + SALDO ATUAL DO MOTOBOY */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-stretch">
+              {/* 1. ODÔMETRO TOTAL NO TOPO */}
+              <div className={`lg:col-span-7 rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} flex flex-col justify-between shadow-sm`}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
                     Odômetro Total · {dbState.fuelConfig.bikeModelName}
@@ -5354,6 +5441,424 @@ export default function App() {
                 </div>
               </div>
 
+              {/* 2. CARD DE SALDO ATUAL DO MOTOBOY */}
+              {(() => {
+                const isMonthScope = dashboardSaldoScope === 'month';
+                const curBalance = isMonthScope ? periodTotals.saldoMonth : totals.lucro;
+                const curGross = isMonthScope ? periodTotals.revMonth : totals.totalRevenue;
+                const curExpenses = isMonthScope ? periodTotals.expMonth : totals.totalExpense;
+                const isPositive = curBalance >= 0;
+                const monthlyObligations = financialIntelligence.totalMonthlyCostsAndReserves || 0;
+                const reserveProgress = monthlyObligations > 0 ? Math.min(100, Math.max(0, Math.round((curBalance / monthlyObligations) * 100))) : (curBalance > 0 ? 100 : 0);
+
+                return (
+                  <div className={`lg:col-span-5 rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} flex flex-col justify-between shadow-sm border-2 ${
+                    isPositive ? 'border-emerald-500/30 dark:border-emerald-500/20' : 'border-rose-500/30 dark:border-rose-500/20'
+                  } relative overflow-hidden`}>
+                    {/* Background glow accent */}
+                    <div className={`absolute -right-12 -top-12 w-44 h-44 rounded-full blur-3xl pointer-events-none opacity-20 ${
+                      isPositive ? 'bg-emerald-500' : 'bg-rose-500'
+                    }`} />
+
+                    <div>
+                      {/* Header do Card com Toggle de Período */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap pb-3 mb-3 border-b border-slate-700/30">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
+                            isPositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          }`}>
+                            <Wallet className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-xs sm:text-sm font-black tracking-tight flex items-center gap-1.5">
+                              <span>Saldo Atual do Motoboy</span>
+                            </span>
+                            <p className={`text-[10px] font-semibold ${mutedText}`}>
+                              {isMonthScope ? `Livre em ${periodTotals.currentMonthName}` : 'Livre acumulado total'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Toggle Este Mês / Geral */}
+                        <div className="flex items-center bg-slate-900/60 dark:bg-slate-950 p-1 rounded-xl border border-slate-700/60 text-[11px] font-black">
+                          <button
+                            type="button"
+                            onClick={() => setDashboardSaldoScope('month')}
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                              isMonthScope
+                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
+                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                            }`}
+                          >
+                            Este Mês
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDashboardSaldoScope('all')}
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                              !isMonthScope
+                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
+                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                            }`}
+                          >
+                            Geral
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Saldo Principal em Destaque */}
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
+                            {isMonthScope ? `Saldo Líquido · ${periodTotals.currentMonthName}` : 'Saldo Líquido Total'}
+                          </span>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                            isPositive
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          }`}>
+                            {isPositive ? '● No Azul / Lucro Limpo' : '● No Vermelho / Atenção'}
+                          </span>
+                        </div>
+
+                        <div className="mt-1 flex items-baseline gap-2 flex-wrap">
+                          <span className={`text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight tabular-nums ${
+                            isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
+                          }`}>
+                            {fmtMoney(curBalance)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Entradas x Saídas (Moto + Casa) */}
+                      <div className="grid grid-cols-2 gap-2 mt-4">
+                        <div className="p-2.5 sm:p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 min-w-0">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-emerald-500">
+                            <span>+ FATURAMENTO</span>
+                            <span>↗</span>
+                          </div>
+                          <div className="text-sm sm:text-base font-black mt-0.5 text-emerald-400 tabular-nums truncate">
+                            {fmtMoney(curGross)}
+                          </div>
+                          <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                            {isMonthScope ? 'Corridas do mês' : 'Todas as corridas'}
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 sm:p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 min-w-0">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-rose-500">
+                            <span>- GASTOS TOTAIS</span>
+                            <span>↘</span>
+                          </div>
+                          <div className="text-sm sm:text-base font-black mt-0.5 text-rose-400 tabular-nums truncate">
+                            {fmtMoney(curExpenses)}
+                          </div>
+                          <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                            Moto + Despesas Casa
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Barra de Cobertura das Obrigações do Mês */}
+                      <div className={`mt-4 p-3 rounded-xl ${surfaceSubtle} border border-slate-700/40`}>
+                        <div className="flex items-center justify-between text-[11px] font-bold mb-1.5 flex-wrap gap-1">
+                          <span className="flex items-center gap-1.5 text-slate-300">
+                            <Shield className="w-3.5 h-3.5 text-[#FF6A1A]" />
+                            <span>Cobertura das Reservas do Mês</span>
+                          </span>
+                          <span className="text-[#FF6A1A] font-black tabular-nums">
+                            {reserveProgress}% coberto
+                          </span>
+                        </div>
+                        <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              reserveProgress >= 100
+                                ? 'bg-emerald-500'
+                                : reserveProgress >= 50
+                                ? 'bg-[#FF6A1A]'
+                                : 'bg-amber-500'
+                            }`}
+                            style={{ width: `${reserveProgress}%` }}
+                          />
+                        </div>
+                        <div className={`flex justify-between text-[10px] font-bold mt-1.5 tabular-nums ${mutedText}`}>
+                          <span>Saldo: {fmtMoney(Math.max(0, curBalance))}</span>
+                          <span>Meta Reservas: {fmtMoney(monthlyObligations)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Botões de Ação Rápida */}
+                    <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-700/40">
+                      <button
+                        type="button"
+                        onClick={openNewEntryModal}
+                        className="flex-1 py-2 sm:py-2.5 px-3 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>+ Corrida / Gasto</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('billing');
+                          setBillingSubTab('ganhos');
+                        }}
+                        className={`py-2 sm:py-2.5 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                          isDark
+                            ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                            : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-800'
+                        }`}
+                      >
+                        <span>Extrato</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800/50">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-base shrink-0">
+                    🛡️
+                  </span>
+                  <div>
+                    <h2 className="text-sm sm:text-base font-black flex items-center gap-2">
+                      <span>Reservas Financeiras Obrigatórias</span>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                        Blindagem do Bolso
+                      </span>
+                    </h2>
+                    <p className={`text-xs mt-0.5 ${mutedText}`}>
+                      Valores diários que você deve separar do faturamento antes de gastar seu lucro
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('planejamento');
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Ajustar Parâmetros</span>
+                </button>
+              </div>
+
+              {/* Grid dos Cards de Reserva em Destaque (Moto, Casa, Emergência e Total) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
+                {/* 1. Reserva Alimentação na Rua */}
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-orange-400 font-black">
+                      <span>🍱</span>
+                      <span className="truncate">Alimentação Rua</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
+                      {financialIntelligence.foodPctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-orange-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Almoço e água no turno
+                  </div>
+                </div>
+
+                {/* 2. Reserva Manutenção da Moto */}
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-amber-400 font-black">
+                      <span>🛠️</span>
+                      <span className="truncate">Manutenção Moto</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
+                      {financialIntelligence.maintPctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Óleo, pneus e relação
+                  </div>
+                </div>
+
+                {/* 3. Reserva Documentos da Moto */}
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-sky-400 font-black">
+                      <span>📄</span>
+                      <span className="truncate">Documentos & IPVA</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-400">
+                      {financialIntelligence.docsPctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    IPVA, CRLV e DAS MEI
+                  </div>
+                </div>
+
+                {/* 4. Reserva Despesas da Casa & Família (NOVO) */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('despesas_casa');
+                  }}
+                  className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group`}
+                  title="Clique para gerenciar suas contas de casa"
+                >
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300">
+                      <span>🏠</span>
+                      <span className="truncate">Contas da Casa</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
+                      {financialIntelligence.housePctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-blue-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold text-blue-300`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês total
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Aluguel, luz, água e mercado ↗
+                  </div>
+                </div>
+
+                {/* 5. Reserva de Emergência */}
+                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-purple-400 font-black">
+                      <span>🛡️</span>
+                      <span className="truncate">Emergência</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
+                      {financialIntelligence.emergencyPct}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-purple-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
+                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
+                    Imprevistos e dias parados
+                  </div>
+                </div>
+
+                {/* 6. Total Diário a Separar (Moto + Casa + Emergência) */}
+                <div className="rounded-2xl p-3 sm:p-3.5 border-2 border-emerald-500/40 bg-emerald-500/10">
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
+                    <span className="flex items-center gap-1 text-emerald-400 font-black">
+                      <span>🔒</span>
+                      <span className="truncate">Total a Guardar</span>
+                    </span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                      Blindagem
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-black text-emerald-400 tabular-nums">
+                    {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
+                    <span className="text-xs font-semibold ml-1 text-emerald-300">/dia</span>
+                  </div>
+                  <div className="text-[11px] mt-1 font-semibold text-emerald-400/90 truncate">
+                    {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês total
+                  </div>
+                  <div className={`text-[10px] mt-0.5 truncate text-emerald-300/80`}>
+                    Moto + Casa + Emergência
+                  </div>
+                </div>
+              </div>
+
+              {/* PAINEL CONSOLIDADO DAS 3 DIVISÕES DO DINHEIRO DO MOTOBOY */}
+              <div className={`mt-3.5 pt-3.5 border-t border-slate-800/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 p-3 rounded-2xl ${
+                isDark ? 'bg-slate-900/60' : 'bg-slate-100/80'
+              }`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase text-[#FF6A1A] tracking-wider">
+                    Divisão do Dinheiro:
+                  </span>
+                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
+                    <span className="text-rose-400 flex items-center gap-1">
+                      <span>🏍️ Moto:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}/dia</strong>
+                      <span className="text-[10px] opacity-75">({financialIntelligence.bikePctOfGross}%)</span>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-blue-400 flex items-center gap-1">
+                      <span>🏠 Casa:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia</strong>
+                      <span className="text-[10px] opacity-75">({financialIntelligence.housePctOfGross}%)</span>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-purple-400 flex items-center gap-1">
+                      <span>🛡️ Emergência:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia</strong>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-emerald-400 flex items-center gap-1 font-black">
+                      <span>💵 Lucro Limpo no Bolso:</span>
+                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">
+                        {financialIntelligence.netMarginPct}% livre
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto justify-end">
+                  <span className={`text-[11px] font-bold ${mutedText}`}>
+                    Ponto de Sobrevivência (Moto + Casa):
+                    <strong className="text-amber-400 ml-1 tabular-nums">{fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('billing');
+                      setBillingSubTab('despesas_casa');
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 transition-colors cursor-pointer"
+                  >
+                    Gerenciar Casa ↗
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
+            {/* Left Column: Hero Odometer, Level Road & Main Financials */}
+            <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
+              {/* LIVE ACTIVE SHIFT BANNER */}
               {/* Period Earnings + Real-Time Productivity */}
               <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                 <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
@@ -6826,6 +7331,7 @@ export default function App() {
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
                   { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
+                  { id: 'despesas_moto', label: '🏍️ Despesas da Moto' },
                   { id: 'despesas_casa', label: '🏠 Despesas da Casa' },
                   { id: 'planejamento', label: 'Planejamento & IA' },
                   { id: 'ganhos', label: 'Ganhos por App' },
@@ -7516,6 +8022,430 @@ export default function App() {
               </div>
             )}
 
+            {/* ================= SUB-ABA: DESPESAS DA MOTO & CUSTOS OPERACIONAIS ================= */}
+            {billingSubTab === 'despesas_moto' && (
+              <div className="flex flex-col gap-4 sm:gap-6">
+                {/* TOPO: CARDS DE RESUMO DOS CUSTOS OPERACIONAIS DA MOTO */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-lg">
+                          🏍️
+                        </span>
+                        <h2 className="text-base sm:text-lg font-black">
+                          Despesas da Moto & Custos Operacionais
+                        </h2>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                          Manutenção, Gasolina & Oficina
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-1 ${mutedText}`}>
+                        Cadastre combustível, óleo, pneus, kit relação, freios, seguro, IPVA e revisões. O app rateia o valor pelos seus dias de trabalho para você nunca ser pego de surpresa na oficina!
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={openNewBikeExpenseModal}
+                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-[#FF6A1A]/20"
+                      >
+                        <Plus className="w-4 h-4 stroke-[3]" />
+                        <span>Nova Despesa da Moto</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetDefaultBikeExpenses}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-slate-700`}
+                        title="Restaurar lista sugerida com peças, combustível e manutenção padrão"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline ml-1">Restaurar Padrão</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4 Cards de Métricas da Moto */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-4">
+                    {/* 1. Total Mensal da Moto */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-[#FF6A1A] ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-[#FF6A1A] flex items-center gap-1.5 font-black">
+                          <span>🏍️</span>
+                          <span>Total Custos Moto / Mês</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A]">
+                          {financialIntelligence.activeBikeExpenses.length} ativas
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-[#FF6A1A] tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.monthlyBikeExpensesTotal)}
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        Custos operacionais e peças da moto
+                      </div>
+                    </div>
+
+                    {/* 2. Rateio Diário Obrigatório */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-amber-400 flex items-center gap-1.5 font-black">
+                          <span>📅</span>
+                          <span>Separar por Dia</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
+                          {financialIntelligence.workDaysPerMonth} dias úteis
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.dailyBikeExpensesReserve)}
+                        <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        {fmtCurrencyExact(financialIntelligence.weeklyBikeExpensesReserve)}/semana estimada
+                      </div>
+                    </div>
+
+                    {/* 3. % do Faturamento Comprometido */}
+                    <div className={`rounded-2xl p-3.5 sm:p-4 border-l-4 border-l-orange-500 ${surfaceSubtle}`}>
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-orange-400 flex items-center gap-1.5 font-black">
+                          <span>📊</span>
+                          <span>Impacto no Ganho</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400">
+                          Operação Moto
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-orange-400 tabular-nums">
+                        {financialIntelligence.bikeExpensesPctOfGross}%
+                        <span className="text-xs font-semibold ml-1 text-slate-400">do bruto</span>
+                      </div>
+                      <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
+                        Base de {fmtCurrencyExact(financialIntelligence.dailyGross)}/dia
+                      </div>
+                    </div>
+
+                    {/* 4. Ponto de Equilíbrio da Moto (Break-Even da Moto) */}
+                    <div className="rounded-2xl p-3.5 sm:p-4 border-2 border-amber-500/40 bg-amber-500/10">
+                      <div className="flex items-center justify-between text-xs font-bold mb-1">
+                        <span className="text-amber-400 flex items-center gap-1.5 font-black">
+                          <span>⚖️</span>
+                          <span>Ponto de Equilíbrio Moto</span>
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                          Mínimo
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
+                        {fmtCurrencyExact(financialIntelligence.breakEvenBikeDaily)}
+                        <span className="text-xs font-semibold ml-1 text-amber-300">/dia</span>
+                      </div>
+                      <div className="text-xs mt-1 font-semibold text-amber-300/90 truncate">
+                        Para não pagar para trabalhar
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Banner Explicativo */}
+                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                    isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100/80 border-slate-200'
+                  }`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-xl shrink-0 mt-0.5">💡</span>
+                      <div>
+                        <strong className="text-[#FF6A1A] block font-black mb-0.5">
+                          O Segredo da Moto Sem Dívidas: Blindagem da Máquina de Fazer Dinheiro
+                        </strong>
+                        <p className={mutedText}>
+                          1. <strong>Combustível & Abastecimento</strong> · 2. <strong>Peças de Desgaste (Óleo, Pneus, Relação, Freios)</strong> · 3. <strong>Documentos & Seguro</strong>. Separando diariamente a reserva da moto de <strong>{fmtCurrencyExact(financialIntelligence.dailyBikeExpensesReserve)}/dia</strong>, você troca peças no prazo correto e nunca para de rodar por falta de dinheiro!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FILTRO POR CATEGORIA E LISTAGEM DAS CONTAS DA MOTO */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/50">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm sm:text-base font-black">
+                        Suas Contas e Despesas da Moto
+                      </h3>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                        {financialIntelligence.rawBikeExpenses.length} cadastradas
+                      </span>
+                    </div>
+
+                    {/* Filtros Rápidos de Categoria */}
+                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
+                      {[
+                        { id: 'all', label: 'Todas' },
+                        { id: 'combustivel', label: '⛽ Combustível' },
+                        { id: 'manutencao', label: '🔧 Peças & Oficina' },
+                        { id: 'documentacao', label: '📄 Documentos & IPVA' },
+                        { id: 'seguro', label: '🛡️ Seguro & Proteção' },
+                        { id: 'equipamento', label: '🪖 Equipamentos' },
+                        { id: 'outros', label: 'Outros' },
+                      ].map(cat => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setBikeCategoryFilter(cat.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            bikeCategoryFilter === cat.id
+                              ? 'bg-[#FF6A1A] text-black font-black'
+                              : `${surfaceSubtle} ${mutedText} hover:text-current`
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Grid das Contas da Moto Cadastradas */}
+                  {(() => {
+                    const filteredList = financialIntelligence.rawBikeExpenses.filter(item => {
+                      if (bikeCategoryFilter === 'all') return true;
+                      return item.category === bikeCategoryFilter;
+                    });
+
+                    if (filteredList.length === 0) {
+                      return (
+                        <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
+                          <span className="text-3xl">🏍️</span>
+                          <p className={`text-xs ${mutedText}`}>
+                            Nenhuma despesa encontrada nesta categoria.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={openNewBikeExpenseModal}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black cursor-pointer"
+                          >
+                            + Cadastrar Despesa da Moto
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    const today = new Date();
+                    const currentDay = today.getDate();
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                        {filteredList.map(item => {
+                          const dueDay = Number(item.dueDay) || 15;
+                          const daysUntilDue = dueDay - currentDay;
+                          const isNearDue = daysUntilDue >= 0 && daysUntilDue <= 4;
+                          const isToday = daysUntilDue === 0;
+                          const isPastDue = daysUntilDue < 0 && daysUntilDue >= -5;
+                          const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+
+                          const categoryColors: Record<string, { label: string; badge: string }> = {
+                            combustivel: { label: 'Combustível', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                            manutencao: { label: 'Peças & Oficina', badge: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+                            documentacao: { label: 'Documentação', badge: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
+                            seguro: { label: 'Seguro / Proteção', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+                            equipamento: { label: 'Equipamentos', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
+                            outros: { label: 'Outros', badge: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
+                          };
+                          const catMeta = categoryColors[item.category] || categoryColors.outros;
+
+                          return (
+                            <div
+                              key={item.id}
+                              className={`rounded-2xl p-4 border transition-all ${
+                                !item.isActive
+                                  ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  : isDark
+                                  ? 'bg-slate-900/60 border-slate-800 hover:border-[#FF6A1A]/40'
+                                  : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]/40'
+                              } flex flex-col justify-between gap-3 shadow-xs`}
+                            >
+                              <div>
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                      {item.icon || '🏍️'}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <h4 className="text-sm font-black truncate leading-tight">
+                                        {item.name}
+                                      </h4>
+                                      <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border mt-0.5 ${catMeta.badge}`}>
+                                        {catMeta.label}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Toggle Ativar / Desativar */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleBikeExpense(item.id)}
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                                      item.isActive
+                                        ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                    title={item.isActive ? 'Clique para desativar esta despesa' : 'Clique para ativar esta despesa'}
+                                  >
+                                    {item.isActive ? 'Ativa' : 'Inativa'}
+                                  </button>
+                                </div>
+
+                                {/* Valores Mensal e Diário */}
+                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between">
+                                  <div>
+                                    <span className={`text-[10px] font-bold block ${mutedText}`}>
+                                      Valor Mensal
+                                    </span>
+                                    <span className="text-lg font-black text-[#FF6A1A] tabular-nums">
+                                      {fmtCurrencyExact(item.monthlyAmount)}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className={`text-[10px] font-bold block ${mutedText}`}>
+                                      Rateio Diário
+                                    </span>
+                                    <span className="text-xs font-extrabold text-amber-400 tabular-nums">
+                                      {fmtCurrencyExact(dailyShare)}/dia
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Status de Vencimento / Revisão */}
+                                <div className="mt-2">
+                                  <span
+                                    className={`text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
+                                      isToday
+                                        ? 'bg-rose-500/25 text-rose-300 animate-pulse'
+                                        : isNearDue
+                                        ? 'bg-amber-500/20 text-amber-300'
+                                        : isPastDue
+                                        ? 'bg-purple-500/20 text-purple-300'
+                                        : `${surfaceSubtle} ${mutedText}`
+                                    }`}
+                                  >
+                                    <Calendar className="w-3 h-3" />
+                                    <span>
+                                      {isToday
+                                        ? '🚨 Vence Hoje (dia ' + dueDay + ')!'
+                                        : isNearDue
+                                        ? `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`
+                                        : `Revisão / Vencimento: todo dia ${dueDay}`}
+                                    </span>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Ações: Lançar Gasto, Editar e Excluir */}
+                              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
+                                <button
+                                  type="button"
+                                  onClick={() => openNewBikePaymentModal(item)}
+                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                  title="Registrar pagamento ou compra desta peça como gasto real"
+                                >
+                                  <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                  <span>Lançar Gasto</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditBikeExpenseModal(item)}
+                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] cursor-pointer flex items-center gap-1`}
+                                  title="Editar esta despesa"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Editar</span>
+                                </button>
+                                {deletingBikeId === item.id ? (
+                                  <div className="flex items-center gap-1 animate-in fade-in duration-150">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        deleteBikeExpense(item.id);
+                                        setDeletingBikeId(null);
+                                      }}
+                                      className="px-2 py-1.5 rounded-lg text-xs font-black bg-rose-600 text-white hover:bg-rose-500 cursor-pointer flex items-center gap-1 shadow-sm"
+                                      title="Confirmar exclusão desta despesa"
+                                    >
+                                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                      <span>Sim, Excluir</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeletingBikeId(null)}
+                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
+                                      title="Cancelar"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeletingBikeId(item.id)}
+                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
+                                    title="Excluir esta despesa"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Excluir</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* CALENDÁRIO VISUAL DE REVISÕES E VENCIMENTOS DO MÊS */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <CalendarDays className="w-5 h-5 text-[#FF6A1A]" />
+                    <div>
+                      <h3 className="text-sm sm:text-base font-black">
+                        Cronograma Mensal de Custos & Vencimentos da Moto
+                      </h3>
+                      <p className={`text-xs ${mutedText}`}>
+                        Acompanhe quando cada conta e manutenção vence no mês para organizar trocas preventivas e abastecimento
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 mt-3">
+                    {(() => {
+                      const activeSorted = [...financialIntelligence.activeBikeExpenses].sort(
+                        (a, b) => (Number(a.dueDay) || 15) - (Number(b.dueDay) || 15)
+                      );
+
+                      return activeSorted.map(item => (
+                        <div
+                          key={'timeline_bike_' + item.id}
+                          className={`p-2.5 rounded-xl border text-center flex flex-col justify-between gap-1 ${
+                            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <div className="text-[10px] font-black uppercase text-[#FF6A1A] tracking-wider">
+                            Dia {item.dueDay || 15}
+                          </div>
+                          <span className="text-xl">{item.icon || '🏍️'}</span>
+                          <span className="text-xs font-black truncate">{item.name}</span>
+                          <span className="text-xs font-bold text-slate-300 tabular-nums">
+                            {fmtCurrencyExact(item.monthlyAmount)}
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ================= SUB-ABA: DESPESAS DA CASA & CUSTO DE VIDA DA FAMÍLIA ================= */}
             {billingSubTab === 'despesas_casa' && (
               <div className="flex flex-col gap-4 sm:gap-6">
@@ -7854,19 +8784,40 @@ export default function App() {
                                   <Edit3 className="w-3.5 h-3.5" />
                                   <span>Editar</span>
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (confirm(`Deseja remover a conta "${item.name}" das suas despesas domésticas?`)) {
-                                      deleteHouseholdExpense(item.id);
-                                    }
-                                  }}
-                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
-                                  title="Excluir esta conta"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Excluir</span>
-                                </button>
+                                {deletingHouseholdId === item.id ? (
+                                  <div className="flex items-center gap-1 animate-in fade-in duration-150">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        deleteHouseholdExpense(item.id);
+                                        setDeletingHouseholdId(null);
+                                      }}
+                                      className="px-2 py-1.5 rounded-lg text-xs font-black bg-rose-600 text-white hover:bg-rose-500 cursor-pointer flex items-center gap-1 shadow-sm"
+                                      title="Confirmar exclusão desta conta"
+                                    >
+                                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                      <span>Sim, Excluir</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeletingHouseholdId(null)}
+                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
+                                      title="Cancelar"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeletingHouseholdId(item.id)}
+                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
+                                    title="Excluir esta conta"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Excluir</span>
+                                  </button>
+                                )}
                               </div>
                             </div>
                           );
@@ -12927,6 +13878,187 @@ export default function App() {
         </div>
       )}
 
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA MOTO (CENTRALIZADO, MODERNO) */}
+      {showBikeModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => setShowBikeModal(false)}
+        >
+          <div
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] text-xl shrink-0">
+                  {bikeDraft.icon || '🏍️'}
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A]">
+                    Operação & Manutenção da Moto
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    {editingBikeItem ? 'Editar Despesa da Moto' : 'Nova Despesa da Moto'}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBikeModal(false)}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-4">
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Nome da Conta / Peça / Manutenção
+                </label>
+                <input
+                  type="text"
+                  value={bikeDraft.name}
+                  onChange={e => setBikeDraft({ ...bikeDraft, name: e.target.value })}
+                  placeholder="Ex: Troca de Óleo, Pneu Traseiro, Seguro, Pastilhas..."
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Valor Mensal Estimado (R$)
+                  </label>
+                  <FreeNumberInput
+                    step="5"
+                    value={bikeDraft.monthlyAmount}
+                    onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                    Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                  </span>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Dia de Vencimento / Revisão no Mês
+                  </label>
+                  <FreeNumberInput
+                    step="1"
+                    value={bikeDraft.dueDay || 15}
+                    onValueChange={val => setBikeDraft({ ...bikeDraft, dueDay: Math.max(1, Math.min(31, val)) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                    Dia do mês (1 a 31)
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Categoria
+                  </label>
+                  <select
+                    value={bikeDraft.category}
+                    onChange={e => setBikeDraft({ ...bikeDraft, category: e.target.value as any })}
+                    className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                  >
+                    <option value="combustivel">⛽ Combustível (Gasolina / Álcool)</option>
+                    <option value="manutencao">🔧 Peças & Oficina (Óleo, Pneus, Relação)</option>
+                    <option value="documentacao">📄 Documentação (IPVA, Licenciamento)</option>
+                    <option value="seguro">🛡️ Seguro & Proteção Veicular</option>
+                    <option value="equipamento">🪖 Equipamentos (Capacete, Capa, Luvas)</option>
+                    <option value="outros">✨ Outros Cuidados & Lavagem</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                    Ícone Representativo
+                  </label>
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                    {['🏍️', '⛽', '🛢️', '🛞', '⛓️', '🛑', '🛡️', '📄', '🔧', '✨', '🪖', '🛵', '🧤', '🪛', '⚙️'].map(ic => (
+                      <button
+                        key={ic}
+                        type="button"
+                        onClick={() => setBikeDraft({ ...bikeDraft, icon: ic })}
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg cursor-pointer border transition-all ${
+                          bikeDraft.icon === ic
+                            ? 'bg-[#FF6A1A] border-[#FF6A1A] text-black scale-110 font-black'
+                            : `${surfaceSubtle} hover:border-slate-600`
+                        }`}
+                      >
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div>
+                  <span className={`text-[10px] block font-bold ${mutedText}`}>Status da Despesa</span>
+                  <span className={`text-xs font-black ${bikeDraft.isActive ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {bikeDraft.isActive ? '✓ Ativa no cálculo das reservas da moto' : 'Inativa (Não afeta o rateio)'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBikeDraft({ ...bikeDraft, isActive: !bikeDraft.isActive })}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-colors ${
+                    bikeDraft.isActive
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {bikeDraft.isActive ? 'Ativa' : 'Desativada'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+                {editingBikeItem && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      deleteBikeExpense(editingBikeItem.id);
+                      setShowBikeModal(false);
+                      setEditingBikeItem(null);
+                    }}
+                    className="py-3 px-3.5 rounded-xl text-xs font-black bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
+                    title="Excluir esta despesa"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Excluir</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowBikeModal(false)}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={saveBikeExpense}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Salvar Despesa da Moto</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA (CENTRALIZADO, MODERNO) */}
       {showHouseholdModal && (
         <div
@@ -13072,6 +14204,21 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+                {editingHouseholdItem && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      deleteHouseholdExpense(editingHouseholdItem.id);
+                      setShowHouseholdModal(false);
+                      setEditingHouseholdItem(null);
+                    }}
+                    className="py-3 px-3.5 rounded-xl text-xs font-black bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
+                    title="Excluir esta conta"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Excluir</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowHouseholdModal(false)}
