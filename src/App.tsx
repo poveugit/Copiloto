@@ -370,19 +370,49 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
       const bikeExpensesList: BikeExpenseItem[] =
         Array.isArray(parsed.bikeExpenses) && parsed.bikeExpenses.length > 0
           ? parsed.bikeExpenses.map((item: BikeExpenseItem) => {
-              if (!item.recurrenceType) {
-                const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
-                if (defaultMatch) {
-                  return {
+              const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
+              let merged: BikeExpenseItem = defaultMatch
+                ? {
                     ...defaultMatch,
                     ...item,
-                    recurrenceType: defaultMatch.recurrenceType,
+                    recurrenceType: item.recurrenceType || defaultMatch.recurrenceType,
                     intervalDays: item.intervalDays ?? defaultMatch.intervalDays,
                     totalCost: item.totalCost ?? defaultMatch.totalCost,
+                  }
+                : { ...item, isCustomEdited: true };
+
+              // Se o card de combustível ficou salvo com 745 / 745.17 ou intervalo de 1 dia com valor sobrescrito, restaura para R$ 30/dia (R$ 900/mês)
+              if (
+                merged.id === 'combustivel_mensal' ||
+                merged.category === 'combustivel'
+              ) {
+                const mRounded = Math.round(Number(merged.monthlyAmount) || 0);
+                const tRounded = Math.round(Number(merged.totalCost) || 0);
+                if (mRounded === 745 || tRounded === 745 || (Number(merged.intervalDays) === 1 && Number(merged.totalCost) === 30)) {
+                  merged = {
+                    ...merged,
+                    recurrenceType: 'interval_days',
+                    intervalDays: 1,
+                    totalCost: 30,
+                    monthlyAmount: 900,
+                    isCustomEdited: true,
                   };
                 }
               }
-              return item;
+
+              // Detecta se o usuário já personalizou este item em relação ao padrão
+              if (
+                merged.isCustomEdited ||
+                !defaultMatch ||
+                merged.intervalDays !== defaultMatch.intervalDays ||
+                merged.totalCost !== defaultMatch.totalCost ||
+                merged.monthlyAmount !== defaultMatch.monthlyAmount ||
+                merged.recurrenceType !== defaultMatch.recurrenceType
+              ) {
+                merged.isCustomEdited = true;
+              }
+
+              return merged;
             })
           : DEFAULT_BIKE_EXPENSES.map(item => ({ ...item }));
 
@@ -1994,27 +2024,39 @@ export default function App() {
   };
 
   const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
-    setEditingBikeItem(item);
+    const rawList =
+      Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+        ? dbState.bikeExpenses
+        : DEFAULT_BIKE_EXPENSES;
+    const rawItem = rawList.find(b => b.id === item.id) || item;
+
+    setEditingBikeItem(rawItem);
     const today = todayStr();
-    const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
-    const intDays = Math.max(1, Number(item.intervalDays) || 30);
-    const mAmt = Math.max(0, Number((item as any).monthlyCost ?? item.monthlyAmount) || 0);
-    const tCost = (item as any).totalCost !== undefined
-      ? Number((item as any).totalCost)
-      : item.totalCost !== undefined
-      ? Number(item.totalCost)
-      : Math.round((mAmt * (intDays / 30)) * 100) / 100;
-    const lastPaid = item.lastPaidDate || today;
-    const nextDue = item.nextDueDate || addDaysToDateStr(lastPaid, intDays);
+    const recType: ExpenseRecurrenceType =
+      rawItem.recurrenceType || (rawItem.intervalDays ? 'interval_days' : 'monthly');
+    const intDays = Math.max(1, Number(rawItem.intervalDays) || 30);
+    const rawMonthly = Math.max(0, Number(rawItem.monthlyAmount) || 0);
+    const tCost =
+      rawItem.totalCost !== undefined && Number(rawItem.totalCost) > 0
+        ? Number(rawItem.totalCost)
+        : Math.round((rawMonthly * (intDays / 30)) * 100) / 100;
+    const mAmt =
+      recType === 'interval_days' && tCost > 0
+        ? Math.round(((tCost / intDays) * 30) * 100) / 100
+        : rawMonthly;
+    const lastPaid = rawItem.lastPaidDate || today;
+    const nextDue = rawItem.nextDueDate || addDaysToDateStr(lastPaid, intDays);
 
     setBikeDraft({
-      ...item,
+      ...rawItem,
+      monthlyAmount: mAmt,
       recurrenceType: recType,
       intervalDays: intDays,
       totalCost: tCost,
       lastPaidDate: lastPaid,
       nextDueDate: nextDue,
-      dueDay: item.dueDay || 15,
+      dueDay: rawItem.dueDay || 15,
+      isCustomEdited: true,
     });
     setShowBikeModal(true);
   };
@@ -2048,6 +2090,7 @@ export default function App() {
           : bikeDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
       icon: bikeDraft.icon?.trim() || '🏍️',
       isActive: bikeDraft.isActive !== false,
+      isCustomEdited: true,
     };
 
     const existingIndex = list.findIndex(b => b.id === sanitized.id);
@@ -3844,13 +3887,13 @@ export default function App() {
     const monthlyGross = dailyGross * workDaysPerMonth;
     const weeklyGross = dailyGross * Math.min(7, Math.round(workDaysPerMonth / 4));
 
-    // 1. Combustível Diário
+    // 1. Combustível Diário (Inicialmente pelo consumo KM/L, atualizado abaixo caso o usuário personalize o card de Combustível)
     const kmPerLiter = Math.max(5, Number(dbState.fuelConfig.kmPerLiter) || 35);
     const fuelPrice = Math.max(1, Number(dbState.fuelConfig.fuelPrice) || 5.8);
     const fuelCostPerKm = fuelPrice / kmPerLiter;
-    const dailyFuelCost = dailyKm * fuelCostPerKm;
-    const monthlyFuelCost = dailyFuelCost * workDaysPerMonth;
-    const fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
+    let dailyFuelCost = dailyKm * fuelCostPerKm;
+    let monthlyFuelCost = dailyFuelCost * workDaysPerMonth;
+    let fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
 
     // 2. Reserva Diária para Manutenção da Moto (Desgaste real por KM de cada peça + margem preventiva)
     const maintBreakdown = dbState.maintenanceItems.map(item => {
@@ -3908,16 +3951,24 @@ export default function App() {
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
     const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
-    // Despesas Cadastradas da Moto & Peças (Enriquecimento Proporcional Unificado com a Inteligência Financeira)
+    // Despesas Cadastradas da Moto & Peças (Respeita 100% qualquer edição feita pelo usuário + cálculo proporcional nos itens padrão)
     const rawBikeExpenses: BikeExpenseItem[] =
       Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
 
-    // Enriquecimento dinâmico de cada item da moto para falar a mesma língua do Planejamento IA
     const enrichedBikeExpenses = rawBikeExpenses.map(item => {
       const lowerName = item.name.toLowerCase();
       const lowerCat = (item.category || '').toLowerCase();
+      const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
+      const isUserCustom = Boolean(
+        item.isCustomEdited ||
+          !defaultMatch ||
+          item.intervalDays !== defaultMatch.intervalDays ||
+          item.totalCost !== defaultMatch.totalCost ||
+          item.monthlyAmount !== defaultMatch.monthlyAmount ||
+          item.recurrenceType !== defaultMatch.recurrenceType
+      );
 
       let dailyRateio = 0;
       let monthlyCost = 0;
@@ -3925,8 +3976,26 @@ export default function App() {
       let calculationNote = '';
       let isProportional = false;
 
-      // 1. IPVA (Sincronizado diretamente com a reserva diária e valor anual do IPVA da IA)
-      if (item.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
+      // SE O USUÁRIO EDITOU OU PERSONALIZOU ESTE CARD, RESPEITA EXATAMENTE O VALOR SALVO POR ELE!
+      if (isUserCustom) {
+        const intDays = Math.max(1, Number(item.intervalDays) || 30);
+        if (item.recurrenceType === 'interval_days' && Number(item.totalCost) > 0) {
+          totalCost = Number(item.totalCost);
+          monthlyCost = Math.round(((totalCost / intDays) * 30) * 100) / 100;
+        } else {
+          monthlyCost = Math.max(0, Number(item.monthlyAmount) || 0);
+          totalCost = Number(item.totalCost) > 0 ? Number(item.totalCost) : monthlyCost;
+        }
+        dailyRateio = monthlyCost / workDaysPerMonth;
+        calculationNote =
+          item.recurrenceType === 'interval_days'
+            ? `${fmtCurrencyExact(totalCost)} a cada ${intDays} ${intDays === 1 ? 'dia' : 'dias'} → ${fmtCurrencyExact(dailyRateio)}/dia (${workDaysPerMonth}d úteis)`
+            : `Rateio em ${workDaysPerMonth} dias úteis: ${fmtCurrencyExact(dailyRateio)}/dia`;
+        isProportional = false;
+      }
+      // CASO CONTRÁRIO (Item padrão ainda não editado manualmente), usa o cálculo proporcional da IA:
+      // 1. IPVA
+      else if (item.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
         dailyRateio = dailyIpvaReserve;
         monthlyCost = dailyIpvaReserve * workDaysPerMonth;
         totalCost = ipvaAnnual;
@@ -3949,16 +4018,17 @@ export default function App() {
         calculationNote = `Rateio IA: ${fmtCurrencyExact(dailyMeiInsuranceReserve)}/dia (${fmtCurrencyExact(insuranceMonthly)}/mês)`;
         isProportional = true;
       }
-      // 4. Combustível (Sincronizado com o consumo real e KM rodados por dia)
-      else if (item.id === 'combustivel_semanal' || lowerCat === 'combustivel' || lowerName.includes('combustível') || lowerName.includes('gasolina')) {
+      // 4. Combustível (Padrão por KM/L quando não editado manualmente)
+      else if (item.id === 'combustivel_mensal' || item.id === 'combustivel_semanal' || lowerCat === 'combustivel' || lowerName.includes('combustível') || lowerName.includes('gasolina')) {
         dailyRateio = dailyFuelCost;
         monthlyCost = monthlyFuelCost;
-        totalCost = monthlyFuelCost;
+        const intDays = Math.max(1, Number(item.intervalDays) || 7);
+        totalCost = Math.round(((monthlyFuelCost / 30) * intDays) * 100) / 100;
         calculationNote = `Consumo real: ~${Math.round(dailyKm)} km/dia a ${kmPerLiter} km/L`;
         isProportional = true;
       }
-      // 5. Óleo do Motor (Desgaste proporcional real por KM rodado + cota preventiva)
-      else if (item.id === 'oleo_motor' || lowerName.includes('óleo')) {
+      // 5. Óleo do Motor
+      else if (item.id === 'oleo_filtro' || item.id === 'oleo_motor' || lowerName.includes('óleo')) {
         const oilObj = maintBreakdown.find(m => m.id === 'oil');
         const wearDaily = oilObj ? oilObj.dailyReserve : 0;
         const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
@@ -3968,7 +4038,7 @@ export default function App() {
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
-      // 6. Pneus (Desgaste proporcional real por KM rodado + cota preventiva)
+      // 6. Pneus
       else if (item.id === 'pneus_camaras' || lowerName.includes('pneu')) {
         const tireObj = maintBreakdown.find(m => m.id === 'tire');
         const wearDaily = tireObj ? tireObj.dailyReserve : 0;
@@ -3979,7 +4049,7 @@ export default function App() {
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
-      // 7. Kit Relação (Desgaste proporcional real por KM rodado + cota preventiva)
+      // 7. Kit Relação
       else if (item.id === 'kit_transmissao' || lowerName.includes('relação') || lowerName.includes('corrente')) {
         const chainObj = maintBreakdown.find(m => m.id === 'chain');
         const wearDaily = chainObj ? chainObj.dailyReserve : 0;
@@ -3990,7 +4060,7 @@ export default function App() {
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
-      // 8. Freios e Pastilhas (Desgaste proporcional real por KM rodado + cota preventiva)
+      // 8. Freios e Pastilhas
       else if (item.id === 'freios_pastilhas' || lowerName.includes('freio') || lowerName.includes('pastilha')) {
         const brakeObj = maintBreakdown.find(m => m.id === 'brake');
         const wearDaily = brakeObj ? brakeObj.dailyReserve : 0;
@@ -4001,15 +4071,7 @@ export default function App() {
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
-      // 9. Revisão Geral da Moto
-      else if (item.id === 'mecanica_revisao' || lowerName.includes('revisão')) {
-        const itemMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
-        dailyRateio = itemMonthly / workDaysPerMonth;
-        monthlyCost = itemMonthly;
-        calculationNote = `Prevenção periódica na oficina`;
-        isProportional = false;
-      }
-      // 10. Outros itens e equipamentos cadastrados pelo motoboy
+      // 9. Revisão Geral e Outros
       else {
         const itemMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
         dailyRateio = itemMonthly / workDaysPerMonth;
@@ -4020,6 +4082,7 @@ export default function App() {
 
       return {
         ...item,
+        monthlyAmount: monthlyCost,
         dailyRateio,
         monthlyCost,
         totalCost: totalCost > 0 ? totalCost : monthlyCost,
@@ -4031,12 +4094,27 @@ export default function App() {
     const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
     const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive);
 
+    // Se o usuário personalizou o card de combustível, sincroniza o Planejamento IA para usar esse exato valor!
+    const customFuelItems = activeEnrichedBikeExpenses.filter(
+      b =>
+        (b.id === 'combustivel_mensal' || b.category === 'combustivel' || b.name.toLowerCase().includes('combustível')) &&
+        !b.isProportional
+    );
+    if (customFuelItems.length > 0) {
+      dailyFuelCost = customFuelItems.reduce((sum, f) => sum + f.dailyRateio, 0);
+      monthlyFuelCost = customFuelItems.reduce((sum, f) => sum + f.monthlyCost, 0);
+      fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
+    }
+
     // Rateio diário e mensal unificado das despesas da moto
     const unifiedDailyBikeReserve = activeEnrichedBikeExpenses.reduce(
       (sum, b) => sum + b.dailyRateio,
       0
     );
-    const unifiedMonthlyBikeTotal = unifiedDailyBikeReserve * workDaysPerMonth;
+    const unifiedMonthlyBikeTotal = activeEnrichedBikeExpenses.reduce(
+      (sum, b) => sum + b.monthlyCost,
+      0
+    );
     const unifiedWeeklyBikeReserve = unifiedDailyBikeReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const unifiedBikePctOfGross = dailyGross > 0 ? Math.round((unifiedDailyBikeReserve / dailyGross) * 100) : 0;
 
@@ -14524,7 +14602,7 @@ export default function App() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
-                      {[7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
+                      {[1, 2, 7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
                         <button
                           key={d}
                           type="button"
@@ -14545,7 +14623,7 @@ export default function App() {
                               : `${surfaceSubtle} hover:border-slate-600`
                           }`}
                         >
-                          {d}d
+                          {d === 1 ? '1d (Diário)' : `${d}d`}
                         </button>
                       ))}
                     </div>
@@ -14555,7 +14633,7 @@ export default function App() {
                           Intervalo em Dias (Personalizado)
                         </label>
                         <FreeNumberInput
-                          step="5"
+                          step="1"
                           value={bikeDraft.intervalDays || 90}
                           onValueChange={val => {
                             const cleanDays = Math.max(1, Math.round(val));
@@ -14575,10 +14653,10 @@ export default function App() {
 
                       <div>
                         <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                          Valor Total da Troca / Peça (R$)
+                          Valor por Abastecimento / Troca (R$)
                         </label>
                         <FreeNumberInput
-                          step="10"
+                          step="5"
                           value={bikeDraft.totalCost ?? bikeDraft.monthlyAmount}
                           onValueChange={val => {
                             const cleanCost = Math.max(0, val);

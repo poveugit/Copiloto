@@ -96,6 +96,7 @@ export interface BikeExpenseItem {
   nextDueDate?: string;
   icon?: string;
   isActive: boolean;
+  isCustomEdited?: boolean;
 }
 
 export const DEFAULT_BIKE_EXPENSES: BikeExpenseItem[] = [
