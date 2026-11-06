@@ -369,7 +369,21 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
 
       const bikeExpensesList: BikeExpenseItem[] =
         Array.isArray(parsed.bikeExpenses) && parsed.bikeExpenses.length > 0
-          ? parsed.bikeExpenses
+          ? parsed.bikeExpenses.map((item: BikeExpenseItem) => {
+              if (!item.recurrenceType) {
+                const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
+                if (defaultMatch) {
+                  return {
+                    ...defaultMatch,
+                    ...item,
+                    recurrenceType: defaultMatch.recurrenceType,
+                    intervalDays: item.intervalDays ?? defaultMatch.intervalDays,
+                    totalCost: item.totalCost ?? defaultMatch.totalCost,
+                  };
+                }
+              }
+              return item;
+            })
           : DEFAULT_BIKE_EXPENSES.map(item => ({ ...item }));
 
       const houseExpenses: HouseholdExpenseItem[] =
@@ -1960,11 +1974,17 @@ export default function App() {
   // ================= BIKE / DESPESAS DA MOTO HANDLERS =================
   const openNewBikeExpenseModal = () => {
     setEditingBikeItem(null);
+    const today = todayStr();
     setBikeDraft({
       id: 'bike_' + Date.now(),
       name: '',
       category: 'manutencao',
       monthlyAmount: 0,
+      recurrenceType: 'interval_days',
+      intervalDays: 90,
+      totalCost: 0,
+      lastPaidDate: today,
+      nextDueDate: addDaysToDateStr(today, 90),
       dueDay: 15,
       icon: '🏍️',
       isActive: true,
@@ -1974,7 +1994,23 @@ export default function App() {
 
   const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
     setEditingBikeItem(item);
-    setBikeDraft({ ...item });
+    const today = todayStr();
+    const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
+    const intDays = Math.max(1, Number(item.intervalDays) || 30);
+    const mAmt = Math.max(0, Number(item.monthlyAmount) || 0);
+    const tCost = item.totalCost !== undefined ? Number(item.totalCost) : Math.round((mAmt * (intDays / 30)) * 100) / 100;
+    const lastPaid = item.lastPaidDate || today;
+    const nextDue = item.nextDueDate || addDaysToDateStr(lastPaid, intDays);
+
+    setBikeDraft({
+      ...item,
+      recurrenceType: recType,
+      intervalDays: intDays,
+      totalCost: tCost,
+      lastPaidDate: lastPaid,
+      nextDueDate: nextDue,
+      dueDay: item.dueDay || 15,
+    });
     setShowBikeModal(true);
   };
 
@@ -1983,12 +2019,28 @@ export default function App() {
       ? [...dbState.bikeExpenses]
       : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
 
+    const recType: ExpenseRecurrenceType = bikeDraft.recurrenceType || 'monthly';
+    const intDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+    const totalCostVal = Math.max(0, Number(bikeDraft.totalCost) || 0);
+    const computedMonthly =
+      recType === 'interval_days' && totalCostVal > 0
+        ? Math.round(((totalCostVal / intDays) * 30) * 100) / 100
+        : Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
+
     const sanitized: BikeExpenseItem = {
       id: bikeDraft.id || 'bike_' + Date.now(),
       name: bikeDraft.name.trim() || 'Despesa da Moto',
       category: bikeDraft.category || 'outros',
-      monthlyAmount: Math.max(0, Number(bikeDraft.monthlyAmount) || 0),
+      monthlyAmount: computedMonthly,
+      recurrenceType: recType,
       dueDay: Math.max(1, Math.min(31, Number(bikeDraft.dueDay) || 15)),
+      intervalDays: intDays,
+      totalCost: recType === 'interval_days' ? (totalCostVal > 0 ? totalCostVal : computedMonthly) : totalCostVal,
+      lastPaidDate: bikeDraft.lastPaidDate || todayStr(),
+      nextDueDate:
+        recType === 'interval_days'
+          ? bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), intDays)
+          : bikeDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
       icon: bikeDraft.icon?.trim() || '🏍️',
       isActive: bikeDraft.isActive !== false,
     };
@@ -2045,7 +2097,10 @@ export default function App() {
     setExpenseType('moto');
     setSelectedCategory(item.name);
     setEntryDate(todayStr());
-    setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+    const payVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
+      ? item.totalCost
+      : item.monthlyAmount;
+    setExpenseAmount(payVal > 0 ? String(payVal) : '');
     setExpenseDescription(`Pagamento / Manutenção: ${item.name}`);
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
@@ -2056,11 +2111,17 @@ export default function App() {
   // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
   const openNewHouseholdExpenseModal = () => {
     setEditingHouseholdItem(null);
+    const today = todayStr();
     setHouseholdDraft({
       id: 'house_' + Date.now(),
       name: '',
       category: 'moradia',
       monthlyAmount: 0,
+      recurrenceType: 'monthly',
+      intervalDays: 30,
+      totalCost: 0,
+      lastPaidDate: today,
+      nextDueDate: addDaysToDateStr(today, 30),
       dueDay: 10,
       icon: '🏠',
       isActive: true,
@@ -2070,7 +2131,23 @@ export default function App() {
 
   const openEditHouseholdExpenseModal = (item: HouseholdExpenseItem) => {
     setEditingHouseholdItem(item);
-    setHouseholdDraft({ ...item });
+    const today = todayStr();
+    const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
+    const intDays = Math.max(1, Number(item.intervalDays) || 30);
+    const mAmt = Math.max(0, Number(item.monthlyAmount) || 0);
+    const tCost = item.totalCost !== undefined ? Number(item.totalCost) : Math.round((mAmt * (intDays / 30)) * 100) / 100;
+    const lastPaid = item.lastPaidDate || today;
+    const nextDue = item.nextDueDate || addDaysToDateStr(lastPaid, intDays);
+
+    setHouseholdDraft({
+      ...item,
+      recurrenceType: recType,
+      intervalDays: intDays,
+      totalCost: tCost,
+      lastPaidDate: lastPaid,
+      nextDueDate: nextDue,
+      dueDay: item.dueDay || 10,
+    });
     setShowHouseholdModal(true);
   };
 
@@ -2079,12 +2156,28 @@ export default function App() {
       ? [...dbState.householdExpenses]
       : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
 
+    const recType: ExpenseRecurrenceType = householdDraft.recurrenceType || 'monthly';
+    const intDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+    const totalCostVal = Math.max(0, Number(householdDraft.totalCost) || 0);
+    const computedMonthly =
+      recType === 'interval_days' && totalCostVal > 0
+        ? Math.round(((totalCostVal / intDays) * 30) * 100) / 100
+        : Math.max(0, Number(householdDraft.monthlyAmount) || 0);
+
     const sanitized: HouseholdExpenseItem = {
       id: householdDraft.id || 'house_' + Date.now(),
       name: householdDraft.name.trim() || 'Despesa Doméstica',
       category: householdDraft.category || 'outros',
-      monthlyAmount: Math.max(0, Number(householdDraft.monthlyAmount) || 0),
+      monthlyAmount: computedMonthly,
+      recurrenceType: recType,
       dueDay: Math.max(1, Math.min(31, Number(householdDraft.dueDay) || 10)),
+      intervalDays: intDays,
+      totalCost: recType === 'interval_days' ? (totalCostVal > 0 ? totalCostVal : computedMonthly) : totalCostVal,
+      lastPaidDate: householdDraft.lastPaidDate || todayStr(),
+      nextDueDate:
+        recType === 'interval_days'
+          ? householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), intDays)
+          : householdDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
       icon: householdDraft.icon?.trim() || '🏠',
       isActive: householdDraft.isActive !== false,
     };
@@ -2539,7 +2632,10 @@ export default function App() {
     setSelectedHouseholdExpenseId(item.id);
     setSelectedCategory(item.name);
     setEntryDate(todayStr());
-    setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+    const payVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
+      ? item.totalCost
+      : item.monthlyAmount;
+    setExpenseAmount(payVal > 0 ? String(payVal) : '');
     setExpenseDescription('');
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
@@ -8230,18 +8326,12 @@ export default function App() {
                       );
                     }
 
-                    const today = new Date();
-                    const currentDay = today.getDate();
-
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                         {filteredList.map(item => {
-                          const dueDay = Number(item.dueDay) || 15;
-                          const daysUntilDue = dueDay - currentDay;
-                          const isNearDue = daysUntilDue >= 0 && daysUntilDue <= 4;
-                          const isToday = daysUntilDue === 0;
-                          const isPastDue = daysUntilDue < 0 && daysUntilDue >= -5;
+                          const dueInfo = getExpenseDueInfo(item);
                           const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+                          const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
                             combustivel: { label: 'Combustível', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
@@ -8274,9 +8364,16 @@ export default function App() {
                                       <h4 className="text-sm font-black truncate leading-tight">
                                         {item.name}
                                       </h4>
-                                      <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border mt-0.5 ${catMeta.badge}`}>
-                                        {catMeta.label}
-                                      </span>
+                                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                        <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${catMeta.badge}`}>
+                                          {catMeta.label}
+                                        </span>
+                                        {isInterval && (
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                                            A cada {item.intervalDays} dias
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
 
@@ -8295,17 +8392,18 @@ export default function App() {
                                   </button>
                                 </div>
 
-                                {/* Valores Mensal e Diário */}
-                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between">
+                                {/* Valores Mensal/Ciclo e Diário */}
+                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between gap-2">
                                   <div>
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      Valor Mensal
+                                      {isInterval ? `Reserva p/ Mês (Troca: ${fmtCurrencyExact(item.totalCost || item.monthlyAmount)})` : 'Valor Mensal'}
                                     </span>
                                     <span className="text-lg font-black text-[#FF6A1A] tabular-nums">
                                       {fmtCurrencyExact(item.monthlyAmount)}
+                                      <span className="text-[10px] font-bold text-slate-400 ml-0.5">/mês</span>
                                     </span>
                                   </div>
-                                  <div className="text-right">
+                                  <div className="text-right shrink-0">
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
                                       Rateio Diário
                                     </span>
@@ -8315,27 +8413,13 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* Status de Vencimento / Revisão */}
+                                {/* Status de Vencimento / Revisão Personalizado */}
                                 <div className="mt-2">
                                   <span
-                                    className={`text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
-                                      isToday
-                                        ? 'bg-rose-500/25 text-rose-300 animate-pulse'
-                                        : isNearDue
-                                        ? 'bg-amber-500/20 text-amber-300'
-                                        : isPastDue
-                                        ? 'bg-purple-500/20 text-purple-300'
-                                        : `${surfaceSubtle} ${mutedText}`
-                                    }`}
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg inline-flex items-center gap-1.5 ${dueInfo.badgeClass}`}
                                   >
-                                    <Calendar className="w-3 h-3" />
-                                    <span>
-                                      {isToday
-                                        ? '🚨 Vence Hoje (dia ' + dueDay + ')!'
-                                        : isNearDue
-                                        ? `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`
-                                        : `Revisão / Vencimento: todo dia ${dueDay}`}
-                                    </span>
+                                    <Calendar className="w-3 h-3 shrink-0" />
+                                    <span className="truncate">{dueInfo.label}</span>
                                   </span>
                                 </div>
                               </div>
@@ -8355,7 +8439,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => openEditBikeExpenseModal(item)}
                                   className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] cursor-pointer flex items-center gap-1`}
-                                  title="Editar esta despesa"
+                                  title="Editar prazo, ciclo de dias e valor desta despesa"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                   <span>Editar</span>
@@ -8403,43 +8487,57 @@ export default function App() {
                   })()}
                 </div>
 
-                {/* CALENDÁRIO VISUAL DE REVISÕES E VENCIMENTOS DO MÊS */}
+                {/* CALENDÁRIO VISUAL DE REVISÕES E VENCIMENTOS DA MOTO */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <CalendarDays className="w-5 h-5 text-[#FF6A1A]" />
                     <div>
                       <h3 className="text-sm sm:text-base font-black">
-                        Cronograma Mensal de Custos & Vencimentos da Moto
+                        Cronograma de Ciclos, Trocas & Vencimentos da Moto
                       </h3>
                       <p className={`text-xs ${mutedText}`}>
-                        Acompanhe quando cada conta e manutenção vence no mês para organizar trocas preventivas e abastecimento
+                        Ordenado pelas próximas revisões e vencimentos (a cada X dias ou mensal) para você se planejar com antecedência
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 mt-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 mt-3">
                     {(() => {
                       const activeSorted = [...financialIntelligence.activeBikeExpenses].sort(
-                        (a, b) => (Number(a.dueDay) || 15) - (Number(b.dueDay) || 15)
+                        (a, b) => getExpenseDueInfo(a).timelineSortKey - getExpenseDueInfo(b).timelineSortKey
                       );
 
-                      return activeSorted.map(item => (
-                        <div
-                          key={'timeline_bike_' + item.id}
-                          className={`p-2.5 rounded-xl border text-center flex flex-col justify-between gap-1 ${
-                            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
-                          }`}
-                        >
-                          <div className="text-[10px] font-black uppercase text-[#FF6A1A] tracking-wider">
-                            Dia {item.dueDay || 15}
+                      return activeSorted.map(item => {
+                        const info = getExpenseDueInfo(item);
+                        return (
+                          <div
+                            key={'timeline_bike_' + item.id}
+                            onClick={() => openEditBikeExpenseModal(item)}
+                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all hover:border-[#FF6A1A]/50 ${
+                              isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                            }`}
+                            title="Clique para editar o prazo ou ciclo desta despesa"
+                          >
+                            <div className="text-[10px] font-black uppercase text-[#FF6A1A] tracking-wider truncate">
+                              {info.detailNote}
+                            </div>
+                            <span className="text-xl my-0.5">{item.icon || '🏍️'}</span>
+                            <span className="text-xs font-black truncate">{item.name}</span>
+                            <span className="text-xs font-bold text-slate-300 tabular-nums">
+                              {fmtCurrencyExact(item.monthlyAmount)}/mês
+                            </span>
+                            <span className={`text-[10px] font-bold truncate ${
+                              info.daysRemaining <= 0 ? 'text-rose-400' : info.daysRemaining <= 7 ? 'text-amber-400' : mutedText
+                            }`}>
+                              {info.daysRemaining === 0
+                                ? 'Vence hoje!'
+                                : info.daysRemaining < 0
+                                ? `Venceu há ${Math.abs(info.daysRemaining)}d`
+                                : `Faltam ${info.daysRemaining} dias`}
+                            </span>
                           </div>
-                          <span className="text-xl">{item.icon || '🏍️'}</span>
-                          <span className="text-xs font-black truncate">{item.name}</span>
-                          <span className="text-xs font-bold text-slate-300 tabular-nums">
-                            {fmtCurrencyExact(item.monthlyAmount)}
-                          </span>
-                        </div>
-                      ));
+                        );
+                      });
                     })()}
                   </div>
                 </div>
@@ -8654,18 +8752,12 @@ export default function App() {
                       );
                     }
 
-                    const today = new Date();
-                    const currentDay = today.getDate();
-
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                         {filteredList.map(item => {
-                          const dueDay = Number(item.dueDay) || 10;
-                          const daysUntilDue = dueDay - currentDay;
-                          const isNearDue = daysUntilDue >= 0 && daysUntilDue <= 4;
-                          const isToday = daysUntilDue === 0;
-                          const isPastDue = daysUntilDue < 0 && daysUntilDue >= -5;
+                          const dueInfo = getExpenseDueInfo(item);
                           const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+                          const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
                             moradia: { label: 'Moradia', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
@@ -8698,9 +8790,16 @@ export default function App() {
                                       <h4 className="text-sm font-black truncate leading-tight">
                                         {item.name}
                                       </h4>
-                                      <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border mt-0.5 ${catMeta.badge}`}>
-                                        {catMeta.label}
-                                      </span>
+                                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                        <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${catMeta.badge}`}>
+                                          {catMeta.label}
+                                        </span>
+                                        {isInterval && (
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                                            A cada {item.intervalDays} dias
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
 
@@ -8719,17 +8818,18 @@ export default function App() {
                                   </button>
                                 </div>
 
-                                {/* Valores Mensal e Diário */}
-                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between">
+                                {/* Valores Mensal/Ciclo e Diário */}
+                                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between gap-2">
                                   <div>
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      Valor Mensal
+                                      {isInterval ? `Reserva p/ Mês (Compra: ${fmtCurrencyExact(item.totalCost || item.monthlyAmount)})` : 'Valor Mensal'}
                                     </span>
                                     <span className="text-lg font-black text-blue-400 tabular-nums">
                                       {fmtCurrencyExact(item.monthlyAmount)}
+                                      <span className="text-[10px] font-bold text-slate-400 ml-0.5">/mês</span>
                                     </span>
                                   </div>
-                                  <div className="text-right">
+                                  <div className="text-right shrink-0">
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
                                       Rateio Diário
                                     </span>
@@ -8739,27 +8839,13 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* Status de Vencimento */}
+                                {/* Status de Vencimento Personalizado */}
                                 <div className="mt-2">
                                   <span
-                                    className={`text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
-                                      isToday
-                                        ? 'bg-rose-500/25 text-rose-300 animate-pulse'
-                                        : isNearDue
-                                        ? 'bg-amber-500/20 text-amber-300'
-                                        : isPastDue
-                                        ? 'bg-purple-500/20 text-purple-300'
-                                        : `${surfaceSubtle} ${mutedText}`
-                                    }`}
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg inline-flex items-center gap-1.5 ${dueInfo.badgeClass}`}
                                   >
-                                    <Calendar className="w-3 h-3" />
-                                    <span>
-                                      {isToday
-                                        ? '🚨 Vence Hoje (dia ' + dueDay + ')!'
-                                        : isNearDue
-                                        ? `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`
-                                        : `Vencimento: todo dia ${dueDay}`}
-                                    </span>
+                                    <Calendar className="w-3 h-3 shrink-0" />
+                                    <span className="truncate">{dueInfo.label}</span>
                                   </span>
                                 </div>
                               </div>
@@ -8779,7 +8865,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => openEditHouseholdExpenseModal(item)}
                                   className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-blue-500 text-blue-400 cursor-pointer flex items-center gap-1`}
-                                  title="Editar esta conta"
+                                  title="Editar prazo, ciclo de dias e valor desta conta"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                   <span>Editar</span>
@@ -8827,43 +8913,57 @@ export default function App() {
                   })()}
                 </div>
 
-                {/* CALENDÁRIO VISUAL DE VENCIMENTOS DO MÊS */}
+                {/* CALENDÁRIO VISUAL DE VENCIMENTOS E CICLOS DA CASA */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <CalendarDays className="w-5 h-5 text-blue-400" />
                     <div>
                       <h3 className="text-sm sm:text-base font-black">
-                        Cronograma Mensal de Vencimentos das Contas
+                        Cronograma de Vencimentos & Ciclos das Contas da Casa
                       </h3>
                       <p className={`text-xs ${mutedText}`}>
-                        Acompanhe quando cada conta vence no mês para organizar os saques dos aplicativos e pagar sem juros
+                        Acompanhe quando cada conta vence (mensal, a cada X dias ou data fixa) para organizar os saques dos aplicativos
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 mt-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 mt-3">
                     {(() => {
                       const activeSorted = [...financialIntelligence.activeHouseholdExpenses].sort(
-                        (a, b) => (Number(a.dueDay) || 10) - (Number(b.dueDay) || 10)
+                        (a, b) => getExpenseDueInfo(a).timelineSortKey - getExpenseDueInfo(b).timelineSortKey
                       );
 
-                      return activeSorted.map(item => (
-                        <div
-                          key={'timeline_' + item.id}
-                          className={`p-2.5 rounded-xl border text-center flex flex-col justify-between gap-1 ${
-                            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
-                          }`}
-                        >
-                          <div className="text-[10px] font-black uppercase text-blue-400 tracking-wider">
-                            Dia {item.dueDay || 10}
+                      return activeSorted.map(item => {
+                        const info = getExpenseDueInfo(item);
+                        return (
+                          <div
+                            key={'timeline_' + item.id}
+                            onClick={() => openEditHouseholdExpenseModal(item)}
+                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all hover:border-blue-500/50 ${
+                              isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                            }`}
+                            title="Clique para editar o prazo ou ciclo desta conta"
+                          >
+                            <div className="text-[10px] font-black uppercase text-blue-400 tracking-wider truncate">
+                              {info.detailNote}
+                            </div>
+                            <span className="text-xl my-0.5">{item.icon || '🏠'}</span>
+                            <span className="text-xs font-black truncate">{item.name}</span>
+                            <span className="text-xs font-bold text-slate-300 tabular-nums">
+                              {fmtCurrencyExact(item.monthlyAmount)}/mês
+                            </span>
+                            <span className={`text-[10px] font-bold truncate ${
+                              info.daysRemaining <= 0 ? 'text-rose-400' : info.daysRemaining <= 7 ? 'text-amber-400' : mutedText
+                            }`}>
+                              {info.daysRemaining === 0
+                                ? 'Vence hoje!'
+                                : info.daysRemaining < 0
+                                ? `Venceu há ${Math.abs(info.daysRemaining)}d`
+                                : `Faltam ${info.daysRemaining} dias`}
+                            </span>
                           </div>
-                          <span className="text-xl">{item.icon || '🏠'}</span>
-                          <span className="text-xs font-black truncate">{item.name}</span>
-                          <span className="text-xs font-bold text-slate-300 tabular-nums">
-                            {fmtCurrencyExact(item.monthlyAmount)}
-                          </span>
-                        </div>
-                      ));
+                        );
+                      });
                     })()}
                   </div>
                 </div>
@@ -13878,7 +13978,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA MOTO (CENTRALIZADO, MODERNO) */}
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA MOTO (CENTRALIZADO, COM CICLO PERSONALIZADO A CADA X DIAS) */}
       {showBikeModal && (
         <div
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
@@ -13921,42 +14021,295 @@ export default function App() {
                   type="text"
                   value={bikeDraft.name}
                   onChange={e => setBikeDraft({ ...bikeDraft, name: e.target.value })}
-                  placeholder="Ex: Troca de Óleo, Pneu Traseiro, Seguro, Pastilhas..."
+                  placeholder="Ex: Kit Relação, Troca de Óleo, Pneu Traseiro, Seguro..."
                   className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Valor Mensal Estimado (R$)
-                  </label>
-                  <FreeNumberInput
-                    step="5"
-                    value={bikeDraft.monthlyAmount}
-                    onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val })}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                  />
-                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                    Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                  </span>
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Dia de Vencimento / Revisão no Mês
-                  </label>
-                  <FreeNumberInput
-                    step="1"
-                    value={bikeDraft.dueDay || 15}
-                    onValueChange={val => setBikeDraft({ ...bikeDraft, dueDay: Math.max(1, Math.min(31, val)) })}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                  />
-                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                    Dia do mês (1 a 31)
-                  </span>
+              {/* SELETOR DE TIPO DE VENCIMENTO / CICLO */}
+              <div>
+                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
+                  Como funciona o prazo / vencimento desta despesa?
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'interval_days', label: '🔄 A cada X dias', desc: 'Peças, óleo, relação, pneus' },
+                    { id: 'monthly', label: '📅 Todo Mês', desc: 'Dia fixo (1 a 31)' },
+                    { id: 'specific_date', label: '🎯 Data Fixa', desc: 'Data específica' },
+                  ].map(opt => {
+                    const isSel = (bikeDraft.recurrenceType || 'monthly') === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          const newType = opt.id as ExpenseRecurrenceType;
+                          const intDays = Math.max(1, Number(bikeDraft.intervalDays) || 90);
+                          const mAmt = Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
+                          const tCost =
+                            newType === 'interval_days' && (!bikeDraft.totalCost || bikeDraft.totalCost <= 0)
+                              ? Math.round((mAmt * (intDays / 30)) * 100) / 100
+                              : bikeDraft.totalCost || mAmt;
+                          setBikeDraft({
+                            ...bikeDraft,
+                            recurrenceType: newType,
+                            intervalDays: intDays,
+                            totalCost: tCost,
+                            nextDueDate: bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), intDays),
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSel
+                            ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
+                            : `${surfaceSubtle} hover:border-slate-600`
+                        }`}
+                      >
+                        <div className="text-xs font-black leading-tight">{opt.label}</div>
+                        <div className={`text-[10px] mt-0.5 truncate ${isSel ? 'text-[#FF6A1A]/90' : mutedText}`}>
+                          {opt.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
+              {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
+              {(bikeDraft.recurrenceType || 'monthly') === 'interval_days' && (
+                <div className={`p-3.5 rounded-2xl border space-y-3.5 ${
+                  isDark ? 'bg-slate-900/60 border-[#FF6A1A]/30' : 'bg-orange-50/50 border-orange-200'
+                }`}>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-black text-[#FF6A1A]">
+                        Troca / Vencimento a cada quantos dias?
+                      </label>
+                      <span className={`text-[10px] font-bold ${mutedText}`}>
+                        Atalhos rápidos:
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                      {[7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
+                            const nextM = tCost > 0 ? Math.round(((tCost / d) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
+                            const baseDate = bikeDraft.lastPaidDate || todayStr();
+                            setBikeDraft({
+                              ...bikeDraft,
+                              intervalDays: d,
+                              monthlyAmount: nextM,
+                              nextDueDate: addDaysToDateStr(baseDate, d),
+                            });
+                          }}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-black cursor-pointer transition-all border ${
+                            Number(bikeDraft.intervalDays) === d
+                              ? 'bg-[#FF6A1A] text-black border-[#FF6A1A]'
+                              : `${surfaceSubtle} hover:border-slate-600`
+                          }`}
+                        >
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                          Intervalo em Dias (Personalizado)
+                        </label>
+                        <FreeNumberInput
+                          step="5"
+                          value={bikeDraft.intervalDays || 90}
+                          onValueChange={val => {
+                            const cleanDays = Math.max(1, Math.round(val));
+                            const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
+                            const nextM = tCost > 0 ? Math.round(((tCost / cleanDays) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
+                            const baseDate = bikeDraft.lastPaidDate || todayStr();
+                            setBikeDraft({
+                              ...bikeDraft,
+                              intervalDays: cleanDays,
+                              monthlyAmount: nextM,
+                              nextDueDate: addDaysToDateStr(baseDate, cleanDays),
+                            });
+                          }}
+                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+
+                      <div>
+                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                          Valor Total da Troca / Peça (R$)
+                        </label>
+                        <FreeNumberInput
+                          step="10"
+                          value={bikeDraft.totalCost ?? bikeDraft.monthlyAmount}
+                          onValueChange={val => {
+                            const cleanCost = Math.max(0, val);
+                            const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                            const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                            setBikeDraft({
+                              ...bikeDraft,
+                              totalCost: cleanCost,
+                              monthlyAmount: nextM,
+                            });
+                          }}
+                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/40">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className={`text-[11px] font-bold ${mutedText}`}>
+                          Última Troca / Início do Ciclo
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const t = todayStr();
+                            const d = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                            setBikeDraft({
+                              ...bikeDraft,
+                              lastPaidDate: t,
+                              nextDueDate: addDaysToDateStr(t, d),
+                            });
+                          }}
+                          className="text-[10px] font-black text-[#FF6A1A] hover:underline cursor-pointer"
+                        >
+                          Usar Hoje
+                        </button>
+                      </div>
+                      <input
+                        type="date"
+                        value={bikeDraft.lastPaidDate || todayStr()}
+                        onChange={e => {
+                          const newStart = e.target.value;
+                          const d = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                          setBikeDraft({
+                            ...bikeDraft,
+                            lastPaidDate: newStart,
+                            nextDueDate: addDaysToDateStr(newStart, d),
+                          });
+                        }}
+                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                        Próxima Troca / Vencimento
+                      </label>
+                      <input
+                        type="date"
+                        value={bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), bikeDraft.intervalDays || 90)}
+                        onChange={e => {
+                          const newDue = e.target.value;
+                          const diff = Math.max(1, calculateDaysDifference(bikeDraft.lastPaidDate || todayStr(), newDue));
+                          const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
+                          const nextM = tCost > 0 ? Math.round(((tCost / diff) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
+                          setBikeDraft({
+                            ...bikeDraft,
+                            nextDueDate: newDue,
+                            intervalDays: diff,
+                            monthlyAmount: nextM,
+                          });
+                        }}
+                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Resumo Automático do Rateio */}
+                  <div className="p-2.5 rounded-xl bg-[#FF6A1A]/10 border border-[#FF6A1A]/30 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-[10px] font-bold block text-slate-300">
+                        Reserva Mensal Equivalente (a cada {bikeDraft.intervalDays || 30} dias):
+                      </span>
+                      <span className="font-black text-[#FF6A1A] text-sm tabular-nums">
+                        {fmtCurrencyExact(bikeDraft.monthlyAmount)}/mês
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-bold block text-slate-300">Separar por dia:</span>
+                      <span className="font-black text-amber-400 text-sm tabular-nums">
+                        {fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(bikeDraft.recurrenceType || 'monthly') === 'monthly' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Valor Mensal Estimado (R$)
+                    </label>
+                    <FreeNumberInput
+                      step="5"
+                      value={bikeDraft.monthlyAmount}
+                      onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Dia Fixo do Vencimento no Mês
+                    </label>
+                    <FreeNumberInput
+                      step="1"
+                      value={bikeDraft.dueDay || 15}
+                      onValueChange={val => setBikeDraft({ ...bikeDraft, dueDay: Math.max(1, Math.min(31, val)) })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Dia do mês (1 a 31)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {(bikeDraft.recurrenceType || 'monthly') === 'specific_date' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Valor para Reservar por Mês (R$)
+                    </label>
+                    <FreeNumberInput
+                      step="5"
+                      value={bikeDraft.monthlyAmount}
+                      onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Data Específica do Vencimento
+                    </label>
+                    <input
+                      type="date"
+                      value={bikeDraft.nextDueDate || addDaysToDateStr(todayStr(), 30)}
+                      onChange={e => setBikeDraft({ ...bikeDraft, nextDueDate: e.target.value })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Data exata prevista no calendário
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
@@ -14059,7 +14412,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA (CENTRALIZADO, MODERNO) */}
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA (CENTRALIZADO, COM CICLO PERSONALIZADO A CADA X DIAS) */}
       {showHouseholdModal && (
         <div
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
@@ -14102,42 +14455,295 @@ export default function App() {
                   type="text"
                   value={householdDraft.name}
                   onChange={e => setHouseholdDraft({ ...householdDraft, name: e.target.value })}
-                  placeholder="Ex: Aluguel, Supermercado, Luz, Internet..."
+                  placeholder="Ex: Aluguel, Gás de Cozinha, Supermercado, Luz, Internet..."
                   className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Valor Mensal (R$)
-                  </label>
-                  <FreeNumberInput
-                    step="10"
-                    value={householdDraft.monthlyAmount}
-                    onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val) })}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                  />
-                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                    Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                  </span>
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Dia do Vencimento no Mês
-                  </label>
-                  <FreeNumberInput
-                    step="1"
-                    value={householdDraft.dueDay || 10}
-                    onValueChange={val => setHouseholdDraft({ ...householdDraft, dueDay: Math.max(1, Math.min(31, val)) })}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                  />
-                  <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                    Dia do mês em que a conta vence (1 a 31)
-                  </span>
+              {/* SELETOR DE TIPO DE VENCIMENTO / CICLO */}
+              <div>
+                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
+                  Como funciona o vencimento desta despesa?
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'monthly', label: '📅 Todo Mês', desc: 'Dia fixo (1 a 31)' },
+                    { id: 'interval_days', label: '🔄 A cada X dias', desc: 'Ex: Gás, feira, compras' },
+                    { id: 'specific_date', label: '🎯 Data Fixa', desc: 'Data específica' },
+                  ].map(opt => {
+                    const isSel = (householdDraft.recurrenceType || 'monthly') === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          const newType = opt.id as ExpenseRecurrenceType;
+                          const intDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                          const mAmt = Math.max(0, Number(householdDraft.monthlyAmount) || 0);
+                          const tCost =
+                            newType === 'interval_days' && (!householdDraft.totalCost || householdDraft.totalCost <= 0)
+                              ? Math.round((mAmt * (intDays / 30)) * 100) / 100
+                              : householdDraft.totalCost || mAmt;
+                          setHouseholdDraft({
+                            ...householdDraft,
+                            recurrenceType: newType,
+                            intervalDays: intDays,
+                            totalCost: tCost,
+                            nextDueDate: householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), intDays),
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSel
+                            ? 'bg-blue-500/15 border-blue-500 text-blue-400'
+                            : `${surfaceSubtle} hover:border-slate-600`
+                        }`}
+                      >
+                        <div className="text-xs font-black leading-tight">{opt.label}</div>
+                        <div className={`text-[10px] mt-0.5 truncate ${isSel ? 'text-blue-400/90' : mutedText}`}>
+                          {opt.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
+              {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
+              {(householdDraft.recurrenceType || 'monthly') === 'interval_days' && (
+                <div className={`p-3.5 rounded-2xl border space-y-3.5 ${
+                  isDark ? 'bg-slate-900/60 border-blue-500/30' : 'bg-blue-50/50 border-blue-200'
+                }`}>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-black text-blue-400">
+                        Compra / Vencimento a cada quantos dias?
+                      </label>
+                      <span className={`text-[10px] font-bold ${mutedText}`}>
+                        Atalhos rápidos:
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                      {[7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
+                            const nextM = tCost > 0 ? Math.round(((tCost / d) * 30) * 100) / 100 : householdDraft.monthlyAmount;
+                            const baseDate = householdDraft.lastPaidDate || todayStr();
+                            setHouseholdDraft({
+                              ...householdDraft,
+                              intervalDays: d,
+                              monthlyAmount: nextM,
+                              nextDueDate: addDaysToDateStr(baseDate, d),
+                            });
+                          }}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-black cursor-pointer transition-all border ${
+                            Number(householdDraft.intervalDays) === d
+                              ? 'bg-blue-600 text-white border-blue-500'
+                              : `${surfaceSubtle} hover:border-slate-600`
+                          }`}
+                        >
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                          Intervalo em Dias (Personalizado)
+                        </label>
+                        <FreeNumberInput
+                          step="5"
+                          value={householdDraft.intervalDays || 45}
+                          onValueChange={val => {
+                            const cleanDays = Math.max(1, Math.round(val));
+                            const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
+                            const nextM = tCost > 0 ? Math.round(((tCost / cleanDays) * 30) * 100) / 100 : householdDraft.monthlyAmount;
+                            const baseDate = householdDraft.lastPaidDate || todayStr();
+                            setHouseholdDraft({
+                              ...householdDraft,
+                              intervalDays: cleanDays,
+                              monthlyAmount: nextM,
+                              nextDueDate: addDaysToDateStr(baseDate, cleanDays),
+                            });
+                          }}
+                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+
+                      <div>
+                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                          Valor da Compra / Conta (R$)
+                        </label>
+                        <FreeNumberInput
+                          step="10"
+                          value={householdDraft.totalCost ?? householdDraft.monthlyAmount}
+                          onValueChange={val => {
+                            const cleanCost = Math.max(0, val);
+                            const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                            const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                            setHouseholdDraft({
+                              ...householdDraft,
+                              totalCost: cleanCost,
+                              monthlyAmount: nextM,
+                            });
+                          }}
+                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/40">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className={`text-[11px] font-bold ${mutedText}`}>
+                          Último Pagamento / Compra
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const t = todayStr();
+                            const d = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                            setHouseholdDraft({
+                              ...householdDraft,
+                              lastPaidDate: t,
+                              nextDueDate: addDaysToDateStr(t, d),
+                            });
+                          }}
+                          className="text-[10px] font-black text-blue-400 hover:underline cursor-pointer"
+                        >
+                          Usar Hoje
+                        </button>
+                      </div>
+                      <input
+                        type="date"
+                        value={householdDraft.lastPaidDate || todayStr()}
+                        onChange={e => {
+                          const newStart = e.target.value;
+                          const d = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                          setHouseholdDraft({
+                            ...householdDraft,
+                            lastPaidDate: newStart,
+                            nextDueDate: addDaysToDateStr(newStart, d),
+                          });
+                        }}
+                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
+                        Próximo Vencimento / Compra
+                      </label>
+                      <input
+                        type="date"
+                        value={householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), householdDraft.intervalDays || 45)}
+                        onChange={e => {
+                          const newDue = e.target.value;
+                          const diff = Math.max(1, calculateDaysDifference(householdDraft.lastPaidDate || todayStr(), newDue));
+                          const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
+                          const nextM = tCost > 0 ? Math.round(((tCost / diff) * 30) * 100) / 100 : householdDraft.monthlyAmount;
+                          setHouseholdDraft({
+                            ...householdDraft,
+                            nextDueDate: newDue,
+                            intervalDays: diff,
+                            monthlyAmount: nextM,
+                          });
+                        }}
+                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Resumo Automático do Rateio */}
+                  <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-[10px] font-bold block text-slate-300">
+                        Reserva Mensal Equivalente (a cada {householdDraft.intervalDays || 30} dias):
+                      </span>
+                      <span className="font-black text-blue-400 text-sm tabular-nums">
+                        {fmtCurrencyExact(householdDraft.monthlyAmount)}/mês
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-bold block text-slate-300">Separar por dia:</span>
+                      <span className="font-black text-sky-400 text-sm tabular-nums">
+                        {fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(householdDraft.recurrenceType || 'monthly') === 'monthly' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Valor Mensal (R$)
+                    </label>
+                    <FreeNumberInput
+                      step="10"
+                      value={householdDraft.monthlyAmount}
+                      onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Dia Fixo do Vencimento no Mês
+                    </label>
+                    <FreeNumberInput
+                      step="1"
+                      value={householdDraft.dueDay || 10}
+                      onValueChange={val => setHouseholdDraft({ ...householdDraft, dueDay: Math.max(1, Math.min(31, val)) })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Dia do mês em que a conta vence (1 a 31)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {(householdDraft.recurrenceType || 'monthly') === 'specific_date' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Valor para Reservar por Mês (R$)
+                    </label>
+                    <FreeNumberInput
+                      step="10"
+                      value={householdDraft.monthlyAmount}
+                      onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Data Específica do Vencimento
+                    </label>
+                    <input
+                      type="date"
+                      value={householdDraft.nextDueDate || addDaysToDateStr(todayStr(), 30)}
+                      onChange={e => setHouseholdDraft({ ...householdDraft, nextDueDate: e.target.value })}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                    />
+                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                      Data exata prevista no calendário
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
