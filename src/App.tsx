@@ -3918,9 +3918,9 @@ export default function App() {
     const baseDailyMaintWear = baseMaintCostPerKm * dailyKm;
     const extraBufferPct = Math.max(0, Math.min(25, Number(finPlan.maintenanceExtraBufferPct) ?? 3));
     const extraDailyMaintBuffer = dailyGross * (extraBufferPct / 100);
-    const dailyMaintReserve = baseDailyMaintWear + extraDailyMaintBuffer;
-    const monthlyMaintReserve = dailyMaintReserve * workDaysPerMonth;
-    const maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
+    let dailyMaintReserve = baseDailyMaintWear + extraDailyMaintBuffer;
+    let monthlyMaintReserve = dailyMaintReserve * workDaysPerMonth;
+    let maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
 
     // 3. Alimentação na Rua (Almoço + Lanche / Água / Café)
     const dailyLunch = Math.max(0, Number(finPlan.dailyLunchBudget) ?? 22);
@@ -3944,12 +3944,12 @@ export default function App() {
     const dailyOtherDocsReserve = otherDocsAnnual / workDaysUntilDocsDue;
     const dailyMeiInsuranceReserve = insuranceMonthly / workDaysPerMonth;
 
-    const dailyDocsReserve =
+    let dailyDocsReserve =
       dailyIpvaReserve + dailyLicensingReserve + dailyOtherDocsReserve + dailyMeiInsuranceReserve;
-    const weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
-    const monthlyDocsReserve = dailyDocsReserve * workDaysPerMonth;
+    let weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+    let monthlyDocsReserve = dailyDocsReserve * workDaysPerMonth;
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
-    const docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
+    let docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
     // Despesas Cadastradas da Moto & Peças (Respeita 100% qualquer edição feita pelo usuário + cálculo proporcional nos itens padrão)
     const rawBikeExpenses: BikeExpenseItem[] =
@@ -4094,16 +4094,47 @@ export default function App() {
     const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
     const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive);
 
-    // Se o usuário personalizou o card de combustível, sincroniza o Planejamento IA para usar esse exato valor!
-    const customFuelItems = activeEnrichedBikeExpenses.filter(
-      b =>
-        (b.id === 'combustivel_mensal' || b.category === 'combustivel' || b.name.toLowerCase().includes('combustível')) &&
-        !b.isProportional
-    );
-    if (customFuelItems.length > 0) {
-      dailyFuelCost = customFuelItems.reduce((sum, f) => sum + f.dailyRateio, 0);
-      monthlyFuelCost = customFuelItems.reduce((sum, f) => sum + f.monthlyCost, 0);
-      fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
+    // Sincroniza Combustível, Documentação/Seguro e Manutenção/Peças diretamente com os cards ativos da moto para que a soma bata 100%
+    if (activeEnrichedBikeExpenses.length > 0) {
+      const isFuelItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+        b.id === 'combustivel_mensal' ||
+        b.id === 'combustivel_semanal' ||
+        b.category === 'combustivel' ||
+        b.name.toLowerCase().includes('combustível') ||
+        b.name.toLowerCase().includes('gasolina');
+
+      const isDocsItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+        !isFuelItem(b) &&
+        (b.category === 'documentacao' ||
+          b.category === 'seguro' ||
+          b.id === 'ipva_licenciamento' ||
+          b.id === 'seguro_rastreador' ||
+          b.name.toLowerCase().includes('ipva') ||
+          b.name.toLowerCase().includes('licenciamento') ||
+          b.name.toLowerCase().includes('seguro'));
+
+      const fuelItems = activeEnrichedBikeExpenses.filter(isFuelItem);
+      const docsItems = activeEnrichedBikeExpenses.filter(isDocsItem);
+      const maintItems = activeEnrichedBikeExpenses.filter(b => !isFuelItem(b) && !isDocsItem(b));
+
+      if (fuelItems.length > 0) {
+        dailyFuelCost = fuelItems.reduce((sum, f) => sum + f.dailyRateio, 0);
+        monthlyFuelCost = fuelItems.reduce((sum, f) => sum + f.monthlyCost, 0);
+        fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
+      }
+
+      if (docsItems.length > 0) {
+        dailyDocsReserve = docsItems.reduce((sum, d) => sum + d.dailyRateio, 0);
+        monthlyDocsReserve = docsItems.reduce((sum, d) => sum + d.monthlyCost, 0);
+        weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+        docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
+      }
+
+      if (maintItems.length > 0) {
+        dailyMaintReserve = maintItems.reduce((sum, m) => sum + m.dailyRateio, 0);
+        monthlyMaintReserve = maintItems.reduce((sum, m) => sum + m.monthlyCost, 0);
+        maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
+      }
     }
 
     // Rateio diário e mensal unificado das despesas da moto
@@ -6059,21 +6090,23 @@ export default function App() {
               })()}
             </div>
 
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800/50">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-base shrink-0">
+            <div className={`rounded-2xl sm:rounded-3xl p-3 sm:p-4 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
+              <div className="flex flex-row items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-800/50">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-7 h-7 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-sm shrink-0">
                     🛡️
                   </span>
-                  <div>
-                    <h2 className="text-sm sm:text-base font-black flex items-center gap-2">
-                      <span>Reservas Financeiras Obrigatórias</span>
-                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
-                        Blindagem do Bolso
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h2 className="text-xs sm:text-sm font-black truncate">
+                        Reservas Financeiras Obrigatórias
+                      </h2>
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                        Blindagem
                       </span>
-                    </h2>
-                    <p className={`text-xs mt-0.5 ${mutedText}`}>
-                      Valores diários que você deve separar do faturamento antes de gastar seu lucro
+                    </div>
+                    <p className={`text-[10px] truncate ${mutedText}`}>
+                      Valores diários para separar antes de gastar seu lucro
                     </p>
                   </div>
                 </div>
@@ -6083,212 +6116,332 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('planejamento');
                   }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer shrink-0 flex items-center gap-1"
                 >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Ajustar Parâmetros</span>
+                  <SlidersHorizontal className="w-3 h-3" />
+                  <span className="hidden xs:inline">Ajustar</span>
                 </button>
               </div>
 
-              {/* Grid dos Cards de Reserva em Destaque (Moto, Casa, Emergência e Total) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
-                {/* 1. Reserva Alimentação na Rua */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-orange-400 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-orange-400 font-black">
-                      <span>🍱</span>
-                      <span className="truncate">Alimentação Rua</span>
+              {/* Grid Compacto Lado a Lado das 6 Reservas Individuais (2 colunas no celular, 3 no tablet, 6 no desktop) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5">
+                {/* 1. Reserva Combustível */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('despesas_moto');
+                  }}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-rose-500 ${surfaceSubtle} hover:border-rose-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  title="Clique para ajustar o gasto com combustível"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-rose-400 font-black min-w-0">
+                      <span className="shrink-0">⛽</span>
+                      <span className="truncate">Combustível</span>
                     </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
-                      {financialIntelligence.foodPctOfGross}%
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-rose-500/15 text-rose-400 shrink-0">
+                      {financialIntelligence.fuelPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-black text-orange-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-1 leading-tight">
+                    {fmtCurrencyExact(financialIntelligence.dailyFuelCost)}
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Almoço e água no turno
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}/mês
                   </div>
                 </div>
 
                 {/* 2. Reserva Manutenção da Moto */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-amber-400 font-black">
-                      <span>🛠️</span>
-                      <span className="truncate">Manutenção Moto</span>
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('despesas_moto');
+                  }}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-amber-500 ${surfaceSubtle} hover:border-amber-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  title="Clique para ver as peças e manutenções da moto"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-amber-400 font-black min-w-0">
+                      <span className="shrink-0">🛠️</span>
+                      <span className="truncate">Manutenção</span>
                     </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-amber-400/15 text-amber-400 shrink-0">
                       {financialIntelligence.maintPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-black text-amber-400 tabular-nums">
+                  <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-1 leading-tight">
                     {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Óleo, pneus e relação
                   </div>
                 </div>
 
-                {/* 3. Reserva Documentos da Moto */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-sky-400 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-sky-400 font-black">
-                      <span>📄</span>
-                      <span className="truncate">Documentos & IPVA</span>
+                {/* 3. Reserva Documentos & Seguro da Moto */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('despesas_moto');
+                  }}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-sky-400 ${surfaceSubtle} hover:border-sky-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  title="Clique para ver IPVA, licenciamento e seguro"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-sky-400 font-black min-w-0">
+                      <span className="shrink-0">📄</span>
+                      <span className="truncate">Docs & IPVA</span>
                     </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-400">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-sky-400/15 text-sky-400 shrink-0">
                       {financialIntelligence.docsPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-black text-sky-400 tabular-nums">
+                  <div className="text-sm sm:text-base font-black text-sky-400 tabular-nums mt-1 leading-tight">
                     {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    IPVA, CRLV e DAS MEI
                   </div>
                 </div>
 
-                {/* 4. Reserva Despesas da Casa & Família (NOVO) */}
+                {/* 4. Reserva Alimentação na Rua */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('planejamento');
+                  }}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-orange-400 ${surfaceSubtle} hover:border-orange-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  title="Clique para ajustar o orçamento de alimentação na rua"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-orange-400 font-black min-w-0">
+                      <span className="shrink-0">🍱</span>
+                      <span className="truncate">Alimentação</span>
+                    </span>
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-orange-400/15 text-orange-400 shrink-0">
+                      {financialIntelligence.foodPctOfGross}%
+                    </span>
+                  </div>
+                  <div className="text-sm sm:text-base font-black text-orange-400 tabular-nums mt-1 leading-tight">
+                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  </div>
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
+                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
+                  </div>
+                </div>
+
+                {/* 5. Reserva Despesas da Casa & Família */}
                 <div
                   onClick={() => {
                     setActiveTab('billing');
                     setBillingSubTab('despesas_casa');
                   }}
-                  className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group`}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group flex flex-col justify-between`}
                   title="Clique para gerenciar suas contas de casa"
                 >
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300">
-                      <span>🏠</span>
-                      <span className="truncate">Contas da Casa</span>
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300 min-w-0">
+                      <span className="shrink-0">🏠</span>
+                      <span className="truncate">Contas Casa</span>
                     </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-blue-500/15 text-blue-400 shrink-0">
                       {financialIntelligence.housePctOfGross}%
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-black text-blue-400 tabular-nums">
+                  <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-1 leading-tight">
                     {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-[11px] mt-1 font-semibold text-blue-300`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês total
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Aluguel, luz, água e mercado ↗
+                  <div className="text-[10px] mt-0.5 font-semibold text-blue-300 truncate">
+                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês ↗
                   </div>
                 </div>
 
-                {/* 5. Reserva de Emergência */}
-                <div className={`rounded-2xl p-3 sm:p-3.5 border-l-4 border-l-purple-500 ${surfaceSubtle}`}>
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-purple-400 font-black">
-                      <span>🛡️</span>
+                {/* 6. Reserva de Emergência */}
+                <div
+                  onClick={() => {
+                    setActiveTab('billing');
+                    setBillingSubTab('planejamento');
+                  }}
+                  className={`rounded-xl p-2.5 border-l-3 border-l-purple-500 ${surfaceSubtle} hover:border-purple-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  title="Clique para ajustar a reserva de emergência"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                    <span className="flex items-center gap-1 text-purple-400 font-black min-w-0">
+                      <span className="shrink-0">🛡️</span>
                       <span className="truncate">Emergência</span>
                     </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-purple-500/15 text-purple-400 shrink-0">
                       {financialIntelligence.emergencyPct}%
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-black text-purple-400 tabular-nums">
+                  <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-1 leading-tight">
                     {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                    <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
+                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
                   </div>
-                  <div className={`text-[11px] mt-1 font-semibold ${mutedText}`}>
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate ${mutedText}`}>
-                    Imprevistos e dias parados
-                  </div>
-                </div>
-
-                {/* 6. Total Diário a Separar (Moto + Casa + Emergência) */}
-                <div className="rounded-2xl p-3 sm:p-3.5 border-2 border-emerald-500/40 bg-emerald-500/10">
-                  <div className="flex items-center justify-between text-xs font-bold mb-1">
-                    <span className="flex items-center gap-1 text-emerald-400 font-black">
-                      <span>🔒</span>
-                      <span className="truncate">Total a Guardar</span>
-                    </span>
-                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-                      Blindagem
-                    </span>
-                  </div>
-                  <div className="text-lg sm:text-xl font-black text-emerald-400 tabular-nums">
-                    {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
-                    <span className="text-xs font-semibold ml-1 text-emerald-300">/dia</span>
-                  </div>
-                  <div className="text-[11px] mt-1 font-semibold text-emerald-400/90 truncate">
-                    {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês total
-                  </div>
-                  <div className={`text-[10px] mt-0.5 truncate text-emerald-300/80`}>
-                    Moto + Casa + Emergência
                   </div>
                 </div>
               </div>
 
-              {/* PAINEL CONSOLIDADO DAS 3 DIVISÕES DO DINHEIRO DO MOTOBOY */}
-              <div className={`mt-3.5 pt-3.5 border-t border-slate-800/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 p-3 rounded-2xl ${
-                isDark ? 'bg-slate-900/60' : 'bg-slate-100/80'
+              {/* CARD ORGANIZADO DA DIVISÃO POR CAIXINHA (4 BLOCOS ALINHADOS E SEM CONFUSÃO) */}
+              <div className={`mt-3 p-3 rounded-2xl border ${
+                isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-100/90 border-slate-200/90'
               }`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-black uppercase text-[#FF6A1A] tracking-wider">
-                    Divisão do Dinheiro:
-                  </span>
-                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
-                    <span className="text-rose-400 flex items-center gap-1">
-                      <span>🏍️ Moto:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}/dia</strong>
-                      <span className="text-[10px] opacity-75">({financialIntelligence.bikePctOfGross}%)</span>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-blue-400 flex items-center gap-1">
-                      <span>🏠 Casa:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia</strong>
-                      <span className="text-[10px] opacity-75">({financialIntelligence.housePctOfGross}%)</span>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-purple-400 flex items-center gap-1">
-                      <span>🛡️ Emergência:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia</strong>
-                    </span>
-                    <span className="text-slate-500">·</span>
-                    <span className="text-emerald-400 flex items-center gap-1 font-black">
-                      <span>💵 Lucro Limpo no Bolso:</span>
-                      <strong className="tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia</strong>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">
-                        {financialIntelligence.netMarginPct}% livre
-                      </span>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">📊</span>
+                    <span className="text-[11px] sm:text-xs font-black uppercase tracking-wide text-[#FF6A1A]">
+                      Resumo da Divisão por Caixinha
                     </span>
                   </div>
+                  <span className={`text-[10px] font-bold ${mutedText}`}>
+                    Cálculo para <strong className="text-slate-200">{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto justify-end">
-                  <span className={`text-[11px] font-bold ${mutedText}`}>
-                    Ponto de Sobrevivência (Moto + Casa):
-                    <strong className="text-amber-400 ml-1 tabular-nums">{fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia</strong>
-                  </span>
-                  <button
-                    type="button"
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  {/* Caixinha 1: Giro da Moto + Rua */}
+                  <div
+                    onClick={() => {
+                      setActiveTab('billing');
+                      setBillingSubTab('despesas_moto');
+                    }}
+                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                      isDark
+                        ? 'bg-slate-950/60 border-rose-500/25 hover:border-rose-500/50'
+                        : 'bg-white border-rose-200 hover:border-rose-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-rose-400">
+                      <span className="truncate">🏍️ 1. Moto & Rua</span>
+                      <span className="text-[9px] opacity-80">↗</span>
+                    </div>
+                    <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-0.5">
+                      {fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}
+                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    </div>
+                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                      {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}/mês
+                    </div>
+                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                      Gasolina + Manut. + Docs + Marmita
+                    </div>
+                  </div>
+
+                  {/* Caixinha 2: Contas da Casa */}
+                  <div
                     onClick={() => {
                       setActiveTab('billing');
                       setBillingSubTab('despesas_casa');
                     }}
-                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 transition-colors cursor-pointer"
+                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                      isDark
+                        ? 'bg-slate-950/60 border-blue-500/25 hover:border-blue-500/50'
+                        : 'bg-white border-blue-200 hover:border-blue-400'
+                    }`}
                   >
-                    Gerenciar Casa ↗
-                  </button>
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-blue-400">
+                      <span className="truncate">🏠 2. Contas Casa</span>
+                      <span className="text-[9px] opacity-80">↗</span>
+                    </div>
+                    <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-0.5">
+                      {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
+                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    </div>
+                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                      {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
+                    </div>
+                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                      Aluguel, luz, água e mercado
+                    </div>
+                  </div>
+
+                  {/* Caixinha 3: Reserva de Emergência */}
+                  <div
+                    onClick={() => {
+                      setActiveTab('billing');
+                      setBillingSubTab('planejamento');
+                    }}
+                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                      isDark
+                        ? 'bg-slate-950/60 border-purple-500/25 hover:border-purple-500/50'
+                        : 'bg-white border-purple-200 hover:border-purple-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-400">
+                      <span className="truncate">🛡️ 3. Emergência</span>
+                      <span className="text-[9px] opacity-80">{financialIntelligence.emergencyPct}%</span>
+                    </div>
+                    <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-0.5">
+                      {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
+                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    </div>
+                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                      {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
+                    </div>
+                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                      Fundo de imprevistos pessoal
+                    </div>
+                  </div>
+
+                  {/* Caixinha 4: Total Diário a Separar (Soma das 3 Caixinhas) */}
+                  <div
+                    className={`p-2.5 rounded-xl border ${
+                      isDark
+                        ? 'bg-emerald-950/25 border-emerald-500/40'
+                        : 'bg-emerald-50 border-emerald-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-400">
+                      <span className="truncate">🔒 Total a Guardar</span>
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400">
+                        1+2+3
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-base font-black text-emerald-400 tabular-nums mt-0.5">
+                      {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
+                      <span className="text-[10px] font-semibold text-emerald-300 ml-0.5">/dia</span>
+                    </div>
+                    <div className="text-[10px] font-bold text-emerald-400/90 tabular-nums mt-0.5">
+                      {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês
+                    </div>
+                    <div className="text-[9px] text-emerald-300/80 mt-0.5 truncate">
+                      Meta p/ cobrir Moto + Casa + Emerg.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Barra Inferior Explicativa: Piso Mínimo vs Saldo Livre */}
+                <div className="mt-2.5 pt-2 border-t border-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[10px]">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`font-bold ${mutedText}`}>
+                      🎯 Piso Mínimo (só Moto + Casa):
+                    </span>
+                    <strong className="text-amber-400 font-black tabular-nums">
+                      {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia
+                    </strong>
+                    <span className="text-slate-600 hidden sm:inline">•</span>
+                    <span className={`${mutedText}`}>
+                      Sua base atual: <strong className="text-slate-300 tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {financialIntelligence.dailyNetProfit >= 0 ? (
+                      <span className="text-emerald-400 font-black tabular-nums">
+                        💵 Sobra Livre: +{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia ({financialIntelligence.netMarginPct}%)
+                      </span>
+                    ) : (
+                      <span className="text-amber-400 font-bold tabular-nums">
+                        💡 Para cobrir tudo, fature <strong>{fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}/dia</strong> (+{fmtCurrencyExact(Math.abs(financialIntelligence.dailyNetProfit))}/dia na base)
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -8542,6 +8695,22 @@ export default function App() {
                           const hours = Number(entry.hours || 0);
                           const ratePerKm = km > 0 ? rev / km : 0;
 
+                          const avgKmBase = Math.max(20, financialIntelligence.dailyKm || 90);
+                          const bikeCostPerKmRide =
+                            (financialIntelligence.dailyFuelCost +
+                              financialIntelligence.dailyMaintReserve +
+                              financialIntelligence.dailyDocsReserve) /
+                            avgKmBase;
+                          const housePersonalPerKmRide =
+                            (financialIntelligence.dailyHouseholdReserve +
+                              financialIntelligence.dailyFoodCost) /
+                            avgKmBase;
+
+                          const rideBikeCost = km > 0 ? km * bikeCostPerKmRide : 0;
+                          const rideHousePersonalCost = km > 0 ? km * housePersonalPerKmRide : 0;
+                          const netAfterBike = rev - rideBikeCost;
+                          const netAfterBikeAndHouse = netAfterBike - rideHousePersonalCost;
+
                           return (
                             <div
                               key={entry.id}
@@ -8567,8 +8736,24 @@ export default function App() {
                                     <span>📅 {formatPtBrDate(entry.date)}</span>
                                     {km > 0 && <span>· {km} km</span>}
                                     {hours > 0 && <span>· {hours}h</span>}
-                                    {ratePerKm > 0 && <span>· {fmtMoney(ratePerKm)}/km</span>}
+                                    {ratePerKm > 0 && <span>· {fmtMoney(ratePerKm)}/km bruto</span>}
                                   </div>
+                                  {km > 0 && (
+                                    <div className="flex items-center gap-2 flex-wrap mt-1 text-[10px] font-bold">
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 tabular-nums">
+                                        🏍️ Após Moto: {fmtCurrencyExact(netAfterBike)}
+                                      </span>
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded tabular-nums ${
+                                          netAfterBikeAndHouse >= 0
+                                            ? 'bg-emerald-500/15 text-emerald-400'
+                                            : 'bg-rose-500/15 text-rose-400'
+                                        }`}
+                                      >
+                                        🏠 Livre (após Moto + Casa/Pessoal): {fmtCurrencyExact(netAfterBikeAndHouse)}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -10991,6 +11176,22 @@ export default function App() {
                     if (item.itemType === 'ganho') {
                       const app = allApps.find(a => a.id === item.app) || { name: item.app, icon: '🛵' };
                       const shift = allShifts.find(s => s.id === item.shift);
+                      const rev = Number(item.revenue || 0);
+                      const km = Number(item.km || 0);
+                      const avgKmBase = Math.max(20, financialIntelligence.dailyKm || 90);
+                      const bikeCostPerKmRide =
+                        (financialIntelligence.dailyFuelCost +
+                          financialIntelligence.dailyMaintReserve +
+                          financialIntelligence.dailyDocsReserve) /
+                        avgKmBase;
+                      const housePersonalPerKmRide =
+                        (financialIntelligence.dailyHouseholdReserve +
+                          financialIntelligence.dailyFoodCost) /
+                        avgKmBase;
+                      const netAfterBike = rev - (km > 0 ? km * bikeCostPerKmRide : 0);
+                      const netAfterBikeAndHouse =
+                        netAfterBike - (km > 0 ? km * housePersonalPerKmRide : 0);
+
                       return (
                         <div
                           key={`ganho-${item.id}`}
@@ -11005,6 +11206,21 @@ export default function App() {
                               <div className={`text-[11px] sm:text-xs tabular-nums truncate ${mutedText}`}>
                                 {shift ? shift.name.split(' ')[0] : 'Turno'} · {item.km} km · {item.hours || 0}h
                               </div>
+                              {km > 0 && (
+                                <div className="flex items-center gap-1.5 flex-wrap mt-1 text-[10px] font-bold">
+                                  <span className="text-amber-400 tabular-nums">
+                                    🏍️ Moto: {fmtCurrencyExact(netAfterBike)}
+                                  </span>
+                                  <span className="text-slate-600">·</span>
+                                  <span
+                                    className={`tabular-nums ${
+                                      netAfterBikeAndHouse >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    🏠 Livre c/ Casa: {fmtCurrencyExact(netAfterBikeAndHouse)}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -14101,6 +14317,20 @@ export default function App() {
         onClose={() => setShowRadarModal(false)}
         fuelConfig={dbState.fuelConfig}
         maintenanceItems={dbState.maintenanceItems}
+        financialContext={{
+          dailyKm: financialIntelligence.dailyKm,
+          dailyGross: financialIntelligence.dailyGross,
+          workDaysPerMonth: financialIntelligence.workDaysPerMonth,
+          dailyBikeCostsTotal: financialIntelligence.dailyBikeCostsTotal,
+          dailyFuelCost: financialIntelligence.dailyFuelCost,
+          dailyMaintReserve: financialIntelligence.dailyMaintReserve,
+          dailyDocsReserve: financialIntelligence.dailyDocsReserve,
+          dailyFoodCost: financialIntelligence.dailyFoodCost,
+          monthlyFoodCost: financialIntelligence.monthlyFoodCost,
+          monthlyHouseholdCost: financialIntelligence.monthlyHouseholdCost,
+          dailyHouseholdReserve: financialIntelligence.dailyHouseholdReserve,
+          dailyEmergencyReserve: financialIntelligence.dailyEmergencyReserve,
+        }}
         onAcceptRide={handleAcceptRideFromRadar}
         isDark={isDark}
       />
