@@ -98,5 +98,112 @@
       "passwordHash": "9ac4dbf2"
     },
     "updatedAt": "2026-10-27T02:37:20.410Z"
+  },
+  "usr_lauraivini13_gmail.com": {
+    "state": {
+      "entries": [],
+      "expenses": [],
+      "dailyGoal": 0,
+      "weeklyGoal": 0,
+      "customGoalTarget": 0,
+      "customGoalDays": 20,
+      "customGoalTitle": "Meta Personalizada de Ganhos",
+      "customGoalMode": "date",
+      "customGoalTargetDate": "2026-11-26",
+      "customGoalScope": "month",
+      "maintenanceNotificationsEnabled": true,
+      "maintenanceItems": [
+        {
+          "id": "oil",
+          "name": "Troca de Óleo",
+          "icon": "🛢️",
+          "lastChangeKm": 0,
+          "intervalKm": 1000,
+          "costEstimate": 0,
+          "notes": "Óleo 10W30 Semissintético",
+          "isDefault": true,
+          "alertThresholdPct": 85,
+          "history": []
+        },
+        {
+          "id": "tire",
+          "name": "Pneus Dianteiro/Traseiro",
+          "icon": "🛞",
+          "lastChangeKm": 0,
+          "intervalKm": 10000,
+          "costEstimate": 0,
+          "notes": "Calibrar semanalmente (29/33 PSI)",
+          "isDefault": true,
+          "alertThresholdPct": 90,
+          "history": []
+        },
+        {
+          "id": "chain",
+          "name": "Kit Relação",
+          "icon": "⚙️",
+          "lastChangeKm": 0,
+          "intervalKm": 8000,
+          "costEstimate": 0,
+          "notes": "Lubrificar corrente a cada 500 km",
+          "isDefault": true,
+          "alertThresholdPct": 80,
+          "history": []
+        },
+        {
+          "id": "brake",
+          "name": "Pastilhas de Freio",
+          "icon": "🛑",
+          "lastChangeKm": 0,
+          "intervalKm": 5000,
+          "costEstimate": 0,
+          "notes": "Conferir fluído DOT 4 e disco",
+          "isDefault": true,
+          "alertThresholdPct": 85,
+          "history": []
+        }
+      ],
+      "fuelConfig": {
+        "kmPerLiter": 35,
+        "fuelPrice": 5.8,
+        "tankCapacityLiters": 16.1,
+        "bikeModelName": "Fan 160",
+        "odometerBaseKm": 0
+      },
+      "financialPlan": {
+        "workDaysPerMonth": 24,
+        "dailyLunchBudget": 0,
+        "dailySnackBudget": 0,
+        "emergencyReservePct": 0,
+        "maintenanceExtraBufferPct": 0,
+        "ipvaAnnual": 0,
+        "licensingAnnual": 0,
+        "insuranceOrMeiMonthly": 0,
+        "otherDocsAnnual": 0,
+        "docsTargetMonths": 12,
+        "revenueBaseMode": "actual_or_goal",
+        "customDailyGrossBase": 0,
+        "customDailyKmBase": 0
+      },
+      "customApps": [],
+      "customCategories": [],
+      "appOverrides": {},
+      "customShifts": [],
+      "shiftOverrides": {},
+      "deletedShiftIds": [],
+      "deletedAppIds": [],
+      "deletedEntryIds": [],
+      "deletedExpenseIds": [],
+      "lastSyncedAt": "2026-11-08T15:30:58.804Z"
+    },
+    "pilotProfile": {
+      "id": "usr_1794011962009",
+      "name": "Laura ivini",
+      "email": "lauraivini13@gmail.com",
+      "phone": "31998420497",
+      "bikeModel": "Fan 160",
+      "createdAt": "2026-11-07T00:39:22.009Z",
+      "passwordHash": "9ac4dbf2"
+    },
+    "updatedAt": "2026-11-08T15:31:00.603Z"
   }
 }

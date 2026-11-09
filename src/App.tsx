@@ -68,6 +68,7 @@ import {
   CreditCard,
   Receipt,
   Shield,
+  TrendingUp,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -142,6 +143,7 @@ import {
 } from './components/ControleTurnoModal';
 import { RelatorioMeiModal } from './components/RelatorioMeiModal';
 import { MetaReversaModal } from './components/MetaReversaModal';
+import { InvestimentosScreen } from './components/InvestimentosScreen';
 import {
   startSpeechRecognition,
   isSpeechRecognitionSupported,
@@ -257,7 +259,7 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     icon: '🛢️',
     lastChangeKm: 0,
     intervalKm: 1000,
-    costEstimate: 45,
+    costEstimate: 0,
     notes: 'Óleo 10W30 Semissintético',
     isDefault: true,
     alertThresholdPct: 85,
@@ -268,7 +270,7 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     icon: '🛞',
     lastChangeKm: 0,
     intervalKm: 10000,
-    costEstimate: 520,
+    costEstimate: 0,
     notes: 'Calibrar semanalmente (29/33 PSI)',
     isDefault: true,
     alertThresholdPct: 90,
@@ -279,7 +281,7 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     icon: '⚙️',
     lastChangeKm: 0,
     intervalKm: 8000,
-    costEstimate: 210,
+    costEstimate: 0,
     notes: 'Lubrificar corrente a cada 500 km',
     isDefault: true,
     alertThresholdPct: 80,
@@ -290,7 +292,7 @@ const DEFAULT_MAINTENANCE_ITEMS: MaintenanceItem[] = [
     icon: '🛑',
     lastChangeKm: 0,
     intervalKm: 5000,
-    costEstimate: 75,
+    costEstimate: 0,
     notes: 'Conferir fluído DOT 4 e disco',
     isDefault: true,
     alertThresholdPct: 85,
@@ -312,14 +314,30 @@ function getStorageKeyForUser(user: UserProfile | null): string {
   return 'copilotrider_room_guest_v3';
 }
 
+const ADMIN_EMAILS = new Set([
+  'swamijunior346.sj@gmail.com',
+  'parceirosizi@gmail.com',
+  'admin@mochilinha.com',
+  'admin@gmail.com',
+]);
+
+function isUserAdmin(user: UserProfile | null): boolean {
+  if (!user || user.isGuest || !user.email) return false;
+  const emailClean = user.email.trim().toLowerCase();
+  if (ADMIN_EMAILS.has(emailClean)) return true;
+  if (emailClean.startsWith('admin@') || emailClean.includes('.admin@')) return true;
+  if (user.id === 'usr_1793065121511') return true;
+  return false;
+}
+
 function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseState {
   const cleanBike = (bikeModelName || '').trim() || DEFAULT_FUEL_CONFIG.bikeModelName;
   return {
     entries: [],
     expenses: [],
-    dailyGoal: 150,
-    weeklyGoal: 900,
-    customGoalTarget: 3000,
+    dailyGoal: 0,
+    weeklyGoal: 0,
+    customGoalTarget: 0,
     customGoalDays: 20,
     customGoalTitle: 'Meta Personalizada de Ganhos',
     customGoalMode: 'date',
@@ -437,9 +455,9 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
       return {
         entries: cleanEntries,
         expenses: cleanExpenses,
-        dailyGoal: Number(parsed.dailyGoal) || 150,
-        weeklyGoal: Number(parsed.weeklyGoal) || 900,
-        customGoalTarget: Number(parsed.customGoalTarget) || 3000,
+        dailyGoal: Math.max(0, Number(parsed.dailyGoal) || 0),
+        weeklyGoal: Math.max(0, Number(parsed.weeklyGoal) || 0),
+        customGoalTarget: Math.max(0, Number(parsed.customGoalTarget) || 0),
         customGoalDays: Number(parsed.customGoalDays) || 20,
         customGoalTitle: parsed.customGoalTitle || 'Meta Personalizada de Ganhos',
         customGoalMode: 'date',
@@ -792,7 +810,7 @@ function fmtCurrencyExact(v: number): string {
   return 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type NavTab = 'dashboard' | 'maintenance' | 'billing' | 'history' | 'progress' | 'settings';
+type NavTab = 'dashboard' | 'maintenance' | 'billing' | 'investments' | 'history' | 'progress' | 'settings';
 
 export default function App() {
   // Theme State (Dark Mode / Light Mode)
@@ -842,7 +860,7 @@ export default function App() {
   const [financeSortOrder, setFinanceSortOrder] = useState<'date_desc' | 'val_desc' | 'val_asc'>('date_desc');
   const [dashboardSaldoScope, setDashboardSaldoScope] = useState<'month' | 'all'>('month');
   const [isEditingCustomGoalInFinance, setIsEditingCustomGoalInFinance] = useState<boolean>(false);
-  const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(3000);
+  const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(0);
   const [tempFinanceGoalDate, setTempFinanceGoalDate] = useState<string>(() => getDefaultFutureDate(20));
   const [selectedRaioXCategory, setSelectedRaioXCategory] = useState<string>('fuel');
   const [showFormulaExplanation, setShowFormulaExplanation] = useState<boolean>(false);
@@ -871,10 +889,10 @@ export default function App() {
   });
   const [savedAccounts, setSavedAccounts] = useState<RememberedCredentials[]>(() => getSavedLoginAccounts());
   const [authName, setAuthName] = useState<string>('');
-  const [authEmail, setAuthEmail] = useState<string>(() => getRememberedCredentials()?.email || '');
+  const [authEmail, setAuthEmail] = useState<string>('');
   const [authPhone, setAuthPhone] = useState<string>('');
   const [authBikeModel, setAuthBikeModel] = useState<string>('');
-  const [authPassword, setAuthPassword] = useState<string>(() => getRememberedCredentials()?.password || '');
+  const [authPassword, setAuthPassword] = useState<string>('');
   const [authConfirmPassword, setAuthConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -1166,16 +1184,16 @@ export default function App() {
       }
       setSavedAccounts(getSavedLoginAccounts());
 
-      // Brand-new account ALWAYS starts 100% clean (zero entries, zero expenses, zero demo data)
+      // Brand-new account ALWAYS starts 100% clean (zero entries, zero expenses, zero demo data, zero goals, zero reserves)
       const freshUserDb = createCleanDatabaseState(res.user.bikeModel);
+      setActiveShiftSession(null);
       setCurrentUser(res.user);
       setShowAuthScreen(false);
       setAuthName('');
+      setAuthEmail('');
       setAuthPhone('');
       setAuthBikeModel('');
-      if (!rememberMe) {
-        setAuthPassword('');
-      }
+      setAuthPassword('');
       setAuthConfirmPassword('');
       const createdUser = res.user;
       void clearRemoteCloudData(createdUser.email).then(() =>
@@ -1230,19 +1248,17 @@ export default function App() {
 
   const handleLogout = () => {
     saveActiveSessionUser(null);
+    setActiveShiftSession(null);
     setCurrentUser(null);
     setDbState(createCleanDatabaseState());
     setAuthError(null);
     setAuthSuccess(null);
-    const rem = getRememberedCredentials();
     setSavedAccounts(getSavedLoginAccounts());
-    if (rem && rem.rememberMe) {
-      setAuthEmail(rem.email);
-      setAuthPassword(rem.password);
-      setRememberMe(true);
-    } else {
-      setAuthPassword('');
-    }
+    setAuthName('');
+    setAuthEmail('');
+    setAuthPhone('');
+    setAuthBikeModel('');
+    setAuthPassword('');
     setAuthConfirmPassword('');
     setAuthMode('login');
     setShowAuthScreen(true);
@@ -3311,9 +3327,9 @@ export default function App() {
   // Comprehensive Progress, Performance & Statistics Analytics
   const progressAnalytics = useMemo(() => {
     const today = todayStr();
-    const dailyGoal = Math.max(10, Number(dbState.dailyGoal) || 150);
-    const weeklyGoal = Math.max(50, Number(dbState.weeklyGoal) || 900);
-    const customGoalTarget = Math.max(10, Number(dbState.customGoalTarget) || 3000);
+    const dailyGoal = Math.max(0, Number(dbState.dailyGoal) || 0);
+    const weeklyGoal = Math.max(0, Number(dbState.weeklyGoal) || 0);
+    const customGoalTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
     const customGoalTargetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
     const customGoalCountdown = getCustomGoalCountdown(
       'date',
@@ -3328,7 +3344,7 @@ export default function App() {
     const revToday = todayEntries.reduce((s, e) => s + Number(e.revenue || 0), 0);
     const kmToday = todayEntries.reduce((s, e) => s + Number(e.km || 0), 0);
     const hoursToday = todayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
-    const dailyPct = Math.min(100, Math.round((revToday / dailyGoal) * 100));
+    const dailyPct = dailyGoal > 0 ? Math.min(100, Math.round((revToday / dailyGoal) * 100)) : 0;
     const dailyRemaining = Math.max(0, dailyGoal - revToday);
 
     // Weekly stats
@@ -3350,7 +3366,7 @@ export default function App() {
     const kmWeek = weekEntries.reduce((s, e) => s + Number(e.km || 0), 0);
     const hoursWeek = weekEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
     const weekActiveDays = new Set(weekEntries.map(e => e.date)).size;
-    const weeklyPct = Math.min(100, Math.round((revWeek / weeklyGoal) * 100));
+    const weeklyPct = weeklyGoal > 0 ? Math.min(100, Math.round((revWeek / weeklyGoal) * 100)) : 0;
     const weeklyRemaining = Math.max(0, weeklyGoal - revWeek);
     const remainingDaysInWeek = Math.max(1, 8 - dayOfWeek);
     const weeklyDailyNeeded = weeklyRemaining > 0 ? weeklyRemaining / remainingDaysInWeek : 0;
@@ -3360,7 +3376,7 @@ export default function App() {
     const customCurrent = customScope === 'all' ? totals.lucro : periodTotals.saldoMonth;
     const customGross = customScope === 'all' ? totals.totalRevenue : periodTotals.revMonth;
     const customExpenses = customScope === 'all' ? totals.totalExpense : periodTotals.expMonth;
-    const customPct = Math.min(100, Math.max(0, Math.round((customCurrent / customGoalTarget) * 100)));
+    const customPct = customGoalTarget > 0 ? Math.min(100, Math.max(0, Math.round((customCurrent / customGoalTarget) * 100))) : 0;
     const customRemaining = Math.max(0, customGoalTarget - customCurrent);
     const customDailyNeeded = customRemaining > 0 ? customRemaining / customGoalDays : 0;
 
@@ -3414,8 +3430,8 @@ export default function App() {
     });
 
     // Days that met or exceeded dailyGoal
-    const daysMetDailyGoal = workDaysList.filter(d => d.rev >= dailyGoal).length;
-    const goalHitRatePct = uniqueWorkDays > 0 ? Math.round((daysMetDailyGoal / uniqueWorkDays) * 100) : 0;
+    const daysMetDailyGoal = dailyGoal > 0 ? workDaysList.filter(d => d.rev >= dailyGoal).length : 0;
+    const goalHitRatePct = uniqueWorkDays > 0 && dailyGoal > 0 ? Math.round((daysMetDailyGoal / uniqueWorkDays) * 100) : 0;
 
     // Averages per work day
     const avgRevPerDay = uniqueWorkDays > 0 ? totals.totalRevenue / uniqueWorkDays : 0;
@@ -3542,14 +3558,14 @@ export default function App() {
     const last7DaysDetailed = chart7Days.map(d => {
       const dayEntries = dbState.entries.filter(e => e.date === d.date);
       const hours = dayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
-      const goalPct = Math.min(100, Math.round((d.rev / dailyGoal) * 100));
+      const goalPct = dailyGoal > 0 ? Math.min(100, Math.round((d.rev / dailyGoal) * 100)) : 0;
       const revPerHour = hours > 0 ? d.rev / hours : 0;
       const revPerKm = d.km > 0 ? d.rev / d.km : 0;
       return {
         ...d,
         hours,
         goalPct,
-        metGoal: d.rev >= dailyGoal,
+        metGoal: dailyGoal > 0 && d.rev >= dailyGoal,
         revPerHour,
         revPerKm,
         count: dayEntries.length,
@@ -3722,7 +3738,7 @@ export default function App() {
         metaDiaria: dailyGoal,
         km: Math.round(km * 10) / 10,
         hours: Math.round(hours * 10) / 10,
-        metGoal: rev >= dailyGoal,
+        metGoal: dailyGoal > 0 && rev >= dailyGoal,
       });
     }
 
@@ -3860,8 +3876,8 @@ export default function App() {
     const workDaysPerMonth = Math.max(1, Math.min(31, Number(finPlan.workDaysPerMonth) || 24));
     const hasLoggedDays = progressAnalytics.uniqueWorkDays > 0;
 
-    let dailyGross = Number(dbState.dailyGoal) || 150;
-    let dailyKm = Math.max(20, Math.round(dailyGross / 1.65));
+    let dailyGross = Math.max(0, Number(dbState.dailyGoal) || 0);
+    let dailyKm = dailyGross > 0 ? Math.max(20, Math.round(dailyGross / 1.65)) : 0;
     let baseLabel = 'Meta Diária Configurada';
 
     if (finPlan.revenueBaseMode === 'actual_or_goal') {
@@ -3870,17 +3886,17 @@ export default function App() {
         dailyKm = progressAnalytics.avgKmPerDay > 0 ? progressAnalytics.avgKmPerDay : Math.max(30, Math.round(dailyGross / 1.65));
         baseLabel = `Sua Média Real (${progressAnalytics.uniqueWorkDays} dias registrados)`;
       } else {
-        dailyGross = Number(dbState.dailyGoal) || 150;
-        dailyKm = Math.max(30, Math.round(dailyGross / 1.65));
+        dailyGross = Math.max(0, Number(dbState.dailyGoal) || 0);
+        dailyKm = dailyGross > 0 ? Math.max(30, Math.round(dailyGross / 1.65)) : 0;
         baseLabel = 'Sua Meta Diária (Sem corridas salvas ainda)';
       }
     } else if (finPlan.revenueBaseMode === 'daily_goal') {
-      dailyGross = Number(dbState.dailyGoal) || 150;
-      dailyKm = progressAnalytics.avgKmPerDay > 0 ? progressAnalytics.avgKmPerDay : Math.max(30, Math.round(dailyGross / 1.65));
+      dailyGross = Math.max(0, Number(dbState.dailyGoal) || 0);
+      dailyKm = progressAnalytics.avgKmPerDay > 0 ? progressAnalytics.avgKmPerDay : (dailyGross > 0 ? Math.max(30, Math.round(dailyGross / 1.65)) : 0);
       baseLabel = 'Meta Diária do Painel';
     } else if (finPlan.revenueBaseMode === 'custom_daily') {
-      dailyGross = Math.max(20, Number(finPlan.customDailyGrossBase) || Number(dbState.dailyGoal) || 180);
-      dailyKm = Math.max(10, Number(finPlan.customDailyKmBase) || 110);
+      dailyGross = Math.max(0, Number(finPlan.customDailyGrossBase) || Number(dbState.dailyGoal) || 0);
+      dailyKm = Math.max(0, Number(finPlan.customDailyKmBase) || 0);
       baseLabel = 'Simulação Personalizada';
     }
 
@@ -3916,24 +3932,24 @@ export default function App() {
 
     const baseMaintCostPerKm = maintBreakdown.reduce((s, m) => s + m.costPerKm, 0);
     const baseDailyMaintWear = baseMaintCostPerKm * dailyKm;
-    const extraBufferPct = Math.max(0, Math.min(25, Number(finPlan.maintenanceExtraBufferPct) ?? 3));
+    const extraBufferPct = Math.max(0, Math.min(25, Number(finPlan.maintenanceExtraBufferPct) || 0));
     const extraDailyMaintBuffer = dailyGross * (extraBufferPct / 100);
     let dailyMaintReserve = baseDailyMaintWear + extraDailyMaintBuffer;
     let monthlyMaintReserve = dailyMaintReserve * workDaysPerMonth;
     let maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
 
     // 3. Alimentação na Rua (Almoço + Lanche / Água / Café)
-    const dailyLunch = Math.max(0, Number(finPlan.dailyLunchBudget) ?? 22);
-    const dailySnack = Math.max(0, Number(finPlan.dailySnackBudget) ?? 10);
+    const dailyLunch = Math.max(0, Number(finPlan.dailyLunchBudget) || 0);
+    const dailySnack = Math.max(0, Number(finPlan.dailySnackBudget) || 0);
     const dailyFoodCost = dailyLunch + dailySnack;
     const monthlyFoodCost = dailyFoodCost * workDaysPerMonth;
     const foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
 
     // 4. Documentação da Moto (IPVA, Licenciamento, MEI/Seguro, CNH/Taxas)
-    const ipvaAnnual = Math.max(0, Number(finPlan.ipvaAnnual) ?? 480);
-    const licensingAnnual = Math.max(0, Number(finPlan.licensingAnnual) ?? 160);
-    const otherDocsAnnual = Math.max(0, Number(finPlan.otherDocsAnnual) ?? 120);
-    const insuranceMonthly = Math.max(0, Number(finPlan.insuranceOrMeiMonthly) ?? 75);
+    const ipvaAnnual = Math.max(0, Number(finPlan.ipvaAnnual) || 0);
+    const licensingAnnual = Math.max(0, Number(finPlan.licensingAnnual) || 0);
+    const otherDocsAnnual = Math.max(0, Number(finPlan.otherDocsAnnual) || 0);
+    const insuranceMonthly = Math.max(0, Number(finPlan.insuranceOrMeiMonthly) || 0);
     const docsTargetMonths = Math.max(1, Math.min(12, Number(finPlan.docsTargetMonths) || 12));
 
     const annualStateDocsTotal = ipvaAnnual + licensingAnnual + otherDocsAnnual;
@@ -4034,7 +4050,7 @@ export default function App() {
         const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
         dailyRateio = wearDaily + bufferShare;
         monthlyCost = dailyRateio * workDaysPerMonth;
-        totalCost = oilObj ? oilObj.costEstimate : (item.totalCost || 45);
+        totalCost = oilObj ? oilObj.costEstimate : (item.totalCost || 0);
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
@@ -4045,7 +4061,7 @@ export default function App() {
         const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
         dailyRateio = wearDaily + bufferShare;
         monthlyCost = dailyRateio * workDaysPerMonth;
-        totalCost = tireObj ? tireObj.costEstimate : (item.totalCost || 520);
+        totalCost = tireObj ? tireObj.costEstimate : (item.totalCost || 0);
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
@@ -4056,7 +4072,7 @@ export default function App() {
         const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
         dailyRateio = wearDaily + bufferShare;
         monthlyCost = dailyRateio * workDaysPerMonth;
-        totalCost = chainObj ? chainObj.costEstimate : (item.totalCost || 210);
+        totalCost = chainObj ? chainObj.costEstimate : (item.totalCost || 0);
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
@@ -4067,7 +4083,7 @@ export default function App() {
         const bufferShare = baseDailyMaintWear > 0 ? (wearDaily / baseDailyMaintWear) * extraDailyMaintBuffer : 0;
         dailyRateio = wearDaily + bufferShare;
         monthlyCost = dailyRateio * workDaysPerMonth;
-        totalCost = brakeObj ? brakeObj.costEstimate : (item.totalCost || 75);
+        totalCost = brakeObj ? brakeObj.costEstimate : (item.totalCost || 0);
         calculationNote = `Desgaste mecânico: ${fmtCurrencyExact(dailyRateio)}/dia (~${Math.round(dailyKm)} km/dia)`;
         isProportional = true;
       }
@@ -4174,7 +4190,7 @@ export default function App() {
     const bikePctOfGross = dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
 
     // 6. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
-    const emergencyPct = Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) ?? 10));
+    const emergencyPct = Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0));
     const dailyEmergencyReserve = dailyGross * (emergencyPct / 100);
     const monthlyEmergencyReserve = dailyEmergencyReserve * workDaysPerMonth;
     const emergencyIn6Months = monthlyEmergencyReserve * 6;
@@ -4741,6 +4757,8 @@ export default function App() {
                       setAuthMode('login');
                       setAuthError(null);
                       setAuthSuccess(null);
+                      setAuthPassword('');
+                      setAuthConfirmPassword('');
                     }}
                     className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] ${
                       authMode === 'login'
@@ -4757,6 +4775,12 @@ export default function App() {
                       setAuthMode('register');
                       setAuthError(null);
                       setAuthSuccess(null);
+                      setAuthName('');
+                      setAuthEmail('');
+                      setAuthPhone('');
+                      setAuthBikeModel('');
+                      setAuthPassword('');
+                      setAuthConfirmPassword('');
                     }}
                     className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] ${
                       authMode === 'register'
@@ -4917,6 +4941,7 @@ export default function App() {
                     <input
                       type="email"
                       required
+                      autoComplete="off"
                       value={authEmail}
                       onChange={e => setAuthEmail(e.target.value)}
                       placeholder="seuemail@exemplo.com"
@@ -5011,6 +5036,7 @@ export default function App() {
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
+                      autoComplete="new-password"
                       value={authPassword}
                       onChange={e => setAuthPassword(e.target.value)}
                       placeholder="Mínimo de 4 caracteres"
@@ -5037,6 +5063,7 @@ export default function App() {
                       <input
                         type={showPassword ? 'text' : 'password'}
                         required
+                        autoComplete="new-password"
                         value={authConfirmPassword}
                         onChange={e => setAuthConfirmPassword(e.target.value)}
                         placeholder="Repita a senha"
@@ -5149,6 +5176,7 @@ export default function App() {
             { id: 'dashboard', label: 'Painel' },
             { id: 'maintenance', label: 'Moto' },
             { id: 'billing', label: 'Financeiro' },
+            { id: 'investments', label: 'Investimentos' },
             { id: 'history', label: 'Histórico' },
             { id: 'progress', label: 'Progresso' },
           ].map(item => (
@@ -5333,6 +5361,35 @@ export default function App() {
                         </div>
                       </div>
                     </button>
+
+                    {/* 5. Fundo de Investimentos Motoboy */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCockpitMenu(false);
+                        setActiveTab('investments');
+                      }}
+                      className={`col-span-2 p-3 rounded-xl flex items-center justify-between gap-2.5 transition-all cursor-pointer text-left border ${
+                        isDark
+                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-emerald-500/40 hover:border-emerald-500/70'
+                          : 'bg-emerald-50/70 hover:bg-emerald-100/70 border-emerald-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                          <TrendingUp className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-black leading-tight text-emerald-400">
+                            Fundo de Investimentos (Comprar Cotas)
+                          </div>
+                          <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
+                            Rendimento diário · Saque após 3 dias · QR Code PIX
+                          </div>
+                        </div>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                    </button>
                   </div>
                 </div>
               </>
@@ -5342,7 +5399,11 @@ export default function App() {
           {/* Botão de Conta / Login Rápido */}
           <button
             type="button"
-            onClick={() => setShowAuthScreen(true)}
+            onClick={() => {
+              setAuthPassword('');
+              setAuthConfirmPassword('');
+              setShowAuthScreen(true);
+            }}
             title={currentUser.isGuest ? 'Entrar ou Criar Conta' : `Conta: ${currentUser.name} (${currentUser.email})`}
             className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5 ${surfaceSubtle} hover:border-[#FF6A1A]`}
           >
@@ -6464,12 +6525,12 @@ export default function App() {
 
                 {/* Card de Meta Diária */}
                 {(() => {
-                  const dailyTarget = Math.max(10, Number(dbState.dailyGoal) || 150);
+                  const dailyTarget = Math.max(0, Number(dbState.dailyGoal) || 0);
                   const dailyEarned = progressAnalytics.revToday;
-                  const dailyRawPct = Math.round((dailyEarned / dailyTarget) * 100);
+                  const dailyRawPct = dailyTarget > 0 ? Math.round((dailyEarned / dailyTarget) * 100) : 0;
                   const dailyBarPct = Math.min(100, Math.max(0, dailyRawPct));
                   const dailyRemaining = Math.max(0, dailyTarget - dailyEarned);
-                  const isDailyGoalReached = dailyEarned >= dailyTarget;
+                  const isDailyGoalReached = dailyTarget > 0 && dailyEarned >= dailyTarget;
 
                   return (
                     <div
@@ -6544,12 +6605,12 @@ export default function App() {
 
                 {/* Meta de Faturamento Semanal Progress Bar */}
                 {(() => {
-                  const weeklyTarget = Math.max(50, Number(dbState.weeklyGoal) || 900);
+                  const weeklyTarget = Math.max(0, Number(dbState.weeklyGoal) || 0);
                   const weeklyEarned = periodTotals.revWeek;
-                  const weeklyRawPct = Math.round((weeklyEarned / weeklyTarget) * 100);
+                  const weeklyRawPct = weeklyTarget > 0 ? Math.round((weeklyEarned / weeklyTarget) * 100) : 0;
                   const weeklyBarPct = Math.min(100, Math.max(0, weeklyRawPct));
                   const weeklyRemaining = Math.max(0, weeklyTarget - weeklyEarned);
-                  const isWeeklyGoalReached = weeklyEarned >= weeklyTarget;
+                  const isWeeklyGoalReached = weeklyTarget > 0 && weeklyEarned >= weeklyTarget;
 
                   return (
                     <div className={`mt-2.5 sm:mt-3 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 ${surfaceSubtle}`}>
@@ -6618,7 +6679,7 @@ export default function App() {
 
                 {/* Meta Personalizada de Ganhos: Acompanha o Saldo Atual do Usuário */}
                 {(() => {
-                  const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
+                  const customTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
                   const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
                   const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
                   const customDays = Math.max(1, countdown.effectiveDays);
@@ -6630,7 +6691,7 @@ export default function App() {
                   const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
                   const barPct = Math.min(100, Math.max(0, rawPct));
                   const remainingToGoal = Math.max(0, customTarget - currentBalance);
-                  const isGoalReached = currentBalance >= customTarget;
+                  const isGoalReached = customTarget > 0 && currentBalance >= customTarget;
                   const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
 
                   return (
@@ -8205,7 +8266,7 @@ export default function App() {
 
                   {/* Card 4: Meta Personalizada Acompanhando o Saldo Atual do Usuário */}
                   {(() => {
-                    const customTarget = Math.max(50, Number(dbState.customGoalTarget) || 3000);
+                    const customTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
                     const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
                     const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
                     const customDays = Math.max(1, countdown.effectiveDays);
@@ -8216,7 +8277,7 @@ export default function App() {
                     const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
                     const barPct = Math.min(100, Math.max(0, rawPct));
                     const remainingToGoal = Math.max(0, customTarget - currentBalance);
-                    const isGoalReached = currentBalance >= customTarget;
+                    const isGoalReached = customTarget > 0 && currentBalance >= customTarget;
                     const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
 
                     return (
@@ -11110,6 +11171,18 @@ export default function App() {
           </div>
         )}
 
+        {/* ================= ABA INVESTIMENTOS (FUNDO MOTOBOY & COTAS) ================= */}
+        {activeTab === 'investments' && (
+          <InvestimentosScreen
+            isDark={isDark}
+            userStorageKey={getStorageKeyForUser(currentUser)}
+            currentBalance={totals.lucro}
+            isAdmin={isUserAdmin(currentUser)}
+            currentUserEmail={currentUser?.email || ''}
+            currentUserName={currentUser?.name || ''}
+          />
+        )}
+
         {/* ================= ABA 4: HISTÓRICO ================= */}
         {activeTab === 'history' && (
           <div className="flex flex-col gap-4 sm:gap-6">
@@ -12268,6 +12341,11 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    setAuthEmail('');
+                    setAuthPassword('');
+                    setAuthConfirmPassword('');
+                    setAuthError(null);
+                    setAuthSuccess(null);
                     setAuthMode('login');
                     setShowAuthScreen(true);
                   }}
@@ -12477,7 +12555,7 @@ export default function App() {
                 </div>
                 <FreeNumberInput
                   step="50"
-                  value={dbState.weeklyGoal ?? 900}
+                  value={dbState.weeklyGoal ?? 0}
                   onValueChange={val =>
                     persistAndEnqueueWorkManager({
                       ...dbState,
@@ -12510,7 +12588,7 @@ export default function App() {
                       <span className="text-xs font-black text-[#FF6A1A]">R$</span>
                       <FreeNumberInput
                         step="50"
-                        value={dbState.customGoalTarget ?? 3000}
+                        value={dbState.customGoalTarget ?? 0}
                         onValueChange={val =>
                           persistAndEnqueueWorkManager({
                             ...dbState,
@@ -12882,11 +12960,12 @@ export default function App() {
           isDark ? 'bg-[#090A0F]/95 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
       >
-        <div className="max-w-3xl mx-auto grid grid-cols-6 items-center h-16 px-1 sm:px-2">
+        <div className="max-w-3xl mx-auto grid grid-cols-7 items-center h-16 px-1 sm:px-2">
           {[
             { id: 'dashboard', label: 'Painel', icon: Home },
             { id: 'maintenance', label: 'Moto', icon: Wrench },
             { id: 'billing', label: 'Finanças', icon: BarChart3 },
+            { id: 'investments', label: 'Investir', icon: TrendingUp },
             { id: 'history', label: 'Histórico', icon: History },
             { id: 'progress', label: 'Progresso', icon: Trophy },
             { id: 'settings', label: 'Config', icon: Settings },

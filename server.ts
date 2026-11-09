@@ -237,6 +237,92 @@ async function startServer() {
     }
   });
 
+  // Global Investment Plans Configuration (Editable only by Admin, visible to all users)
+  app.get('/api/investment-plans', (_req, res) => {
+    try {
+      const store = readServerCloudStore();
+      const config = store['__global_investment_plans__'] || null;
+      return res.json({ ok: true, data: config });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/investment-plans', (req, res) => {
+    try {
+      const { plans, qrConfig, updatedBy } = req.body || {};
+      if (!Array.isArray(plans)) {
+        return res.status(400).json({ ok: false, error: 'Invalid plans array' });
+      }
+      const store = readServerCloudStore();
+      store['__global_investment_plans__'] = {
+        plans,
+        qrConfig: qrConfig || null,
+        updatedBy: updatedBy || 'admin',
+        updatedAt: new Date().toISOString(),
+      };
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: store['__global_investment_plans__'] });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  // High-Priority Admin Investment Notifications (Deposits & Withdrawals)
+  app.get('/api/admin/investment-notifications', (_req, res) => {
+    try {
+      const store = readServerCloudStore();
+      const notifs = store['__admin_investment_notifications__'] || [];
+      return res.json({ ok: true, data: notifs });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/admin/investment-notifications', (req, res) => {
+    try {
+      const { notification } = req.body || {};
+      if (!notification || !notification.type) {
+        return res.status(400).json({ ok: false, error: 'Invalid notification payload' });
+      }
+      const store = readServerCloudStore();
+      const currentList: any[] = store['__admin_investment_notifications__'] || [];
+      const newEntry = {
+        ...notification,
+        id: notification.id || 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        priority: 'high',
+        read: false,
+        timestamp: notification.timestamp || new Date().toISOString(),
+      };
+      // Keep up to 100 most recent notifications
+      const updatedList = [newEntry, ...currentList].slice(0, 100);
+      store['__admin_investment_notifications__'] = updatedList;
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: newEntry });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/admin/investment-notifications/read', (req, res) => {
+    try {
+      const { notificationId, markAll } = req.body || {};
+      const store = readServerCloudStore();
+      const currentList: any[] = store['__admin_investment_notifications__'] || [];
+      const updatedList = currentList.map(n => {
+        if (markAll || n.id === notificationId) {
+          return { ...n, read: true };
+        }
+        return n;
+      });
+      store['__admin_investment_notifications__'] = updatedList;
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: updatedList });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
   app.post('/api/gemini/copilot', async (req, res) => {
     try {
       const { question, context } = req.body;
