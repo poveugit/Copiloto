@@ -13377,6 +13377,33 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* PRIVACIDADE, TERMOS E LGPD (Exigência Google Play Store) */}
+            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3.5 ${surfaceCard}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-400 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black">Privacidade & Termos Legais</h3>
+                  <p className={`text-xs ${mutedText}`}>Em conformidade com a LGPD e Google Play Store</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/40">
+                <div className="text-xs text-slate-400">
+                  O Mochilinha não vende seus dados operacionais. Seus registros são criptografados.
+                </div>
+                <a
+                  href="/privacidade.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 transition-colors text-center shrink-0"
+                >
+                  Ver Política de Privacidade →
+                </a>
+              </div>
+            </div>
           </div>
         )}
       </main>

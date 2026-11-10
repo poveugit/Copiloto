@@ -73,3 +73,31 @@
 - `npm run cap:open`: Abre o projeto no Android Studio.
 - `npm run build:apk`: Pipeline completo que compila o front, sincroniza o capacitor e gera o APK assinado em `android/app/build/outputs/apk/release/app-release.apk`.
 - Build do AAB (Google Play): Executado via `cd android ; .\gradlew.bat bundleRelease` gerando o arquivo assinado em `android/app/build/outputs/bundle/release/app-release.aab`.
+
+## Ícone Oficial do Aplicativo Mochilinha
+- **Design**: Mochila de entrega tecnológica/3D voltada para entregadores e motoboys, com iluminação em neon laranja/ciano e fundo escuro em degradê midnight slate (`#151B27`).
+- **Resoluções Nativas Geradas**:
+  - `mipmap-mdpi`: 48x48 (padrão e redondo) / 108x108 (foreground)
+  - `mipmap-hdpi`: 72x72 (padrão e redondo) / 162x162 (foreground)
+  - `mipmap-xhdpi`: 96x96 (padrão e redondo) / 216x216 (foreground)
+  - `mipmap-xxhdpi`: 144x144 (padrão e redondo) / 324x324 (foreground)
+  - `mipmap-xxxhdpi`: 192x192 (padrão e redondo) / 432x432 (foreground)
+- **Play Store Icon**: `android/app/play_store_icon.png` (512x512)
+- **Script de automação**: `scripts/generate_android_icons.ps1`
+
+## Política de Privacidade (Google Play Store & LGPD)
+- **Arquivo HTML**: `public/privacidade.html` e `public/privacy.html`.
+- **Roteamento Vercel (`vercel.json`)**:
+  - `/privacidade`
+  - `/politica-de-privacidade`
+  - `/privacy`
+  - `/privacy-policy`
+  - `/privacidade.html`
+- **Conteúdo**: Abrange conformidade total com LGPD (Art. 18), dados coletados (cadastrais, faturamento e despesas), permissões do Android (`POST_NOTIFICATIONS`), segurança via Supabase/Vercel e canal de exclusão de dados via e-mail do DPO (`junior2026izi@gmail.com`).
+- **Acesso no App**: Card com link direto nas Configurações do aplicativo.
+
+## Última Geração de Binários Assinados
+- **Data**: 10/11/2026 17:57 (UTC-3)
+- **APK Release**: `android/app/build/outputs/apk/release/app-release.apk` (4.04 MB)
+- **AAB Bundle**: `android/app/build/outputs/bundle/release/app-release.aab` (3.89 MB)
+- **Assinatura**: `release-key.jks` (alias `mochilinha-release`)

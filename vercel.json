@@ -4,6 +4,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/(privacidade|politica-de-privacidade|privacy|privacy-policy)",
+      "destination": "/privacidade.html"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     },
