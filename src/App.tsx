@@ -326,14 +326,17 @@ function getStorageKeyForUser(user: UserProfile | null): string {
 
 const ADMIN_EMAILS = new Set([
   'swamijunior346.sj@gmail.com',
+  'junior2026izi@gmail.com',
   'parceirosizi@gmail.com',
   'admin@mochilinha.com',
   'admin@gmail.com',
 ]);
 
 function isUserAdmin(user: UserProfile | null): boolean {
-  if (!user || user.isGuest || !user.email) return false;
-  const emailClean = user.email.trim().toLowerCase();
+  if (!user || user.isGuest) return false;
+  if ((user as any).isAdmin === true || (user as any).is_admin === true) return true;
+  const emailClean = (user.email || '').trim().toLowerCase();
+  if (!emailClean) return false;
   if (ADMIN_EMAILS.has(emailClean)) return true;
   if (emailClean.startsWith('admin@') || emailClean.includes('.admin@')) return true;
   if (user.id === 'usr_1793065121511') return true;
@@ -1619,7 +1622,7 @@ export default function App() {
     if (showAuthScreen || !currentUser || currentUser.isGuest) return;
     void (async () => {
       const current = await getNotificationPermission();
-      if (current === 'prompt' && isNativePlatform()) {
+      if (current !== 'granted' && isNativePlatform()) {
         setNotifPermission(await requestNotificationPermission());
       } else {
         setNotifPermission(current);

@@ -74,7 +74,10 @@ export async function getNotificationPermission(): Promise<NotificationPermissio
   if (isNativePlatform()) {
     try {
       const res = await LocalNotifications.checkPermissions();
-      return res.display as NotificationPermissionState;
+      const st = String(res?.display || '').toLowerCase();
+      if (st === 'granted') return 'granted';
+      if (st === 'denied') return 'denied';
+      return 'prompt';
     } catch {
       return 'unsupported';
     }
@@ -90,7 +93,8 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   if (isNativePlatform()) {
     try {
       const res = await LocalNotifications.requestPermissions();
-      return res.display as NotificationPermissionState;
+      const st = String(res?.display || '').toLowerCase();
+      return st === 'granted' ? 'granted' : st === 'denied' ? 'denied' : 'prompt';
     } catch {
       return 'unsupported';
     }
@@ -123,14 +127,15 @@ export async function initNativeNotifications(): Promise<void> {
         visibility: 1,
         vibration: true,
         lights: true,
+        sound: 'default',
       });
     }
     await LocalNotifications.addListener('localNotificationActionPerformed', event => {
       const target = (event?.notification?.extra as { targetTab?: string } | undefined)?.targetTab;
       tapHandler?.(target);
     });
-  } catch {
-    // Canais/listener indisponíveis: as notificações ainda funcionam no canal padrão.
+  } catch (err) {
+    console.warn('Aviso ao inicializar canais de notificação:', err);
   }
 }
 
@@ -141,35 +146,54 @@ export async function initNativeNotifications(): Promise<void> {
 export async function sendNativeNotification(payload: NativeNotificationPayload): Promise<boolean> {
   try {
     if (isNativePlatform()) {
+      await initNativeNotifications();
       let perm = await getNotificationPermission();
-      if (perm === 'prompt') perm = await requestNotificationPermission();
+      if (perm !== 'granted') {
+        perm = await requestNotificationPermission();
+      }
       if (perm !== 'granted') return false;
 
-      await LocalNotifications.schedule({
-        notifications: [
-          {
-            id: tagToNotificationId(payload.tag),
-            title: payload.title,
-            body: payload.body,
-            channelId: payload.channel,
-            smallIcon: 'ic_stat_notify',
-            extra: { targetTab: payload.targetTab },
-          },
-        ],
-      });
-      return true;
+      const notifItem: any = {
+        id: tagToNotificationId(payload.tag),
+        title: payload.title,
+        body: payload.body,
+        channelId: payload.channel,
+        smallIcon: 'ic_stat_notify',
+        sound: 'default',
+        extra: { targetTab: payload.targetTab },
+      };
+
+      try {
+        await LocalNotifications.schedule({
+          notifications: [notifItem],
+        });
+        return true;
+      } catch (errSchedule) {
+        console.warn('Falha com smallIcon customizado, agendando com ícone padrão:', errSchedule);
+        delete notifItem.smallIcon;
+        await LocalNotifications.schedule({
+          notifications: [notifItem],
+        });
+        return true;
+      }
     }
 
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(payload.title, { body: payload.body, tag: payload.tag });
-      n.onclick = () => {
-        window.focus();
-        tapHandler?.(payload.targetTab);
-      };
-      return true;
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      let perm = Notification.permission;
+      if (perm === 'default') {
+        perm = await Notification.requestPermission();
+      }
+      if (perm === 'granted') {
+        const n = new Notification(payload.title, { body: payload.body, tag: payload.tag });
+        n.onclick = () => {
+          window.focus();
+          tapHandler?.(payload.targetTab);
+        };
+        return true;
+      }
     }
-  } catch {
-    // ignora
+  } catch (err) {
+    console.error('Falha ao disparar notificação nativa:', err);
   }
   return false;
 }

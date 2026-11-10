@@ -7,7 +7,7 @@ import {
 } from '../services/investmentCloud';
 import { sendNativeNotification } from '../services/nativeNotifications';
 
-const POLL_INTERVAL_MS = 20000;
+const POLL_INTERVAL_MS = 10000;
 
 function brl(v: number): string {
   return (
@@ -124,16 +124,20 @@ export function useInvestmentWatcher(params: {
       if (fresh.length === 0) return;
 
       if (fresh.length > 3) {
-        await sendNativeNotification({
+        const ok = await sendNativeNotification({
           tag: 'admin_pending_summary',
           channel: 'investments',
           title: `🚨 ${fresh.length} depósitos aguardando confirmação`,
           body: 'Confira os PIX recebidos e confirme para liberar as cotas dos motoboys.',
           targetTab: 'investments',
         });
+        if (ok) {
+          fresh.forEach(d => seen.add(d.id));
+          writeSet(adminDepKey, seen);
+        }
       } else {
         for (const dep of fresh) {
-          await sendNativeNotification({
+          const ok = await sendNativeNotification({
             tag: `admin_pending_${dep.id}`,
             channel: 'investments',
             title: '🚨 Novo depósito aguardando confirmação',
@@ -142,11 +146,12 @@ export function useInvestmentWatcher(params: {
             } em ${dep.planName}). Confirme o PIX para liberar.`,
             targetTab: 'investments',
           });
+          if (ok) {
+            seen.add(dep.id);
+          }
         }
+        writeSet(adminDepKey, seen);
       }
-
-      fresh.forEach(d => seen.add(d.id));
-      writeSet(adminDepKey, seen);
     };
 
     const checkAdminEvents = async () => {
@@ -199,11 +204,13 @@ export function useInvestmentWatcher(params: {
       if (document.visibilityState === 'visible') void tick();
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
     };
   }, [enabled, email, isAdmin]);
 }

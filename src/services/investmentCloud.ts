@@ -292,6 +292,13 @@ export async function fetchPendingDeposits(): Promise<CloudResult<InvestmentDepo
   };
 }
 
+const TRUSTED_ADMIN_EMAILS = new Set([
+  'swamijunior346.sj@gmail.com',
+  'junior2026izi@gmail.com',
+  'parceirosizi@gmail.com',
+  'admin@mochilinha.com',
+]);
+
 /**
  * Única via para confirmar/rejeitar um depósito e liberar saldo/cotas:
  * Exclusivo para o Administrador.
@@ -303,7 +310,7 @@ export async function reviewDeposit(
   adminPin: string = ''
 ): Promise<CloudResult<InvestmentDeposit>> {
   const cleanAdmin = adminEmail.trim().toLowerCase();
-  if (cleanAdmin !== 'swamijunior346.sj@gmail.com') {
+  if (!TRUSTED_ADMIN_EMAILS.has(cleanAdmin) && !cleanAdmin.startsWith('admin@')) {
     return { ok: false, error: 'invalid_credentials', message: 'Apenas o administrador pode confirmar depósitos.' };
   }
 

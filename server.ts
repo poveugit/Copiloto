@@ -370,7 +370,8 @@ async function startServer() {
     try {
       const { depositId, decision, adminEmail } = req.body || {};
       const cleanAdmin = String(adminEmail || '').trim().toLowerCase();
-      if (cleanAdmin !== 'swamijunior346.sj@gmail.com') {
+      const trustedAdmins = ['swamijunior346.sj@gmail.com', 'junior2026izi@gmail.com', 'parceirosizi@gmail.com'];
+      if (!trustedAdmins.includes(cleanAdmin) && !cleanAdmin.startsWith('admin@')) {
         return res.status(403).json({ ok: false, error: 'invalid_credentials' });
       }
       if (decision !== 'confirmed' && decision !== 'rejected') {
