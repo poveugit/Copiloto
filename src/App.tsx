@@ -145,6 +145,16 @@ import { RelatorioMeiModal } from './components/RelatorioMeiModal';
 import { MetaReversaModal } from './components/MetaReversaModal';
 import { InvestimentosScreen } from './components/InvestimentosScreen';
 import {
+  getNotificationPermission,
+  initNativeNotifications,
+  isNativePlatform,
+  onNotificationTap,
+  requestNotificationPermission,
+  sendNativeNotification,
+  type NotificationPermissionState,
+} from './services/nativeNotifications';
+import { useInvestmentWatcher } from './hooks/useInvestmentWatcher';
+import {
   startSpeechRecognition,
   isSpeechRecognitionSupported,
   checkMicrophonePermissionStatus,
@@ -1539,26 +1549,20 @@ export default function App() {
     return evaluateBikeDiagnostics(dbState.maintenanceItems, dbState.fuelConfig, totals.totalKm);
   }, [dbState.maintenanceItems, dbState.fuelConfig, totals.totalKm]);
 
-  // ================= LOCAL PUSH NOTIFICATIONS FOR MAINTENANCE ALERTS =================
-  interface LocalPushToast {
-    id: string;
+  // ================= NOTIFICAÇÕES NATIVAS (ALERTAS DE MANUTENÇÃO) =================
+  // Todas as notificações do app são do sistema (Android). Nada é desenhado dentro do app.
+  interface MaintAlertPayload {
+    cycleKey: string;
     itemId: string;
     itemName: string;
-    itemIcon: string;
     severity: 'alert' | 'overdue';
     wearPct: number;
     thresholdPct: number;
     kmRemaining: number;
-    timestamp: string;
   }
 
-  const [localPushToasts, setLocalPushToasts] = useState<LocalPushToast[]>([]);
-  const [browserNotifPermission, setBrowserNotifPermission] = useState<string>(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      return Notification.permission;
-    }
-    return 'unsupported';
-  });
+  const [notifPermission, setNotifPermission] = useState<NotificationPermissionState>('prompt');
+  const [notifTestFeedback, setNotifTestFeedback] = useState<string | null>(null);
 
   const isMaintNotificationsEnabled = dbState.maintenanceNotificationsEnabled !== false;
 
@@ -1579,33 +1583,58 @@ export default function App() {
     return { overdueCount, alertCount };
   }, [dbState.maintenanceItems, totals.totalKm]);
 
-  const dispatchNativeAndLocalPush = useCallback((toast: LocalPushToast) => {
-    setLocalPushToasts(prev => {
-      const filtered = prev.filter(t => t.itemId !== toast.itemId);
-      return [toast, ...filtered].slice(0, 4);
+  const dispatchMaintenanceNotification = useCallback((alert: MaintAlertPayload) => {
+    const title =
+      alert.severity === 'overdue'
+        ? `🚨 Manutenção Vencida: ${alert.itemName}`
+        : `⚠️ Ponto de Alerta (${alert.wearPct}%): ${alert.itemName}`;
+    const body =
+      alert.severity === 'overdue'
+        ? `O limite de quilometragem foi atingido (${alert.wearPct}% de uso). Agende a troca agora.`
+        : `Atingiu o ponto de alerta de ${alert.thresholdPct}%! Restam ${alert.kmRemaining.toLocaleString('pt-BR')} km para a revisão.`;
+    return sendNativeNotification({
+      tag: `maint_${alert.cycleKey}`,
+      title,
+      body,
+      channel: 'maintenance',
+      targetTab: 'maintenance',
     });
-
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      try {
-        const title =
-          toast.severity === 'overdue'
-            ? `🚨 Manutenção Vencida: ${toast.itemName}`
-            : `⚠️ Ponto de Alerta (${toast.wearPct}%): ${toast.itemName}`;
-        const body =
-          toast.severity === 'overdue'
-            ? `O limite de quilometragem foi atingido (${toast.wearPct}% de uso). Agende a troca agora.`
-            : `Atingiu o ponto de alerta de ${toast.thresholdPct}%! Restam ${toast.kmRemaining.toLocaleString('pt-BR')} km para a revisão.`;
-        new Notification(title, {
-          body,
-          tag: `copilotrider_maint_${toast.itemId}`,
-        });
-      } catch {
-        // Fallback handled by in-app local push banner
-      }
-    }
   }, []);
 
-  // Watch maintenance items against totalKm and fire local push when alertThresholdPct is reached
+  // Inicializa canais nativos, lê a permissão atual e trata o toque na notificação
+  useEffect(() => {
+    void initNativeNotifications();
+    void getNotificationPermission().then(setNotifPermission);
+    onNotificationTap(target => {
+      if (target === 'maintenance' || target === 'investments' || target === 'dashboard') {
+        setShowAuthScreen(false);
+        setActiveTab(target);
+      }
+    });
+    return () => onNotificationTap(null);
+  }, []);
+
+  // Pede a permissão de notificações (Android 13+) assim que o usuário está logado
+  useEffect(() => {
+    if (showAuthScreen || !currentUser || currentUser.isGuest) return;
+    void (async () => {
+      const current = await getNotificationPermission();
+      if (current === 'prompt' && isNativePlatform()) {
+        setNotifPermission(await requestNotificationPermission());
+      } else {
+        setNotifPermission(current);
+      }
+    })();
+  }, [showAuthScreen, currentUser]);
+
+  // Monitora depósitos e resgates de investimentos e notifica de forma nativa
+  useInvestmentWatcher({
+    enabled: !showAuthScreen && !!currentUser && !currentUser.isGuest,
+    email: currentUser?.email || '',
+    isAdmin: isUserAdmin(currentUser),
+  });
+
+  // Watch maintenance items against totalKm and fire native notification when alertThresholdPct is reached
   useEffect(() => {
     if (!isMaintNotificationsEnabled || showAuthScreen) return;
 
@@ -1619,7 +1648,6 @@ export default function App() {
     }
 
     let updatedMap = false;
-    const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
     dbState.maintenanceItems.forEach(item => {
       const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
@@ -1634,16 +1662,14 @@ export default function App() {
         if (!notifiedMap[cycleKey]) {
           notifiedMap[cycleKey] = true;
           updatedMap = true;
-          dispatchNativeAndLocalPush({
-            id: `${cycleKey}_${Date.now()}`,
+          void dispatchMaintenanceNotification({
+            cycleKey,
             itemId: item.id,
             itemName: item.name,
-            itemIcon: item.icon || '🔧',
             severity,
             wearPct,
             thresholdPct,
             kmRemaining,
-            timestamp: nowTime,
           });
         }
       }
@@ -1662,27 +1688,14 @@ export default function App() {
     isMaintNotificationsEnabled,
     showAuthScreen,
     currentUser,
-    dispatchNativeAndLocalPush,
+    dispatchMaintenanceNotification,
   ]);
 
   const handleToggleMaintenanceNotifications = async (nextEnabled: boolean) => {
-    if (nextEnabled && typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        try {
-          const perm = await Notification.requestPermission();
-          setBrowserNotifPermission(perm);
-        } catch {
-          // Ignore iframe permission restriction
-        }
-      } else {
-        setBrowserNotifPermission(Notification.permission);
-      }
-    }
-
-    if (!nextEnabled) {
-      setLocalPushToasts([]);
-    } else {
-      // Clear notified cache for current active alerts so enabling immediately notifies any items already at alert point
+    if (nextEnabled) {
+      const current = await getNotificationPermission();
+      setNotifPermission(current === 'prompt' ? await requestNotificationPermission() : current);
+      // Limpa o cache de avisos para notificar de imediato itens que já estejam no ponto de alerta
       const notifiedStorageKey = `${getStorageKeyForUser(currentUser)}_notified_alerts_v1`;
       localStorage.removeItem(notifiedStorageKey);
     }
@@ -1691,6 +1704,26 @@ export default function App() {
       ...dbState,
       maintenanceNotificationsEnabled: nextEnabled,
     });
+  };
+
+  const handleSendTestNotification = async () => {
+    let perm = await getNotificationPermission();
+    if (perm === 'prompt') perm = await requestNotificationPermission();
+    setNotifPermission(perm);
+    if (perm !== 'granted') {
+      setNotifTestFeedback(
+        'Permissão negada. Ative as notificações do Mochilinha nas configurações do Android.'
+      );
+      return;
+    }
+    const ok = await sendNativeNotification({
+      tag: 'mochilinha_test',
+      title: '🔔 Notificações ativas',
+      body: 'Tudo certo! Você receberá alertas de manutenção e investimentos aqui.',
+      channel: 'maintenance',
+      targetTab: 'dashboard',
+    });
+    setNotifTestFeedback(ok ? 'Notificação de teste enviada.' : 'Não foi possível enviar a notificação.');
   };
 
   // ================= EDITABLE MOTO CARDS STATE (100% EDITABLE) =================
@@ -3827,32 +3860,6 @@ export default function App() {
     chart7Days,
   ]);
 
-  // Notifications State & Pending Alerts from Room DB (Threshold >= alertThresholdPct or >= 100%)
-  const [showNotificationsModal, setShowNotificationsModal] = useState<boolean>(false);
-  const pendingAlertNotifications = useMemo(() => {
-    return dbState.maintenanceItems
-      .map(item => {
-        const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
-        const interval = Math.max(100, item.intervalKm || 1000);
-        const rawPct = Math.round((kmUsed / interval) * 100);
-        const threshold = Math.min(99, Math.max(50, item.alertThresholdPct ?? 85));
-        const isOverdue = rawPct >= 100;
-        const isWarning = rawPct >= threshold && !isOverdue;
-        const kmRemaining = Math.max(0, interval - kmUsed);
-        const kmOverdue = kmUsed > interval ? kmUsed - interval : 0;
-        return {
-          ...item,
-          rawPct,
-          threshold,
-          isOverdue,
-          isWarning,
-          kmRemaining,
-          kmOverdue,
-        };
-      })
-      .filter(n => n.isOverdue || n.isWarning);
-  }, [dbState.maintenanceItems, totals.totalKm]);
-
   // ================= AI FINANCIAL INTELLIGENCE & MOTOBOY RESERVES ENGINE =================
   const finPlan: FinancialPlanningConfig = useMemo(
     () => ({
@@ -4675,7 +4682,13 @@ export default function App() {
   // ================= DEDICATED LOGIN & CADASTRO SCREEN =================
   if (showAuthScreen || !currentUser) {
     return (
-      <div className={`min-h-screen transition-colors duration-200 ${bgCanvas} flex flex-col justify-between p-4 sm:p-6 lg:p-10`}>
+      <div
+        className={`min-h-screen transition-colors duration-200 ${bgCanvas} flex flex-col justify-between p-4 sm:p-6 lg:p-10`}
+        style={{
+          paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+          paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+        }}
+      >
         {/* Top Minimal Brand + Theme Switcher */}
         <header className="w-full max-w-6xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
@@ -4693,15 +4706,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {currentUser && (
-              <button
-                type="button"
-                onClick={() => setShowAuthScreen(false)}
-                className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]`}
-              >
-                Voltar ao App
-              </button>
-            )}
             <button
               type="button"
               onClick={() => setIsDark(prev => !prev)}
@@ -4718,15 +4722,9 @@ export default function App() {
           {/* Left Hero / Value Proposition (Visible on Desktop, compact header on Mobile) */}
           <div className="lg:col-span-6 flex flex-col gap-4 sm:gap-6">
             <div>
-              <span className="text-xs font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                Sincronização Nuvem + Room Offline
-              </span>
-              <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight mt-1.5 sm:mt-2 leading-tight">
+              <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
                 Controle seus ganhos, turnos e a saúde da sua moto.
               </h1>
-              <p className={`text-xs sm:text-base mt-2 sm:mt-3 leading-relaxed ${mutedText}`}>
-                Acesse sua conta para sincronizar seu histórico de corridas, despesas de combustível e alertas preventivos de manutenção em qualquer celular.
-              </p>
             </div>
 
             <div className="hidden sm:grid grid-cols-3 gap-3">
@@ -5152,12 +5150,21 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen transition-colors duration-200 ${bgCanvas} pb-24 sm:pb-28`}>
+    <div
+      className={`min-h-screen transition-colors duration-200 ${bgCanvas}`}
+      style={{
+        paddingBottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))',
+      }}
+    >
       {/* TOP BAR CONTRACT: 3 ZONES (Brand | Nav Links | Primary Action) */}
       <header
-        className={`sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-8 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3.5 border-b backdrop-blur-md ${
+        className={`sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-8 px-3 sm:px-6 lg:px-8 border-b backdrop-blur-md ${
           isDark ? 'bg-[#090A0F]/90 border-slate-800/80' : 'bg-white/90 border-slate-200'
         }`}
+        style={{
+          paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))',
+          paddingBottom: '0.625rem',
+        }}
       >
         <a
           href="#painel"
@@ -5227,11 +5234,14 @@ export default function App() {
                   onClick={() => setShowCockpitMenu(false)}
                 />
                 <div
-                  className={`fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 md:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
+                  className={`fixed left-3 right-3 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 md:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
                     isDark
                       ? 'bg-[#12141C] border-slate-800 text-slate-100'
                       : 'bg-white border-slate-200 text-slate-900'
                   }`}
+                  style={{
+                    top: 'calc(3.75rem + env(safe-area-inset-top, 0px))',
+                  }}
                 >
                   <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/40">
                     <div className="flex items-center gap-2 min-w-0">
@@ -5412,118 +5422,6 @@ export default function App() {
               {currentUser.isGuest ? 'Entrar / Conta' : currentUser.name.split(' ')[0]}
             </span>
           </button>
-
-          {/* Central de Notificações de Alerta */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowNotificationsModal(prev => !prev)}
-              aria-label="Notificações e Alertas de Manutenção"
-              className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer relative min-h-[40px] min-w-[40px] flex items-center justify-center ${
-                pendingAlertNotifications.length > 0
-                  ? 'bg-amber-500/15 border border-amber-500/40 text-amber-400 hover:bg-amber-500/25'
-                  : `${surfaceSubtle} ${mutedText} hover:text-white`
-              }`}
-            >
-              <Bell className="w-4 h-4" />
-              {pendingAlertNotifications.length > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black text-white shadow-xs animate-pulse">
-                  {pendingAlertNotifications.length}
-                </span>
-              )}
-            </button>
-
-            {/* Dropdown / Modal de Notificações adaptado para telas mobile e desktop */}
-            {showNotificationsModal && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowNotificationsModal(false)}
-                />
-                <div
-                  className={`fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
-                    isDark
-                      ? 'bg-[#12141C] border-slate-800 text-slate-100'
-                      : 'bg-white border-slate-200 text-slate-900'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/40">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Bell className="w-4 h-4 text-[#FF6A1A] shrink-0" />
-                      <span className="text-xs font-black uppercase tracking-wider truncate">
-                        Alertas de Manutenção ({pendingAlertNotifications.length})
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setShowNotificationsModal(false)}
-                      className={`p-1.5 rounded-lg shrink-0 ${surfaceSubtle} cursor-pointer`}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="mt-3 flex flex-col gap-2.5 max-h-[65vh] sm:max-h-80 overflow-y-auto">
-                    {pendingAlertNotifications.length === 0 ? (
-                      <div className="py-6 text-center text-xs font-semibold text-emerald-400 flex flex-col items-center gap-2">
-                        <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                        <span>Todas as manutenções estão abaixo da porcentagem de alerta!</span>
-                      </div>
-                    ) : (
-                      pendingAlertNotifications.map(item => (
-                        <div
-                          key={item.id}
-                          onClick={() => {
-                            setActiveTab('maintenance');
-                            setShowNotificationsModal(false);
-                          }}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                            item.isOverdue
-                              ? 'bg-rose-500/10 border-rose-500/40 hover:bg-rose-500/20'
-                              : 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20'
-                          }`}
-                        >
-                          <span className="text-2xl shrink-0 mt-0.5">{item.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-black truncate">{item.name}</span>
-                              <span
-                                className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
-                                  item.isOverdue
-                                    ? 'bg-rose-500/25 text-rose-300'
-                                    : 'bg-amber-500/25 text-amber-300'
-                                }`}
-                              >
-                                {item.isOverdue ? 'Vencido' : `Alerta ${item.threshold}%`}
-                              </span>
-                            </div>
-                            <p className={`text-[11px] mt-0.5 break-words ${mutedText}`}>
-                              {item.isOverdue
-                                ? `Ultrapassou o limite (+${item.kmOverdue.toLocaleString('pt-BR')} km rodados além)`
-                                : `Atingiu ${item.rawPct}% do intervalo (restam ${item.kmRemaining.toLocaleString('pt-BR')} km)`}
-                            </p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {pendingAlertNotifications.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-800/40 flex justify-end">
-                      <button
-                        onClick={() => {
-                          setActiveTab('maintenance');
-                          setShowNotificationsModal(false);
-                        }}
-                        className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer"
-                      >
-                        Ir para a Garagem da Moto →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </header>
 
@@ -12649,7 +12547,7 @@ export default function App() {
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-bold">
-                          Notificações Locais de Manutenção (Push Local)
+                          Notificações do Sistema (Manutenção e Investimentos)
                         </span>
                         <span
                           className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
@@ -12664,7 +12562,7 @@ export default function App() {
                         </span>
                       </div>
                       <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Dispara um alerta push local sempre que uma manutenção atingir o ponto de alerta configurado (ex: 85% de uso) ou vencer o limite de troca.
+                        Avisos nativos do Android quando uma manutenção atingir o ponto de alerta (ex: 85% de uso) ou vencer, e quando um depósito de investimento for confirmado pelo Admin.
                       </p>
                     </div>
                   </div>
@@ -12725,13 +12623,29 @@ export default function App() {
                         ? 'Alertas silenciados pelo usuário'
                         : `${maintAlertStats.overdueCount} vencida(s) · ${maintAlertStats.alertCount} no ponto de alerta`}
                     </span>
-                    {browserNotifPermission === 'granted' && isMaintNotificationsEnabled && (
+                    {notifPermission === 'granted' && (
                       <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                        Push Nativo + In-App Ativo
+                        Notificações nativas ativas
+                      </span>
+                    )}
+                    {notifPermission === 'denied' && (
+                      <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">
+                        Permissão negada no Android
                       </span>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleSendTestNotification}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer shrink-0 flex items-center gap-1.5 ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                  >
+                    <BellRing className="w-3.5 h-3.5" />
+                    <span>Enviar notificação de teste</span>
+                  </button>
                 </div>
+                {notifTestFeedback && (
+                  <p className={`text-[11px] font-semibold ${mutedText}`}>{notifTestFeedback}</p>
+                )}
               </div>
 
               {/* PERMISSÃO DE VOZ E MICROFONE NO DISPOSITIVO */}
@@ -12904,7 +12818,12 @@ export default function App() {
       </main>
 
       {/* FLOATING ACTION BUTTONS: DITAR POR VOZ + NOVO REGISTRO (Acima da barra de navegação, lado direito) */}
-      <div className="fixed bottom-20 right-4 sm:right-6 z-40 flex items-center gap-2">
+      <div
+        className="fixed right-4 sm:right-6 z-40 flex items-center gap-2"
+        style={{
+          bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
+        }}
+      >
         {/* Voice Dictation Button */}
         <button
           type="button"
@@ -12939,7 +12858,12 @@ export default function App() {
 
       {/* VOICE SPEECH FEEDBACK POPUP */}
       {voiceSpeechFeedback && (
-        <div className="fixed bottom-36 right-4 left-4 sm:left-auto sm:w-96 z-50 p-3.5 rounded-2xl bg-[#FF6A1A] text-black font-black text-xs shadow-2xl flex items-center justify-between gap-2 border border-orange-200">
+        <div
+          className="fixed right-4 left-4 sm:left-auto sm:w-96 z-50 p-3.5 rounded-2xl bg-[#FF6A1A] text-black font-black text-xs shadow-2xl flex items-center justify-between gap-2 border border-orange-200"
+          style={{
+            bottom: 'calc(9rem + env(safe-area-inset-bottom, 0px))',
+          }}
+        >
           <div className="flex items-center gap-2 min-w-0">
             <Mic className="w-4 h-4 shrink-0" />
             <span className="truncate">{voiceSpeechFeedback}</span>
@@ -12959,6 +12883,9 @@ export default function App() {
         className={`fixed bottom-0 left-0 right-0 z-30 border-t backdrop-blur-md ${
           isDark ? 'bg-[#090A0F]/95 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
+        style={{
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        }}
       >
         <div className="max-w-3xl mx-auto grid grid-cols-7 items-center h-16 px-1 sm:px-2">
           {[
@@ -14294,101 +14221,6 @@ export default function App() {
           </div>
         );
       })()}
-
-      {/* FLOATING LOCAL PUSH NOTIFICATION BANNER (MOTO MAINTENANCE ALERTS) */}
-      {isMaintNotificationsEnabled && localPushToasts.length > 0 && (
-        <div className="fixed top-3 right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
-          {localPushToasts.map(toast => {
-            const isOverdue = toast.severity === 'overdue';
-            return (
-              <div
-                key={toast.id}
-                className={`pointer-events-auto rounded-2xl p-3.5 shadow-2xl border backdrop-blur-md transition-all flex flex-col gap-2.5 ${
-                  isDark
-                    ? isOverdue
-                      ? 'bg-[#181115]/95 border-rose-500/50 text-slate-100'
-                      : 'bg-[#171510]/95 border-amber-500/50 text-slate-100'
-                    : isOverdue
-                    ? 'bg-white/95 border-rose-400 text-slate-900'
-                    : 'bg-white/95 border-amber-400 text-slate-900'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2.5">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 border ${
-                        isOverdue
-                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
-                          : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                      }`}
-                    >
-                      {toast.itemIcon}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
-                            isOverdue
-                              ? 'bg-rose-500/20 text-rose-400'
-                              : 'bg-amber-500/20 text-amber-400'
-                          }`}
-                        >
-                          {isOverdue ? '🚨 Manutenção Vencida' : `⚠️ Ponto de Alerta (${toast.thresholdPct}%)`}
-                        </span>
-                        <span className={`text-[10px] font-semibold ${mutedText}`}>
-                          · Push Local · {toast.timestamp}
-                        </span>
-                      </div>
-                      <h5 className="text-xs sm:text-sm font-black truncate mt-0.5">
-                        {toast.itemName} ({toast.wearPct}% de desgaste)
-                      </h5>
-                      <p className={`text-[11px] leading-snug mt-0.5 ${mutedText}`}>
-                        {isOverdue
-                          ? 'Limite de quilometragem ultrapassado! Realize a manutenção para evitar danos.'
-                          : `Atingiu o ponto de alerta configurado (${toast.thresholdPct}%). Restam ${toast.kmRemaining.toLocaleString('pt-BR')} km.`}
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id))
-                    }
-                    className={`p-1.5 rounded-xl shrink-0 cursor-pointer ${surfaceSubtle}`}
-                    title="Dispensar notificação"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-700/30">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id))
-                    }
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${mutedText}`}
-                  >
-                    Agora não
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('maintenance');
-                      setMaintSearchQuery(toast.itemName);
-                      setLocalPushToasts(prev => prev.filter(t => t.id !== toast.id));
-                    }}
-                    className="px-3 py-1 rounded-lg text-[11px] font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer"
-                  >
-                    Ver Componente
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* 1. RADAR DE CORRIDA MODAL ("ACEITO OU RECUSO?") */}
       <RadarCorridaModal

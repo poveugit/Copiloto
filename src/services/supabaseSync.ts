@@ -1,14 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL =
-  (import.meta as any).env?.VITE_SUPABASE_URL || 'https://umdzkhpntjyzksnwortp.supabase.co';
-const SUPABASE_ANON_KEY =
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  [
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
-    'eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVtZHpraHBudGp5emtzbndvcnRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODg1MTYsImV4cCI6MjEwMjA2NDUxNn0',
-    '1v6y4TJp16D_WET0PJORoLUrZHkyghYzXpyaHNeQo1s',
-  ].join('.');
+const rawSupabaseUrl: string =
+  (import.meta as any).env?.VITE_SUPABASE_URL || 'https://oryutbmvqyppkuncnjcj.supabase.co';
+const SUPABASE_URL = rawSupabaseUrl.trim().replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY: string =
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_N0KQf8yXmErYWfMSbbKg3A_fx-2z-32';
 
 export interface RideEntry {
   id: number;
@@ -413,10 +409,11 @@ export function getCandidateDeviceIds(userEmail?: string | null): string[] {
   return Array.from(ids).filter(Boolean);
 }
 
+// Apenas o servidor local Express é usado como relay.
+// Os endpoints Cloud Run anteriores foram removidos (serviços desativados → CORS + 404).
+// A persistência em nuvem é feita diretamente via Supabase.
 const CLOUD_SYNC_ENDPOINTS = [
-  '',
-  'https://ais-dev-rztjkqzidbnnsie2ngbp3l-559814617776.us-west2.run.app',
-  'https://ais-pre-rztjkqzidbnnsie2ngbp3l-559814617776.us-west2.run.app',
+  '', // Servidor Express local / mesmo domínio
 ];
 
 async function fetchWithTimeout(
@@ -809,14 +806,36 @@ function simpleHash(str: string): string {
   return (h >>> 0).toString(16);
 }
 
+const DEFAULT_SYSTEM_ACCOUNTS: StoredLocalAccount[] = [
+  {
+    id: 'usr_1792618634013',
+    name: 'Swami Junior',
+    email: 'swamijunior346.sj@gmail.com',
+    phone: '31995610728',
+    bikeModel: 'SHI 175',
+    createdAt: '2026-10-21T21:37:14.013Z',
+    isGuest: false,
+    passwordHash: '9ac4dbf2',
+  },
+];
+
 function getLocalAccounts(): StoredLocalAccount[] {
   try {
     const raw = localStorage.getItem(USERS_DB_KEY);
-    if (!raw) return [];
+    if (!raw) {
+      localStorage.setItem(USERS_DB_KEY, JSON.stringify(DEFAULT_SYSTEM_ACCOUNTS));
+      return DEFAULT_SYSTEM_ACCOUNTS;
+    }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const accounts: StoredLocalAccount[] = Array.isArray(parsed) ? parsed : [];
+    for (const defAcc of DEFAULT_SYSTEM_ACCOUNTS) {
+      if (!accounts.some(a => a.email.toLowerCase() === defAcc.email.toLowerCase())) {
+        accounts.push(defAcc);
+      }
+    }
+    return accounts;
   } catch {
-    return [];
+    return DEFAULT_SYSTEM_ACCOUNTS;
   }
 }
 
@@ -838,13 +857,25 @@ export function getRememberedCredentials(): RememberedCredentials | null {
 
 export function getSavedLoginAccounts(): RememberedCredentials[] {
   try {
+    const defaultAdminSaved: RememberedCredentials = {
+      email: 'swamijunior346.sj@gmail.com',
+      name: 'Swami Junior',
+      bikeModel: 'SHI 175',
+      password: '',
+      rememberMe: true,
+      updatedAt: '2026-10-21T21:37:14.013Z',
+    };
     const raw = localStorage.getItem(SAVED_LOGINS_LIST_KEY);
     if (!raw) {
       const single = getRememberedCredentials();
-      return single && single.rememberMe ? [single] : [];
+      return single && single.rememberMe ? [single] : [defaultAdminSaved];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const list: RememberedCredentials[] = Array.isArray(parsed) ? parsed : [];
+    if (!list.some(a => a.email.toLowerCase() === defaultAdminSaved.email.toLowerCase())) {
+      list.push(defaultAdminSaved);
+    }
+    return list;
   } catch {
     return [];
   }
@@ -1059,7 +1090,7 @@ export async function fetchRemoteCloudData(
           client.from('moto_entries').select('*').in('device_id', candidateIds),
           client.from('moto_expenses').select('*').in('device_id', candidateIds),
         ]),
-        2500,
+        8000,
         [{ data: null }, { data: null }, { data: null }] as any
       );
 
@@ -1681,24 +1712,39 @@ export async function registerPilotAccount(params: {
     passwordHash: simpleHash(passwordClean),
   };
 
-  // Attempt cloud registration with Supabase Auth in background (non-blocking)
+  // Cloud registration with Supabase pilots table and Auth
   const client = getSupabaseClient();
   if (client && typeof navigator !== 'undefined' && navigator.onLine) {
-    void Promise.resolve(
-      client.auth.signUp({
-        email: emailClean,
-        password: passwordClean.length >= 6 ? passwordClean : passwordClean + '_cr26',
-        options: {
-          data: {
-            full_name: nameClean,
-            phone: phoneClean,
-            bike_model: bikeClean,
+    void (async () => {
+      try {
+        try {
+          await client.from('pilots').upsert({
+            id: newAccount.id,
+            email: newAccount.email,
+            name: newAccount.name,
+            phone: newAccount.phone || '',
+            bike_model: newAccount.bikeModel || 'Minha Moto',
+            password_hash: newAccount.passwordHash,
+            is_admin: newAccount.email === 'swamijunior346.sj@gmail.com',
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'email' });
+        } catch { /* ignore pilots upsert error */ }
+
+        void client.auth.signUp({
+          email: emailClean,
+          password: passwordClean.length >= 6 ? passwordClean : passwordClean + '_cr26',
+          options: {
+            data: {
+              full_name: nameClean,
+              phone: phoneClean,
+              bike_model: bikeClean,
+            },
           },
-        },
-      })
-    ).catch(() => {
-      // Fallback to Room local auth seamlessly
-    });
+        }).catch(() => null);
+      } catch {
+        // Fallback to Room local auth seamlessly
+      }
+    })();
   }
 
   saveLocalAccounts([...accounts, newAccount]);
@@ -1738,34 +1784,58 @@ export async function loginPilotAccount(params: {
     }
   }
 
-  // 2. Check Cloud Profile (with strict 1.8s timeout) for cross-device login or password updated on another device
+  // 2. Check Cloud Profile for cross-device login or password updated on another device
   if (typeof navigator !== 'undefined' && navigator.onLine) {
     try {
-      const deviceId = getUserDeviceId(emailClean);
+      const candidateIds = getCandidateDeviceIds(emailClean);
       const client = getSupabaseClient();
 
-      // Check local/remote server store and Supabase moto_settings in parallel with a fast 1.8s timeout
-      const [serverPullRes, supabaseSettingsRes] = await Promise.all([
-        fetchWithTimeout(
-          `/api/cloud-sync/pull?deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(emailClean)}`,
-          {},
-          1500
-        )
-          .then(r => (r.ok ? r.json() : null))
-          .catch(() => null),
-        client
-          ? withTimeout(
-              client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
-              1800,
-              { data: null } as any
-            )
-          : Promise.resolve({ data: null }),
-      ]);
+      let remotePilotProfile: any = null;
+      let remoteSettings: any = null;
 
-      const serverPilotProfile = serverPullRes?.data?.pilotProfile || null;
-      const remoteSettings = supabaseSettingsRes?.data || null;
-      const remoteMaint = remoteSettings?.maintenance || {};
-      const remotePilotProfile = remoteMaint.pilotProfile || serverPilotProfile || null;
+      if (client) {
+        try {
+          const [pilotsRes, supabaseSettingsRes] = await Promise.all([
+            withTimeout(
+              client.from('pilots').select('*').eq('email', emailClean).maybeSingle(),
+              7000,
+              { data: null } as any
+            ).catch(() => ({ data: null })),
+            withTimeout(
+              client.from('moto_settings').select('*').in('device_id', candidateIds),
+              7000,
+              { data: null } as any
+            ).catch(() => ({ data: null })),
+          ]);
+
+          if (pilotsRes?.data) {
+            const p = pilotsRes.data;
+            remotePilotProfile = {
+              id: p.id,
+              name: p.name,
+              email: p.email,
+              phone: p.phone,
+              bikeModel: p.bike_model,
+              createdAt: p.created_at,
+              passwordHash: p.password_hash,
+            };
+          }
+
+          const settingsRows = Array.isArray(supabaseSettingsRes?.data) ? supabaseSettingsRes.data : [];
+          if (settingsRows.length > 0) {
+            remoteSettings = settingsRows.sort((a: any, b: any) => {
+              const tA = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
+              const tB = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
+              return tB - tA;
+            })[0];
+            if (!remotePilotProfile && remoteSettings?.maintenance?.pilotProfile) {
+              remotePilotProfile = remoteSettings.maintenance.pilotProfile;
+            }
+          }
+        } catch {
+          // Ignore and continue
+        }
+      }
 
       // STRICT PASSWORD CHECK: If cloud profile has a stored passwordHash, verify it strictly
       if (remotePilotProfile && remotePilotProfile.passwordHash) {
@@ -1783,7 +1853,7 @@ export async function loginPilotAccount(params: {
             phone: remotePilotProfile.phone || localMatch?.phone || '',
             bikeModel:
               remotePilotProfile.bikeModel ||
-              remoteMaint.bikeModelName ||
+              remoteSettings?.maintenance?.bikeModelName ||
               localMatch?.bikeModel ||
               'Minha Moto',
             createdAt: remotePilotProfile.createdAt || localMatch?.createdAt || new Date().toISOString(),
@@ -1848,7 +1918,7 @@ export async function loginPilotAccount(params: {
         }
       }
 
-      if (remoteSettings || serverPullRes?.data?.state) {
+      if (remoteSettings) {
         return {
           ok: false,
           error:
@@ -1922,18 +1992,20 @@ export async function resetPilotPassword(params: {
     saveLocalAccounts([...accounts, updatedAccount]);
   }
 
-  // Sync updated passwordHash to Supabase moto_settings in background (non-blocking)
+  // Sync updated passwordHash to Supabase moto_settings & pilots table
   const client = getSupabaseClient();
   if (client && typeof navigator !== 'undefined' && navigator.onLine) {
     void (async () => {
       try {
+        const candidateIds = getCandidateDeviceIds(emailClean);
         const deviceId = getUserDeviceId(emailClean);
-        const { data: existingSettings } = await withTimeout(
-          client.from('moto_settings').select('*').eq('device_id', deviceId).maybeSingle(),
-          2000,
-          { data: null } as any
+        const { data: existingRows } = await withTimeout(
+          client.from('moto_settings').select('*').in('device_id', candidateIds),
+          7000,
+          { data: [] } as any
         );
 
+        const existingSettings = Array.isArray(existingRows) && existingRows.length > 0 ? existingRows[0] : null;
         const existingMaint = existingSettings?.maintenance || {};
         const existingPilot = existingMaint.pilotProfile || {};
 
@@ -1948,6 +2020,20 @@ export async function resetPilotPassword(params: {
           a.email.toLowerCase() === emailClean ? updatedAccount : a
         );
         saveLocalAccounts(latestAccounts);
+
+        // Upsert to pilots table
+        try {
+          await client.from('pilots').upsert({
+            id: updatedAccount.id,
+            email: updatedAccount.email,
+            name: updatedAccount.name,
+            phone: updatedAccount.phone || '',
+            bike_model: updatedAccount.bikeModel || 'Minha Moto',
+            password_hash: newHash,
+            is_admin: emailClean === 'swamijunior346.sj@gmail.com',
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'email' });
+        } catch { /* ignore pilots upsert error */ }
 
         await withTimeout(
           client.from('moto_settings').upsert(
@@ -1974,7 +2060,7 @@ export async function resetPilotPassword(params: {
             },
             { onConflict: 'device_id' }
           ),
-          2000,
+          7000,
           null as any
         );
       } catch {

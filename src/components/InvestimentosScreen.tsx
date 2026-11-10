@@ -28,6 +28,15 @@ import {
   ArrowUpRight,
   ExternalLink,
 } from 'lucide-react';
+import {
+  createInvestmentEvent,
+  createPendingDeposit,
+  fetchMyDeposits,
+  fetchPendingDeposits,
+  reviewDeposit,
+  type InvestmentDeposit,
+} from '../services/investmentCloud';
+import { sendNativeNotification } from '../services/nativeNotifications';
 
 export interface AdminInvestmentNotification {
   id: string;
@@ -350,8 +359,6 @@ export function InvestimentosScreen({
   currentUserEmail = '',
   currentUserName = '',
 }: InvestimentosScreenProps) {
-  const storageKey = `copilotrider_investments_v1_${userStorageKey}`;
-
   // Global Fund Plans state (editable by Admin, shared across all users)
   const [fundPlans, setFundPlans] = useState<MotoboyFundPlan[]>(() => {
     try {
@@ -381,62 +388,139 @@ export function InvestimentosScreen({
     return DEFAULT_QR_CONFIG;
   });
 
-  // Admin High-Priority Notifications State
-  const [adminNotifications, setAdminNotifications] = useState<AdminInvestmentNotification[]>([]);
-  const [showAdminNotificationsModal, setShowAdminNotificationsModal] = useState<boolean>(false);
+  // ================= SEGURANÇA: DEPÓSITOS SÓ LIBERAM APÓS O ADMIN CONFIRMAR O PIX =================
+  // Fonte da verdade = Supabase (investment_deposits). O motoboy só cria depósitos 'pending';
+  // quem confirma/rejeita é o Admin, via função do banco que valida o PIN no servidor.
+  const [myDeposits, setMyDeposits] = useState<InvestmentDeposit[]>([]);
+  const [depositsLoaded, setDepositsLoaded] = useState<boolean>(false);
+  const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
+  const [pendingForAdmin, setPendingForAdmin] = useState<InvestmentDeposit[]>([]);
+  const [reviewTarget, setReviewTarget] = useState<{
+    deposit: InvestmentDeposit;
+    decision: 'confirmed' | 'rejected';
+  } | null>(null);
+  const [adminPinInput, setAdminPinInput] = useState<string>('');
+  const [adminPinError, setAdminPinError] = useState<string | null>(null);
+  const [isReviewing, setIsReviewing] = useState<boolean>(false);
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
+  const withdrawnKey = `copilotrider_withdrawn_deposits_v1_${userStorageKey}`;
+  const [withdrawnIds, setWithdrawnIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(withdrawnKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  });
 
-  // Load admin notifications on mount and poll every 8 seconds if admin
-  useEffect(() => {
+  const refreshMyDeposits = React.useCallback(async () => {
+    const email = currentUserEmail.trim().toLowerCase();
+    if (!email) return;
+    const res = await fetchMyDeposits(email);
+    if (res.ok) {
+      setMyDeposits(res.data);
+      setSchemaMissing(false);
+      setDepositsLoaded(true);
+    } else if (res.error === 'schema_missing') {
+      setSchemaMissing(true);
+      setDepositsLoaded(true);
+    }
+  }, [currentUserEmail]);
+
+  const refreshPendingForAdmin = React.useCallback(async () => {
     if (!isAdmin) return;
-    let active = true;
-
-    const fetchNotifs = () => {
-      fetch('/api/admin/investment-notifications')
-        .then(r => (r.ok ? r.json() : null))
-        .then(json => {
-          if (!active || !json?.ok || !Array.isArray(json?.data)) return;
-          setAdminNotifications(json.data);
-        })
-        .catch(() => {});
-    };
-
-    fetchNotifs();
-    const interval = setInterval(fetchNotifs, 8000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    const res = await fetchPendingDeposits();
+    if (res.ok) setPendingForAdmin(res.data);
   }, [isAdmin]);
 
-  const sendAdminNotification = async (notif: Omit<AdminInvestmentNotification, 'id' | 'timestamp' | 'read' | 'priority'>) => {
-    try {
-      await fetch('/api/admin/investment-notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notification: {
-            ...notif,
-            priority: 'high',
-            timestamp: new Date().toISOString(),
-          },
-        }),
-      });
-    } catch {
-      // ignore offline errors
+  useEffect(() => {
+    void refreshMyDeposits();
+    void refreshPendingForAdmin();
+    const interval = setInterval(() => {
+      void refreshMyDeposits();
+      void refreshPendingForAdmin();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [refreshMyDeposits, refreshPendingForAdmin]);
+
+  const registerInvestmentEvent = (
+    eventType: string,
+    plan: { planName: string; shares: number; amount: number }
+  ) => {
+    void createInvestmentEvent({
+      eventType,
+      pilotEmail: currentUserEmail,
+      pilotName: currentUserName || currentUserEmail.split('@')[0] || 'Motoboy Parceiro',
+      planName: plan.planName,
+      shares: plan.shares,
+      amount: plan.amount,
+    });
+  };
+
+  // PIN do admin mantido apenas em memória durante a sessão (nunca em disco)
+  const adminPinCacheRef = React.useRef<string>('');
+
+  const executeReview = async (
+    deposit: InvestmentDeposit,
+    decision: 'confirmed' | 'rejected',
+    pin: string
+  ) => {
+    setIsReviewing(true);
+    setAdminPinError(null);
+    const res = await reviewDeposit(deposit.id, decision, currentUserEmail, pin);
+    setIsReviewing(false);
+
+    if (res.ok) {
+      adminPinCacheRef.current = pin;
+      setReviewTarget(null);
+      setAdminPinInput('');
+      setPendingForAdmin(prev => prev.filter(d => d.id !== deposit.id));
+      void refreshMyDeposits();
+      setInvestSuccessBanner(
+        decision === 'confirmed'
+          ? `✅ PIX de ${fmtBRL(deposit.amount)} confirmado. Cotas de ${
+              deposit.pilotName || deposit.pilotEmail
+            } liberadas.`
+          : `Depósito de ${fmtBRL(deposit.amount)} de ${
+              deposit.pilotName || deposit.pilotEmail
+            } rejeitado.`
+      );
+      return;
+    }
+
+    adminPinCacheRef.current = '';
+    if (res.error === 'invalid_credentials') {
+      setReviewTarget({ deposit, decision });
+      setAdminPinError('PIN incorreto. Tente novamente.');
+    } else if (res.error === 'locked') {
+      setReviewTarget({ deposit, decision });
+      setAdminPinError('Muitas tentativas incorretas. Aguarde 15 minutos.');
+    } else if (res.error === 'not_pending') {
+      setReviewTarget(null);
+      void refreshPendingForAdmin();
+      setWithdrawFeedback('Este depósito já foi analisado.');
+    } else if (res.error === 'schema_missing') {
+      setReviewTarget(null);
+      setWithdrawFeedback(
+        '⚠️ Banco de segurança não configurado. Execute o arquivo supabase_investments.sql no Supabase.'
+      );
+    } else {
+      setReviewTarget({ deposit, decision });
+      setAdminPinError('Não foi possível concluir. Verifique a conexão e tente novamente.');
     }
   };
 
-  const handleMarkNotificationsRead = async () => {
-    try {
-      await fetch('/api/admin/investment-notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ markAll: true }),
-      });
-      setAdminNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    } catch {
-      // ignore
-    }
+  const handleRequestReview = (deposit: InvestmentDeposit, decision: 'confirmed' | 'rejected') => {
+    if (!isAdmin) return;
+    setAdminPinError(null);
+    void executeReview(deposit, decision, adminPinCacheRef.current || '');
+  };
+
+  const handleSubmitPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewTarget || isReviewing || adminPinInput.trim().length === 0) return;
+    void executeReview(reviewTarget.deposit, reviewTarget.decision, adminPinInput);
   };
 
   // Load global investment plans from server on mount so all users get admin updates
@@ -486,26 +570,47 @@ export function InvestimentosScreen({
     });
   };
 
-  const [positions, setPositions] = useState<MotoboyInvestmentPosition[]>(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore storage read error
-    }
-    return [];
-  });
+  // Cotas ativas = SOMENTE depósitos confirmados pelo Admin (e ainda não resgatados).
+  // Depósitos pendentes/rejeitados nunca viram saldo.
+  const positions = useMemo<MotoboyInvestmentPosition[]>(() => {
+    return myDeposits
+      .filter(dep => dep.status === 'confirmed' && !withdrawnIds.includes(dep.id))
+      .map(dep => {
+        // A carência e o vencimento contam a partir da CONFIRMAÇÃO do PIX pelo Admin
+        const activationIso = (dep.confirmedAt || dep.createdAt || new Date().toISOString()).slice(0, 10);
+        const unlockIso = addDaysToIso(activationIso, dep.minWithdrawDays);
+        const maturityIso =
+          dep.fixedMaturityDate && dep.fixedMaturityDate >= activationIso
+            ? dep.fixedMaturityDate
+            : addDaysToIso(activationIso, dep.maturityDays);
+        return {
+          id: dep.id,
+          planId: dep.planId,
+          planName: dep.planName,
+          planIcon: dep.planIcon,
+          shares: dep.shares,
+          sharePrice: dep.sharePrice,
+          investedAmount: dep.amount,
+          dailyRatePct: dep.dailyRatePct,
+          monthlyRatePct: dep.monthlyRatePct,
+          maturityDays: dep.maturityDays,
+          minWithdrawDays: dep.minWithdrawDays,
+          createdAtIso: activationIso,
+          unlockWithdrawDateIso: unlockIso,
+          maturityDateIso: maturityIso,
+          status: 'active' as const,
+        };
+      });
+  }, [myDeposits, withdrawnIds]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(positions));
-    } catch {
-      // ignore storage write error
-    }
-  }, [positions, storageKey]);
+  const myPendingDeposits = useMemo(
+    () => myDeposits.filter(dep => dep.status === 'pending'),
+    [myDeposits]
+  );
+  const myRejectedDeposits = useMemo(
+    () => myDeposits.filter(dep => dep.status === 'rejected').slice(0, 3),
+    [myDeposits]
+  );
 
   // Simulator state
   const [selectedSimPlanId, setSelectedSimPlanId] = useState<string>(
@@ -538,9 +643,6 @@ export function InvestimentosScreen({
   const [confirmDeletePlanId, setConfirmDeletePlanId] = useState<string | null>(null);
   const [showQrAdminModal, setShowQrAdminModal] = useState<boolean>(false);
   const [draftQrConfig, setDraftQrConfig] = useState<FundQrConfig>(qrConfig);
-
-  // Admin-only Active Position Edit state
-  const [editingPosition, setEditingPosition] = useState<MotoboyInvestmentPosition | null>(null);
 
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -645,83 +747,76 @@ export function InvestimentosScreen({
     });
   }, [modalTotalDeposit, modalPlan]);
 
-  // Click on "Avançar para Pagamento" triggers the Confirmation Pop-up first
+  // Click on "Confirmar Investimento" triggers the Confirmation Pop-up first
   const handleRequestInvestmentConfirmation = () => {
     if (modalTotalDeposit <= 0) return;
     setShowConfirmPopup(true);
   };
 
-  // Motoboy confirmed "Sim, Quero Investir" -> Generates QR Code and sends High-Priority Notification to Admin
+  // Motoboy confirmou: registra o depósito como PENDENTE no banco/servidor e só então exibe o QR Code.
+  // As cotas NÃO são liberadas aqui: dependem da confirmação do PIX pelo Admin.
   const handleProceedWithInvestmentConfirmation = async () => {
-    setShowConfirmPopup(false);
-    setIsQrCodeGenerated(true);
+    if (isSubmittingDeposit) return;
+    setIsSubmittingDeposit(true);
 
     const pilotIdentifier = currentUserName || currentUserEmail.split('@')[0] || 'Motoboy Parceiro';
-    void sendAdminNotification({
-      type: 'deposit_intent',
-      title: '🚨 Notificação Alta Prioridade: Intenção de Depósito',
-      message: `${pilotIdentifier} confirmou o investimento de ${fmtBRL(modalTotalDeposit)} (${modalShares} ${
-        modalShares === 1 ? 'cota' : 'cotas'
-      }) no ${modalPlan.name}. QR Code PIX gerado.`,
-      pilotName: pilotIdentifier,
+    const res = await createPendingDeposit({
       pilotEmail: currentUserEmail,
-      planId: modalPlan.id,
-      planName: modalPlan.name,
-      shares: modalShares,
-      amount: modalTotalDeposit,
-    });
-  };
-
-  const handleConfirmQrDeposit = () => {
-    if (modalTotalDeposit <= 0) return;
-
-    const unlockIso = addDaysToIso(todayIso, modalPlan.minWithdrawDays);
-    const maturityIso =
-      modalPlan.fixedMaturityDate && modalPlan.fixedMaturityDate >= todayIso
-        ? modalPlan.fixedMaturityDate
-        : addDaysToIso(todayIso, modalPlan.maturityDays);
-
-    const newPos: MotoboyInvestmentPosition = {
-      id: 'inv_' + Date.now(),
+      pilotName: pilotIdentifier,
       planId: modalPlan.id,
       planName: modalPlan.name,
       planIcon: modalPlan.icon,
       shares: modalShares,
       sharePrice: modalPlan.sharePrice,
-      investedAmount: modalTotalDeposit,
+      amount: modalTotalDeposit,
       dailyRatePct: modalPlan.dailyRatePct,
       monthlyRatePct: modalPlan.monthlyRatePct,
       maturityDays: modalPlan.maturityDays,
       minWithdrawDays: modalPlan.minWithdrawDays,
-      createdAtIso: todayIso,
-      unlockWithdrawDateIso: unlockIso,
-      maturityDateIso: maturityIso,
-      status: 'active',
-    };
+      fixedMaturityDate: modalPlan.fixedMaturityDate || '',
+    });
+    setIsSubmittingDeposit(false);
+    setShowConfirmPopup(false);
 
-    setPositions(prev => [newPos, ...prev]);
+    if (!res.ok) {
+      setWithdrawFeedback(
+        res.error === 'schema_missing'
+          ? '⚠️ O sistema de investimentos seguro ainda não foi ativado pelo Admin. Tente novamente mais tarde.'
+          : res.error === 'offline'
+          ? '⚠️ Sem conexão. Conecte-se à internet para registrar o investimento.'
+          : '⚠️ Não foi possível registrar o investimento. Tente novamente.'
+      );
+      return;
+    }
+
+    setIsQrCodeGenerated(true);
+    void refreshMyDeposits();
+    void refreshPendingForAdmin();
+
+    // Dispara notificação nativa de registro da intenção/depósito pendente
+    void sendNativeNotification({
+      tag: `dep_pending_${res.data.id}`,
+      channel: 'investments',
+      title: isAdmin
+        ? '🚨 Novo depósito aguardando confirmação de PIX'
+        : '⏳ Investimento registrado · Aguardando PIX',
+      body: isAdmin
+        ? `${pilotIdentifier} iniciou o depósito de ${fmtBRL(modalTotalDeposit)} (${modalShares} ${
+            modalShares === 1 ? 'cota' : 'cotas'
+          } em ${modalPlan.name}). Confirme o PIX para liberar as cotas.`
+        : `Realize o PIX de ${fmtBRL(modalTotalDeposit)}. Suas cotas serão liberadas assim que o Admin confirmar o depósito.`,
+      targetTab: 'investments',
+    });
+  };
+
+  // Etapa final do motoboy: encerra o modal e aguarda a confirmação do Admin (não libera cotas).
+  const handleFinishAwaitingAdmin = () => {
     setShowInvestModal(false);
     setIsQrCodeGenerated(false);
-
-    const pilotIdentifier = currentUserName || currentUserEmail.split('@')[0] || 'Motoboy Parceiro';
-    void sendAdminNotification({
-      type: 'deposit_confirmed',
-      title: '💰 Depósito Realizado e Confirmado pelo Motoboy',
-      message: `${pilotIdentifier} concluiu o pagamento PIX de ${fmtBRL(modalTotalDeposit)} (${modalShares} cotas em ${modalPlan.name}). Aplicação ativa.`,
-      pilotName: pilotIdentifier,
-      pilotEmail: currentUserEmail,
-      planId: modalPlan.id,
-      planName: modalPlan.name,
-      shares: modalShares,
-      amount: modalTotalDeposit,
-    });
-
+    void refreshMyDeposits();
+    void refreshPendingForAdmin();
     setInvestSuccessBanner(
-      `Investimento de ${fmtBRL(modalTotalDeposit)} (${modalShares} ${
-        modalShares === 1 ? 'cota' : 'cotas'
-      } em ${modalPlan.name}) registrado! Saque liberado a partir de ${formatIsoToPtBr(
-        unlockIso
-      )} (após os ${modalPlan.minWithdrawDays} dias mínimos).`
+      `⏳ Depósito de ${fmtBRL(modalTotalDeposit)} enviado para conferência! Suas cotas serão liberadas somente após o Admin confirmar o recebimento do PIX.`
     );
   };
 
@@ -744,20 +839,30 @@ export function InvestimentosScreen({
     if (!withdrawingPosition) return;
     const pos = withdrawingPosition;
 
-    setPositions(prev => prev.filter(p => p.id !== pos.id));
+    const nextWithdrawn = [...withdrawnIds, pos.id];
+    setWithdrawnIds(nextWithdrawn);
+    try {
+      localStorage.setItem(withdrawnKey, JSON.stringify(nextWithdrawn));
+    } catch {
+      // ignore storage write error
+    }
     setWithdrawingPosition(null);
 
-    const pilotIdentifier = currentUserName || currentUserEmail.split('@')[0] || 'Motoboy Parceiro';
-    void sendAdminNotification({
-      type: 'withdrawal_requested',
-      title: '🚨 Notificação Alta Prioridade: Solicitação de Resgate / Saque',
-      message: `${pilotIdentifier} solicitou o resgate de ${fmtBRL(pos.investedAmount)} (${pos.shares} cotas) do ${pos.planName}.`,
-      pilotName: pilotIdentifier,
-      pilotEmail: currentUserEmail,
-      planId: pos.planId,
+    // O Admin recebe uma notificação nativa a partir deste registro
+    registerInvestmentEvent('withdrawal_requested', {
       planName: pos.planName,
       shares: pos.shares,
       amount: pos.investedAmount,
+    });
+
+    void sendNativeNotification({
+      tag: `withdraw_req_${pos.id}`,
+      channel: 'investments',
+      title: '📤 Solicitação de resgate enviada',
+      body: `Pedido de resgate de ${fmtBRL(pos.investedAmount)} (${pos.shares} ${
+        pos.shares === 1 ? 'cota' : 'cotas'
+      } em ${pos.planName}) encaminhado ao Administrador.`,
+      targetTab: 'investments',
     });
 
     setWithdrawFeedback(
@@ -883,16 +988,6 @@ export function InvestimentosScreen({
     reader.readAsDataURL(file);
   };
 
-  const handleSaveAdminPosition = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin || !editingPosition) return;
-    setPositions(prev =>
-      prev.map(p => (p.id === editingPosition.id ? editingPosition : p))
-    );
-    setEditingPosition(null);
-    setInvestSuccessBanner('✅ Dados da aplicação atualizados pelo Admin!');
-  };
-
   return (
     <div className="flex flex-col gap-4 sm:gap-6">
       {/* BANNER DE FEEDBACK DE INVESTIMENTO / SAQUE */}
@@ -966,20 +1061,21 @@ export function InvestimentosScreen({
               <span>Novo Card / Cota</span>
             </button>
 
-            {/* BOTÃO DE NOTIFICAÇÕES DE ALTA PRIORIDADE DO ADMIN */}
+            {/* INDICADOR DE PIX PENDENTES DE CONFIRMAÇÃO DO ADMIN */}
             <button
               type="button"
               onClick={() => {
-                setShowAdminNotificationsModal(true);
-                handleMarkNotificationsRead();
+                void refreshPendingForAdmin();
+                const el = document.getElementById('admin-pending-pix-section');
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }}
-              className="relative px-3 py-2 rounded-xl text-xs font-black bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/50 cursor-pointer flex items-center gap-1.5 transition-all"
+              className="relative px-3 py-2 rounded-xl text-xs font-black bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 cursor-pointer flex items-center gap-1.5 transition-all"
             >
-              <BellRing className="w-4 h-4 text-rose-400 animate-pulse" />
-              <span>Solicitações Depósito / Saque</span>
-              {adminNotifications.filter(n => !n.read).length > 0 && (
-                <span className="w-5 h-5 rounded-full bg-rose-500 text-white font-black text-[10px] flex items-center justify-center ml-0.5">
-                  {adminNotifications.filter(n => !n.read).length}
+              <Lock className="w-4 h-4 text-amber-400" />
+              <span>Confirmar PIX Pendentes</span>
+              {pendingForAdmin.length > 0 && (
+                <span className="w-5 h-5 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center ml-0.5">
+                  {pendingForAdmin.length}
                 </span>
               )}
             </button>
@@ -1009,6 +1105,114 @@ export function InvestimentosScreen({
               <span className="hidden md:inline">Padrão</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* PAINEL DE SEGURANÇA DO ADMIN: LIBERAÇÃO DE COTAS APÓS CONFIRMAÇÃO DO PIX */}
+      {isAdmin && (
+        <div
+          id="admin-pending-pix-section"
+          className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border ${
+            pendingForAdmin.length > 0
+              ? isDark
+                ? 'bg-amber-950/25 border-amber-500/50 text-slate-100'
+                : 'bg-amber-50/90 border-amber-300 text-slate-900'
+              : surfaceCard
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-black flex items-center justify-center shrink-0">
+                <Lock className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-sm sm:text-base font-black">
+                    Modo de Segurança · Depósitos PIX Aguardando Confirmação do Admin
+                  </h2>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                    {pendingForAdmin.length}{' '}
+                    {pendingForAdmin.length === 1 ? 'Pendente' : 'Pendentes'}
+                  </span>
+                </div>
+                <p className={`text-xs mt-0.5 ${mutedText}`}>
+                  O saldo e as cotas do entregador só são liberados após você conferir o PIX na conta e clicar em <strong>Confirmar PIX e Liberar Cotas</strong>.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshPendingForAdmin()}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer self-start sm:self-center shrink-0 ${surfaceSubtle} hover:border-amber-500/50`}
+            >
+              🔄 Atualizar Lista
+            </button>
+          </div>
+
+          {pendingForAdmin.length === 0 ? (
+            <div className={`mt-3 p-4 rounded-xl text-xs font-semibold flex items-center gap-2 ${surfaceSubtle} ${mutedText}`}>
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Nenhum depósito PIX pendente de confirmação no momento.</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5 mt-3">
+              {pendingForAdmin.map(dep => (
+                <div
+                  key={dep.id}
+                  className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${surfaceSubtle} border-amber-500/40`}
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/15 text-xl flex items-center justify-center shrink-0">
+                      {dep.planIcon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs sm:text-sm font-black">
+                          {dep.pilotName || dep.pilotEmail || 'Motoboy Parceiro'}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          {dep.pilotEmail}
+                        </span>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          ⏳ Aguardando Confirmação PIX
+                        </span>
+                      </div>
+                      <div className="text-xs font-bold mt-1 text-[#FF6A1A]">
+                        {dep.planName} · {dep.shares} {dep.shares === 1 ? 'Cota' : 'Cotas'} · Valor PIX:{' '}
+                        <span className="text-sm font-black">{fmtBRL(dep.amount)}</span>
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                        Solicitado em:{' '}
+                        {dep.createdAt
+                          ? new Date(dep.createdAt).toLocaleString('pt-BR')
+                          : 'Agora'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/50">
+                    <button
+                      type="button"
+                      disabled={isReviewing}
+                      onClick={() => handleRequestReview(dep, 'rejected')}
+                      className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 cursor-pointer transition-colors"
+                    >
+                      Rejeitar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isReviewing}
+                      onClick={() => handleRequestReview(dep, 'confirmed')}
+                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
+                    >
+                      <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
+                      <span>Confirmar PIX e Liberar Cotas</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1597,6 +1801,59 @@ export function InvestimentosScreen({
           </button>
         </div>
 
+        {/* DEPÓSITOS PENDENTES DE CONFIRMAÇÃO PELO ADMIN (VISÃO DO MOTOBOY) */}
+        {myPendingDeposits.length > 0 && (
+          <div className="mt-4 flex flex-col gap-2.5">
+            <div className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+              <Clock className="w-4 h-4" />
+              <span>Depósitos Aguardando Confirmação do PIX pelo Admin ({myPendingDeposits.length})</span>
+            </div>
+            {myPendingDeposits.map(dep => (
+              <div
+                key={dep.id}
+                className="rounded-2xl p-3.5 sm:p-4 border border-amber-500/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-xl flex items-center justify-center shrink-0">
+                    {dep.planIcon}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs sm:text-sm font-black">{dep.planName}</span>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        {dep.shares} {dep.shares === 1 ? 'Cota' : 'Cotas'} · {fmtBRL(dep.amount)}
+                      </span>
+                    </div>
+                    <p className={`text-[11px] mt-1 ${mutedText}`}>
+                      🔒 <strong>Modo de Segurança:</strong> Suas cotas e rendimentos serão liberados automaticamente assim que o Administrador confirmar o recebimento do seu PIX.
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-black px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 self-start sm:self-center shrink-0 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Aguardando Admin</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {myRejectedDeposits.length > 0 && (
+          <div className="mt-3 flex flex-col gap-2">
+            {myRejectedDeposits.map(dep => (
+              <div
+                key={dep.id}
+                className="rounded-xl p-3 border border-rose-500/30 bg-rose-500/10 flex items-center justify-between gap-2 text-xs text-rose-300"
+              >
+                <span>
+                  ⚠️ Depósito de <strong>{fmtBRL(dep.amount)}</strong> ({dep.shares}{' '}
+                  {dep.shares === 1 ? 'cota' : 'cotas'} em {dep.planName}) não confirmado pelo Admin.
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {positions.filter(p => p.status === 'active').length === 0 ? (
           <div
             className={`mt-4 p-8 rounded-2xl border border-dashed border-slate-700/60 text-center flex flex-col items-center justify-center gap-3 ${surfaceSubtle}`}
@@ -1695,17 +1952,6 @@ export function InvestimentosScreen({
                           {fmtBRL(maturityCalc.yieldAmount)})
                         </div>
                       </div>
-
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => setEditingPosition({ ...pos })}
-                          title="Editar esta posição (Exclusivo Admin)"
-                          className="p-2 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A] hover:text-black border border-[#FF6A1A]/40 cursor-pointer transition-colors"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      )}
 
                       <button
                         type="button"
@@ -2208,35 +2454,113 @@ export function InvestimentosScreen({
                 </div>
               </div>
 
-              {/* Preview instantâneo de rendimento de 1 cota */}
+              {/* Cards Pequenos e Separados de Prévia de Rendimento (1 Cota) */}
               {(() => {
                 const pPrice = Math.max(1, Number(editingPlan.sharePrice) || 25);
                 const pDaily = Math.max(0, Number(editingPlan.dailyRatePct) || 0);
-                const pMinW = Math.max(1, Number(editingPlan.minWithdrawDays) || 3);
-                const pMat = Math.max(1, Number(editingPlan.maturityDays) || 30);
+                const pMinW = Math.max(0, Number(editingPlan.minWithdrawDays) ?? 0);
+                const pMat = Math.max(1, Math.round(Number(editingPlan.maturityDays) || 30));
+                const c1 = calculateCompoundYield(pPrice, pDaily, 1);
                 const cMin = calculateCompoundYield(pPrice, pDaily, pMinW);
                 const c30 = calculateCompoundYield(pPrice, pDaily, 30);
                 const cMat = calculateCompoundYield(pPrice, pDaily, pMat);
                 return (
-                  <div className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-black text-emerald-400">
-                      Prévia de 1 Cota ({fmtBRL(pPrice)}):
-                    </span>
-                    <div className="flex items-center gap-3 flex-wrap tabular-nums font-bold">
-                      <span>
-                        Em {pMinW}d: <strong className="text-emerald-400">+{fmtBRL(cMin.yieldAmount)}</strong>
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between flex-wrap gap-1">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                        <span>Simulação de Rendimento (1 Cota = {fmtBRL(pPrice)})</span>
                       </span>
-                      <span>·</span>
-                      <span>
-                        Em 30d: <strong className="text-emerald-400">+{fmtBRL(c30.yieldAmount)}</strong>
+                      <span className={`text-[10px] font-bold ${mutedText} tabular-nums`}>
+                        Juros Compostos ({pDaily.toFixed(3)}%/dia)
                       </span>
-                      <span>·</span>
-                      <span>
-                        No Vencimento ({pMat}d):{' '}
-                        <strong className="text-emerald-400">
-                          +{fmtBRL(cMat.yieldAmount)} (Total {fmtBRL(cMat.finalAmount)})
-                        </strong>
-                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                      {/* Card 1: Cota Unitária */}
+                      <div className={`p-2.5 rounded-2xl border flex flex-col justify-between ${surfaceSubtle}`}>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
+                          Cota Base
+                        </span>
+                        <div className="text-sm sm:text-base font-black tabular-nums my-1">
+                          {fmtBRL(pPrice)}
+                        </div>
+                        <span className={`text-[10px] font-semibold truncate ${mutedText}`}>
+                          Valor por cota
+                        </span>
+                      </div>
+
+                      {/* Card 2: Rendimento Diário */}
+                      <div className="p-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 flex flex-col justify-between">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                            Por Dia
+                          </span>
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                            +{pDaily.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-emerald-400 tabular-nums my-1">
+                          +{fmtBRL(c1.yieldAmount)}
+                        </div>
+                        <span className={`text-[10px] font-semibold truncate ${mutedText}`}>
+                          A cada 24h
+                        </span>
+                      </div>
+
+                      {/* Card 3: 1º Saque (Carência) */}
+                      <div className="p-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/5 flex flex-col justify-between">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                            1º Saque
+                          </span>
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                            {pMinW === 0 ? 'Imediato' : `${pMinW}d`}
+                          </span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums my-1">
+                          +{fmtBRL(cMin.yieldAmount)}
+                        </div>
+                        <span className={`text-[10px] font-semibold truncate ${mutedText}`}>
+                          Saldo: {fmtBRL(cMin.finalAmount)}
+                        </span>
+                      </div>
+
+                      {/* Card 4: 30 Dias */}
+                      <div className="p-2.5 rounded-2xl border border-sky-500/30 bg-sky-500/5 flex flex-col justify-between">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
+                            30 Dias
+                          </span>
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-sky-500/20 text-sky-300">
+                            +{c30.totalPct.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-sky-400 tabular-nums my-1">
+                          +{fmtBRL(c30.yieldAmount)}
+                        </div>
+                        <span className={`text-[10px] font-semibold truncate ${mutedText}`}>
+                          Saldo: {fmtBRL(c30.finalAmount)}
+                        </span>
+                      </div>
+
+                      {/* Card 5: Vencimento */}
+                      <div className="col-span-2 sm:col-span-1 p-2.5 rounded-2xl border border-purple-500/30 bg-purple-500/5 flex flex-col justify-between">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+                            Vencimento
+                          </span>
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                            {pMat}d
+                          </span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums my-1">
+                          +{fmtBRL(cMat.yieldAmount)}
+                        </div>
+                        <span className={`text-[10px] font-semibold truncate ${mutedText}`}>
+                          Total: {fmtBRL(cMat.finalAmount)} (+{cMat.totalPct.toFixed(1)}%)
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -2292,219 +2616,6 @@ export function InvestimentosScreen({
                     <span>Salvar Dados do Investimento</span>
                   </button>
                 </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL ADMIN DE EDIÇÃO DE POSIÇÃO ATIVA ================= */}
-      {isAdmin && editingPosition && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => setEditingPosition(null)}
-        >
-          <div
-            className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl border ${surfaceCard}`}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/60">
-              <h3 className="text-sm sm:text-base font-black flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-[#FF6A1A]" />
-                <span>Editar Aplicação Ativa (Admin)</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingPosition(null)}
-                className={`p-1.5 rounded-xl ${surfaceSubtle} cursor-pointer`}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveAdminPosition} className="mt-4 flex flex-col gap-3">
-              <div>
-                <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                  Nome do Plano
-                </label>
-                <input
-                  type="text"
-                  value={editingPosition.planName}
-                  onChange={e =>
-                    setEditingPosition(prev =>
-                      prev ? { ...prev, planName: e.target.value } : null
-                    )
-                  }
-                  className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                    Quantidade de Cotas
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editingPosition.shares}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev
-                          ? { ...prev, shares: Math.max(1, parseInt(e.target.value, 10) || 1) }
-                          : null
-                      )
-                    }
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-black outline-none ${inputSurface}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                    Valor Aplicado Total (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    value={editingPosition.investedAmount}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev
-                          ? { ...prev, investedAmount: parseFloat(e.target.value) || 0 }
-                          : null
-                      )
-                    }
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-black outline-none ${inputSurface}`}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2.5">
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Taxa Diária (%)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={editingPosition.dailyRatePct}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev
-                          ? { ...prev, dailyRatePct: parseFloat(e.target.value) || 0 }
-                          : null
-                      )
-                    }
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Carência Saque (dias)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={editingPosition.minWithdrawDays}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev
-                          ? {
-                              ...prev,
-                              minWithdrawDays: Math.max(0, parseInt(e.target.value, 10) || 0),
-                            }
-                          : null
-                      )
-                    }
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Prazo Venc. (dias)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editingPosition.maturityDays}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev
-                          ? {
-                              ...prev,
-                              maturityDays: Math.max(1, parseInt(e.target.value, 10) || 30),
-                            }
-                          : null
-                      )
-                    }
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2.5">
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Data Aplicação
-                  </label>
-                  <input
-                    type="date"
-                    value={editingPosition.createdAtIso}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev ? { ...prev, createdAtIso: e.target.value } : null
-                      )
-                    }
-                    className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Liberação Saque
-                  </label>
-                  <input
-                    type="date"
-                    value={editingPosition.unlockWithdrawDateIso}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev ? { ...prev, unlockWithdrawDateIso: e.target.value } : null
-                      )
-                    }
-                    className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
-                    Data Vencimento
-                  </label>
-                  <input
-                    type="date"
-                    value={editingPosition.maturityDateIso}
-                    onChange={e =>
-                      setEditingPosition(prev =>
-                        prev ? { ...prev, maturityDateIso: e.target.value } : null
-                      )
-                    }
-                    className={`w-full px-2.5 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 mt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingPosition(null)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-[#FF6A1A] text-black text-xs font-black cursor-pointer flex items-center gap-1.5"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Salvar Alterações</span>
-                </button>
               </div>
             </form>
           </div>
@@ -2790,18 +2901,6 @@ export function InvestimentosScreen({
             {!isQrCodeGenerated ? (
               /* ETAPA 1: Antes da Confirmação -> QR Code NÃO APARECE */
               <div className="mt-4 flex flex-col gap-3">
-                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                  <div className="text-xs space-y-1">
-                    <div className="font-black text-amber-300">
-                      Confirmação Prévia Obrigatória
-                    </div>
-                    <p className={mutedText}>
-                      O <strong>QR Code PIX</strong> para pagamento só será gerado após você confirmar a intenção de investimento no botão abaixo.
-                    </p>
-                  </div>
-                </div>
-
                 <div className="w-full p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 text-[11px] text-slate-300 font-semibold flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 text-amber-400">
                     <Clock className="w-4 h-4 shrink-0" />
@@ -2827,23 +2926,21 @@ export function InvestimentosScreen({
                     className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
                   >
                     <TrendingUp className="w-4 h-4 stroke-[2.5]" />
-                    <span>
-                      Confirmar Investimento e Gerar QR Code ({fmtBRL(modalTotalDeposit)})
-                    </span>
+                    <span>Confirmar Investimento</span>
                   </button>
                 </div>
               </div>
             ) : (
-              /* ETAPA 2: Após Confirmação no Pop-up -> QR Code É GERADO E EXIBIDO */
+              /* ETAPA 2: Depósito registrado como PENDENTE -> QR Code exibido; cotas só liberam após o Admin confirmar */
               <div className="mt-3.5 flex flex-col gap-3">
-                <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-start gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5">
+                  <Lock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                   <div className="text-xs">
-                    <div className="font-black text-emerald-400">
-                      Investimento Confirmado! QR Code Gerado
+                    <div className="font-black text-amber-300">
+                      Solicitação registrada · Aguardando seu PIX
                     </div>
                     <p className={mutedText}>
-                      Notificação de alta prioridade enviada ao Admin. Efetue o pagamento PIX de <strong>{fmtBRL(modalTotalDeposit)}</strong> abaixo:
+                      Faça o PIX de <strong>{fmtBRL(modalTotalDeposit)}</strong> abaixo. Suas cotas só serão liberadas depois que o Admin confirmar o recebimento.
                     </p>
                   </div>
                 </div>
@@ -2937,24 +3034,15 @@ export function InvestimentosScreen({
                   </div>
                 </div>
 
-                {/* Botões da Etapa 2 */}
+                {/* Botão da Etapa 2: NÃO libera cotas; apenas encerra e aguarda a confirmação do Admin */}
                 <div className="mt-2 flex flex-col sm:flex-row gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsQrCodeGenerated(false)}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                    onClick={handleFinishAwaitingAdmin}
+                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
                   >
-                    Alterar Cotas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmQrDeposit}
-                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-emerald-500 hover:bg-emerald-400 text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
-                  >
-                    <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
-                    <span>
-                      Já Fiz o PIX de {fmtBRL(modalTotalDeposit)} · Concluir Minhas Cotas
-                    </span>
+                    <Clock className="w-4 h-4 stroke-[2.5]" />
+                    <span>Já fiz o PIX · Aguardar confirmação do Admin</span>
                   </button>
                 </div>
               </div>
@@ -3019,13 +3107,6 @@ export function InvestimentosScreen({
                   {modalPlan.minWithdrawDays} dias
                 </span>
               </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2.5 text-[11px] text-rose-300">
-              <BellRing className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
-              <span>
-                <strong>Atenção:</strong> Ao confirmar, o QR Code de pagamento será gerado e uma <strong>notificação de alta prioridade será enviada para o administrador</strong> acompanhar o seu depósito.
-              </span>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 mt-1">
@@ -3123,172 +3204,6 @@ export function InvestimentosScreen({
               >
                 <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
                 <span>Sim, Confirmar Resgate</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL CENTRAL DE NOTIFICAÇÕES DO ADMIN ================= */}
-      {isAdmin && showAdminNotificationsModal && (
-        <div
-          className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => setShowAdminNotificationsModal(false)}
-        >
-          <div
-            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[90vh] flex flex-col shadow-2xl border ${surfaceCard}`}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3.5 border-b border-slate-800/70 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-400 flex items-center justify-center">
-                  <BellRing className="w-5 h-5 animate-pulse" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm sm:text-base font-black">
-                      Central de Solicitações do Fundo (Admin)
-                    </h3>
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-rose-500 text-white">
-                      Alta Prioridade
-                    </span>
-                  </div>
-                  <p className={`text-[11px] ${mutedText}`}>
-                    Acompanhamento de depósitos e resgates solicitados pelos motoboys
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAdminNotificationsModal(false)}
-                className={`p-1.5 rounded-xl ${surfaceSubtle} cursor-pointer`}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Lista de Notificações */}
-            <div className="mt-3.5 overflow-y-auto flex-1 space-y-2.5 pr-1">
-              {adminNotifications.length === 0 ? (
-                <div className={`p-8 text-center rounded-2xl ${surfaceSubtle} my-4`}>
-                  <Bell className={`w-8 h-8 mx-auto mb-2 opacity-40 ${mutedText}`} />
-                  <div className="text-xs font-bold text-slate-300">
-                    Nenhuma solicitação registrada ainda
-                  </div>
-                  <p className={`text-[11px] mt-1 ${mutedText}`}>
-                    Quando um motoboy confirmar um investimento (gerando QR Code), concluir um depósito ou solicitar um resgate, você receberá notificações aqui em tempo real.
-                  </p>
-                </div>
-              ) : (
-                adminNotifications.map(notif => {
-                  const isWithdrawal = notif.type === 'withdrawal_requested';
-                  const isDepositConfirmed = notif.type === 'deposit_confirmed';
-
-                  return (
-                    <div
-                      key={notif.id}
-                      className={`p-3.5 rounded-2xl border transition-all ${
-                        isWithdrawal
-                          ? 'bg-rose-500/10 border-rose-500/40'
-                          : isDepositConfirmed
-                          ? 'bg-emerald-500/10 border-emerald-500/40'
-                          : 'bg-amber-500/10 border-amber-500/40'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`w-7 h-7 rounded-xl flex items-center justify-center font-black ${
-                              isWithdrawal
-                                ? 'bg-rose-500 text-white'
-                                : isDepositConfirmed
-                                ? 'bg-emerald-500 text-black'
-                                : 'bg-amber-500 text-black'
-                            }`}
-                          >
-                            {isWithdrawal ? (
-                              <ArrowUpRight className="w-4 h-4" />
-                            ) : (
-                              <ArrowDownLeft className="w-4 h-4" />
-                            )}
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-black text-slate-100">
-                                {notif.pilotName}
-                              </span>
-                              <span className={`text-[10px] ${mutedText}`}>
-                                ({notif.pilotEmail})
-                              </span>
-                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                                🚨 ALTA PRIORIDADE
-                              </span>
-                            </div>
-                            <div className="text-[10px] font-semibold text-slate-400">
-                              {new Date(notif.timestamp).toLocaleString('pt-BR')}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <div
-                            className={`text-sm font-black tabular-nums ${
-                              isWithdrawal ? 'text-rose-400' : 'text-emerald-400'
-                            }`}
-                          >
-                            {isWithdrawal ? '-' : '+'}
-                            {fmtBRL(notif.amount)}
-                          </div>
-                          <div className="text-[10px] font-bold text-slate-400">
-                            {notif.shares} {notif.shares === 1 ? 'cota' : 'cotas'} · {notif.planName}
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="mt-2 text-xs font-medium text-slate-300 bg-black/30 p-2.5 rounded-xl border border-slate-800/80">
-                        {notif.message}
-                      </p>
-
-                      <div className="mt-2 flex items-center justify-between text-[10px]">
-                        <span
-                          className={`font-black uppercase px-2 py-0.5 rounded ${
-                            isWithdrawal
-                              ? 'bg-rose-500/20 text-rose-300'
-                              : isDepositConfirmed
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-300'
-                          }`}
-                        >
-                          {isWithdrawal
-                            ? '⚠️ Solicitação de Resgate / Saque'
-                            : isDepositConfirmed
-                            ? '✅ Depósito Concluído pelo Motoboy'
-                            : '⏳ Intenção Confirmada (QR Code Gerado)'}
-                        </span>
-                        <span className={mutedText}>
-                          {notif.read ? 'Lida' : 'Nova'}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-800/70 flex justify-between items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleMarkNotificationsRead}
-                className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
-              >
-                Marcar todas como lidas
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAdminNotificationsModal(false)}
-                className="px-5 py-2 rounded-xl bg-[#FF6A1A] text-black text-xs font-black cursor-pointer"
-              >
-                Fechar
               </button>
             </div>
           </div>

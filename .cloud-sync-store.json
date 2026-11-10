@@ -1,25 +1,284 @@
 {
   "usr_swamijunior346.sj_gmail.com": {
     "state": {
-      "entries": [],
-      "expenses": [],
-      "dailyGoal": 150,
-      "weeklyGoal": 900,
-      "customGoalTarget": 3000,
-      "customGoalDays": 20,
+      "entries": [
+        {
+          "id": 1794052151470,
+          "date": "2026-11-06",
+          "app": "ze_delivery",
+          "shift": "jantar",
+          "km": 42,
+          "revenue": 90,
+          "hours": 3
+        },
+        {
+          "id": 1793987911698,
+          "date": "2026-11-06",
+          "app": "lalamove",
+          "shift": "tarde",
+          "km": 61,
+          "revenue": 100,
+          "hours": 5
+        },
+        {
+          "id": 1793987897790,
+          "date": "2026-11-06",
+          "app": "99moto",
+          "shift": "almoco",
+          "km": 50,
+          "revenue": 110,
+          "hours": 2
+        },
+        {
+          "id": 1793927537622,
+          "date": "2026-11-05",
+          "app": "particular",
+          "shift": "jantar",
+          "km": 24,
+          "revenue": 80,
+          "hours": 3
+        },
+        {
+          "id": 1793918925883,
+          "date": "2026-11-05",
+          "app": "particular",
+          "shift": "tarde",
+          "km": 56,
+          "revenue": 100,
+          "hours": 5
+        },
+        {
+          "id": 1793895945762,
+          "date": "2026-11-05",
+          "app": "rappi",
+          "shift": "almoco",
+          "km": 10,
+          "revenue": 7,
+          "hours": 0.2
+        },
+        {
+          "id": 1793895850229,
+          "date": "2026-11-05",
+          "app": "particular",
+          "shift": "almoco",
+          "km": 40,
+          "revenue": 90,
+          "hours": 2
+        },
+        {
+          "id": 1793883347862,
+          "date": "2026-11-04",
+          "app": "particular",
+          "shift": "shift_1793883303419",
+          "km": 145,
+          "revenue": 250,
+          "hours": 10
+        },
+        {
+          "id": 1793797901737,
+          "date": "2026-11-03",
+          "app": "particular",
+          "shift": "tarde",
+          "km": 44,
+          "revenue": 90,
+          "hours": 5
+        },
+        {
+          "id": 1793724061649,
+          "date": "2026-11-03",
+          "app": "particular",
+          "shift": "almoco",
+          "km": 50,
+          "revenue": 90,
+          "hours": 2
+        },
+        {
+          "id": 1793668426663,
+          "date": "2026-11-02",
+          "app": "particular",
+          "shift": "tarde",
+          "km": 162,
+          "revenue": 308,
+          "hours": 7
+        },
+        {
+          "id": 1793618699094,
+          "date": "2026-10-31",
+          "app": "particular",
+          "shift": "almoco",
+          "km": 230,
+          "revenue": 482,
+          "hours": 20
+        },
+        {
+          "id": 1793322909755,
+          "date": "2026-10-29",
+          "app": "particular",
+          "shift": "tarde",
+          "km": 31,
+          "revenue": 90,
+          "hours": 2
+        },
+        {
+          "id": 1793322877490,
+          "date": "2026-10-29",
+          "app": "particular",
+          "shift": "almoco",
+          "km": 50,
+          "revenue": 110,
+          "hours": 2
+        },
+        {
+          "id": 1793322803297,
+          "date": "2026-10-29",
+          "app": "particular",
+          "shift": "jantar",
+          "km": 12,
+          "revenue": 80,
+          "hours": 1
+        },
+        {
+          "id": 1793233414158,
+          "date": "2026-10-28",
+          "app": "particular",
+          "shift": "jantar",
+          "km": 75,
+          "revenue": 80,
+          "hours": 2
+        },
+        {
+          "id": 1793195088251,
+          "date": "2026-10-27",
+          "app": "particular",
+          "shift": "tarde",
+          "km": 45,
+          "revenue": 90,
+          "hours": 5
+        },
+        {
+          "id": 1793120886183,
+          "date": "2026-10-27",
+          "app": "particular",
+          "shift": "almoco",
+          "km": 35,
+          "revenue": 100,
+          "hours": 2
+        }
+      ],
+      "expenses": [
+        {
+          "id": 1793987928504,
+          "date": "2026-11-06",
+          "category": "combustivel",
+          "amount": 30,
+          "expenseType": "moto",
+          "liters": 4.67,
+          "pricePerLiter": 6.42,
+          "odometerKm": 7043
+        },
+        {
+          "id": 1793987777364,
+          "date": "2026-11-06",
+          "category": "combustivel",
+          "amount": 30,
+          "expenseType": "moto",
+          "liters": 4.67,
+          "pricePerLiter": 6.42,
+          "odometerKm": 6963
+        },
+        {
+          "id": 1793925955007,
+          "date": "2026-11-05",
+          "category": "Supermercado & Feira (Casa)",
+          "amount": 779.12,
+          "expenseType": "casa",
+          "householdExpenseId": "mercado"
+        },
+        {
+          "id": 1793925744147,
+          "date": "2026-11-05",
+          "category": "combustivel",
+          "amount": 20,
+          "expenseType": "moto",
+          "liters": 3.12,
+          "pricePerLiter": 6.42,
+          "odometerKm": 6939
+        },
+        {
+          "id": 1793925651335,
+          "date": "2026-11-05",
+          "category": "cat_1793925614748",
+          "amount": 42,
+          "expenseType": "moto",
+          "description": "Óleo motor Mobil 20w 50"
+        },
+        {
+          "id": 1793895641533,
+          "date": "2026-11-05",
+          "category": "combustivel",
+          "amount": 20,
+          "liters": 3.12,
+          "pricePerLiter": 6.42,
+          "odometerKm": 6833
+        },
+        {
+          "id": 1793797949572,
+          "date": "2026-11-04",
+          "category": "combustivel",
+          "amount": 30,
+          "liters": 4.67,
+          "pricePerLiter": 6.42,
+          "odometerKm": 6688
+        },
+        {
+          "id": 1793283686059,
+          "date": "2026-10-29",
+          "category": "combustivel",
+          "amount": 30
+        },
+        {
+          "id": 1793275654834,
+          "date": "2026-10-28",
+          "category": "pecas",
+          "amount": 115
+        },
+        {
+          "id": 1793121075532,
+          "date": "2026-10-27",
+          "category": "combustivel",
+          "amount": 20
+        }
+      ],
+      "dailyGoal": 250,
+      "weeklyGoal": 1190,
+      "customGoalTarget": 1176.56,
+      "customGoalDays": 8,
       "customGoalTitle": "Meta Personalizada de Ganhos",
+      "customGoalMode": "date",
+      "customGoalTargetDate": "2026-11-10",
+      "customGoalScope": "month",
       "maintenanceNotificationsEnabled": true,
       "maintenanceItems": [
         {
           "id": "oil",
           "name": "Troca de Óleo",
           "icon": "🛢️",
-          "lastChangeKm": 0,
+          "lastChangeKm": 6833,
           "intervalKm": 1000,
-          "costEstimate": 45,
-          "notes": "Óleo 10W30 Semissintético",
+          "costEstimate": 42,
+          "notes": "Óleo 10W40 mineral",
           "isDefault": true,
-          "alertThresholdPct": 85
+          "alertThresholdPct": 90,
+          "updatedAt": 1793885211073,
+          "history": [
+            {
+              "id": "mh_1793885211071",
+              "date": "2026-11-05",
+              "km": 6833,
+              "amount": 42,
+              "notes": "Óleo 10W40 mineral"
+            }
+          ]
         },
         {
           "id": "tire",
@@ -30,7 +289,8 @@
           "costEstimate": 520,
           "notes": "Calibrar semanalmente (29/33 PSI)",
           "isDefault": true,
-          "alertThresholdPct": 90
+          "alertThresholdPct": 90,
+          "history": []
         },
         {
           "id": "chain",
@@ -41,63 +301,153 @@
           "costEstimate": 210,
           "notes": "Lubrificar corrente a cada 500 km",
           "isDefault": true,
-          "alertThresholdPct": 80
+          "alertThresholdPct": 80,
+          "history": []
         },
         {
           "id": "brake",
           "name": "Pastilhas de Freio",
           "icon": "🛑",
-          "lastChangeKm": 0,
+          "lastChangeKm": 6104,
           "intervalKm": 5000,
           "costEstimate": 75,
           "notes": "Conferir fluído DOT 4 e disco",
           "isDefault": true,
-          "alertThresholdPct": 85
+          "alertThresholdPct": 85,
+          "history": [
+            {
+              "id": "mh_1793233434838",
+              "date": "2026-10-29",
+              "km": 6104,
+              "amount": 115,
+              "notes": "Pastilhas Diafrag"
+            }
+          ],
+          "updatedAt": 1793233490856
+        },
+        {
+          "id": "maint_1793115502811",
+          "name": "Fluido de Freio",
+          "icon": "💧",
+          "lastChangeKm": 5954,
+          "intervalKm": 10000,
+          "costEstimate": 40,
+          "notes": "Fluido DOT 4",
+          "isDefault": false,
+          "updatedAt": 1793115537087,
+          "alertThresholdPct": 85,
+          "history": []
+        },
+        {
+          "id": "maint_1793115553437",
+          "name": "Carburador",
+          "icon": "🏍️",
+          "lastChangeKm": 5954,
+          "intervalKm": 7000,
+          "costEstimate": 65,
+          "notes": "Manutenção e limpeza",
+          "isDefault": false,
+          "updatedAt": 1793116120361,
+          "alertThresholdPct": 85,
+          "history": []
         }
       ],
       "fuelConfig": {
-        "kmPerLiter": 35,
-        "fuelPrice": 5.8,
-        "tankCapacityLiters": 16.1,
-        "bikeModelName": "Minha Moto",
-        "odometerBaseKm": 0
+        "bikeModelName": "SHI 175",
+        "kmPerLiter": 28,
+        "fuelPrice": 6.42,
+        "tankCapacityLiters": 15,
+        "odometerBaseKm": 5954
       },
       "financialPlan": {
-        "workDaysPerMonth": 24,
-        "dailyLunchBudget": 22,
-        "dailySnackBudget": 10,
+        "workDaysPerMonth": 26,
+        "dailyLunchBudget": 20,
+        "dailySnackBudget": 0,
         "emergencyReservePct": 10,
         "maintenanceExtraBufferPct": 5,
-        "ipvaAnnual": 480,
-        "licensingAnnual": 160,
-        "insuranceOrMeiMonthly": 75,
-        "otherDocsAnnual": 120,
-        "docsTargetMonths": 12,
+        "ipvaAnnual": 280,
+        "licensingAnnual": 280,
+        "insuranceOrMeiMonthly": 82,
+        "otherDocsAnnual": 0,
+        "docsTargetMonths": 6,
         "revenueBaseMode": "actual_or_goal",
         "customDailyGrossBase": 180,
         "customDailyKmBase": 110
       },
       "customApps": [],
-      "customCategories": [],
-      "appOverrides": {},
-      "customShifts": [],
-      "shiftOverrides": {},
+      "customCategories": [
+        {
+          "id": "cat_1793747822360",
+          "name": "Supermercado"
+        },
+        {
+          "id": "cat_1793925614748",
+          "name": "Óleo motor"
+        }
+      ],
+      "appOverrides": {
+        "uber": {
+          "name": "Izi Delivery",
+          "icon": "🏍️"
+        },
+        "rappi": {
+          "name": "Entregas Flex",
+          "icon": "📦"
+        },
+        "99moto": {
+          "name": "Almoço",
+          "icon": "🍽️"
+        },
+        "lalamove": {
+          "name": "Açai",
+          "icon": "🥣"
+        },
+        "ze_delivery": {
+          "name": "Lanche",
+          "icon": "🍔"
+        }
+      },
+      "customShifts": [
+        {
+          "id": "shift_1793883303419",
+          "name": "11:00 as 22:30"
+        }
+      ],
+      "shiftOverrides": {
+        "almoco": {
+          "name": "Almoço (11h-13h)"
+        },
+        "tarde": {
+          "name": "Açai (13h-18h)"
+        },
+        "jantar": {
+          "name": "Noite (18h-23h)"
+        }
+      },
       "deletedShiftIds": [],
       "deletedAppIds": [],
-      "deletedEntryIds": [],
-      "deletedExpenseIds": [],
-      "lastSyncedAt": "2026-10-27T02:37:08.904Z"
+      "deletedEntryIds": [
+        1793064845364,
+        1793045774484,
+        1793290730314
+      ],
+      "deletedExpenseIds": [
+        1793064731329,
+        1793747829139,
+        1793919602024
+      ],
+      "lastSyncedAt": "2026-11-10T02:39:26.906Z"
     },
     "pilotProfile": {
-      "id": "usr_1793065121511",
+      "id": "usr_1792618634013",
       "name": "Swami Junior",
       "email": "swamijunior346.sj@gmail.com",
-      "phone": "",
-      "bikeModel": "Minha Moto",
-      "createdAt": "2026-10-27T01:38:41.511Z",
+      "phone": "31995610728",
+      "bikeModel": "SHI 175",
+      "createdAt": "2026-10-21T21:37:14.013Z",
       "passwordHash": "9ac4dbf2"
     },
-    "updatedAt": "2026-10-27T02:37:20.410Z"
+    "updatedAt": "2026-11-10T02:39:27.583Z"
   },
   "usr_lauraivini13_gmail.com": {
     "state": {
@@ -205,5 +555,118 @@
       "passwordHash": "9ac4dbf2"
     },
     "updatedAt": "2026-11-08T15:31:00.603Z"
-  }
+  },
+  "__global_investment_plans__": {
+    "plans": [
+      {
+        "id": "cota_giro_rapido",
+        "name": "Fundo Motoboy · Cota Giro Rápido",
+        "badge": "Mais Popular · Liquidez Rápida",
+        "icon": "🛵",
+        "sharePrice": 25,
+        "minShares": 1,
+        "maxShares": 1000,
+        "dailyRatePct": 0.055,
+        "monthlyRatePct": 1.65,
+        "annualRatePct": 21.7,
+        "cdiEquivalent": "145% do CDI",
+        "maturityDays": 30,
+        "fixedMaturityDate": "",
+        "minWithdrawDays": 3,
+        "liquidityLabel": "Saque liberado após 72h do investimento",
+        "description": "Ideal para guardar o lucro diário das corridas e a reserva de combustível/manutenção com rendimento todo dia.",
+        "recommendedFor": "Reserva semanal, gasolina, óleo e imprevistos rápidos",
+        "themeKey": "orange",
+        "accentColor": "text-[#FF6A1A]",
+        "borderColor": "border-[#FF6A1A]/40",
+        "bgSoft": "bg-[#FF6A1A]/10"
+      },
+      {
+        "id": "cota_blindagem_moto",
+        "name": "Fundo Motoboy · Cota Blindagem & Oficina",
+        "badge": "Rendimento Turbo · Médio Prazo",
+        "icon": "🛠️",
+        "sharePrice": 50,
+        "minShares": 1,
+        "maxShares": 1000,
+        "dailyRatePct": 0.068,
+        "monthlyRatePct": 2.05,
+        "annualRatePct": 27.6,
+        "cdiEquivalent": "175% do CDI",
+        "maturityDays": 90,
+        "fixedMaturityDate": "",
+        "minWithdrawDays": 3,
+        "liquidityLabel": "Saque liberado após 72h do investimento",
+        "description": "Fundo coletivo voltado para cobrir troca de pneus, kit relação, IPVA anual e seguro da moto com alto retorno.",
+        "recommendedFor": "Pneus, relação, IPVA, licenciamento e contas da casa",
+        "themeKey": "emerald",
+        "accentColor": "text-emerald-400",
+        "borderColor": "border-emerald-500/40",
+        "bgSoft": "bg-emerald-500/10"
+      },
+      {
+        "id": "cota_troca_moto",
+        "name": "Fundo Motoboy · Cota Frota & Moto Zero",
+        "badge": "Maior Rentabilidade · Patrimônio",
+        "icon": "🏆",
+        "sharePrice": 100,
+        "minShares": 1,
+        "maxShares": 1000,
+        "dailyRatePct": 0.082,
+        "monthlyRatePct": 2.48,
+        "annualRatePct": 34.2,
+        "cdiEquivalent": "210% do CDI",
+        "maturityDays": 180,
+        "fixedMaturityDate": "",
+        "minWithdrawDays": 3,
+        "liquidityLabel": "Saque liberado após 72h do investimento",
+        "description": "Cotas de participação premium para quem quer juntar entrada de moto nova, quitar financiamento ou formar pé-de-meia.",
+        "recommendedFor": "Trocar de moto, entrada de veículo ou reserva familiar",
+        "themeKey": "sky",
+        "accentColor": "text-sky-400",
+        "borderColor": "border-sky-500/40",
+        "bgSoft": "bg-sky-500/10"
+      }
+    ],
+    "qrConfig": {
+      "customQrImageUrl": "",
+      "pixCopyPasteKey": "00020126580014BR.GOV.BCB.PIX0136fundomotoboy@interempresas.com.br5204000053039865802BR5925FUNDO INVEST MOTOBOY LTDA6009SAO PAULO62070503***6304ABCD",
+      "recipientName": "Fundo de Investimento SWM Capital",
+      "bankName": "Banco Inter Empresas"
+    },
+    "updatedBy": "swamijunior346.sj@gmail.com",
+    "updatedAt": "2026-11-10T00:07:58.042Z"
+  },
+  "__admin_investment_notifications__": [
+    {
+      "type": "deposit_confirmed",
+      "title": "💰 Depósito Realizado e Confirmado pelo Motoboy",
+      "message": "Swami Junior concluiu o pagamento PIX de R$ 500,00 (20 cotas em Fundo Motoboy · Cota Giro Rápido). Aplicação ativa.",
+      "pilotName": "Swami Junior",
+      "pilotEmail": "swamijunior346.sj@gmail.com",
+      "planId": "cota_giro_rapido",
+      "planName": "Fundo Motoboy · Cota Giro Rápido",
+      "shares": 20,
+      "amount": 500,
+      "priority": "high",
+      "timestamp": "2026-11-10T02:46:59.514Z",
+      "id": "notif_1794278819518_1izn",
+      "read": true
+    },
+    {
+      "type": "deposit_intent",
+      "title": "🚨 Notificação Alta Prioridade: Intenção de Depósito",
+      "message": "Swami Junior confirmou o investimento de R$ 500,00 (20 cotas) no Fundo Motoboy · Cota Giro Rápido. QR Code PIX gerado.",
+      "pilotName": "Swami Junior",
+      "pilotEmail": "swamijunior346.sj@gmail.com",
+      "planId": "cota_giro_rapido",
+      "planName": "Fundo Motoboy · Cota Giro Rápido",
+      "shares": 20,
+      "amount": 500,
+      "priority": "high",
+      "timestamp": "2026-11-10T02:43:47.573Z",
+      "id": "notif_1794278627582_eeos",
+      "read": true
+    }
+  ]
 }

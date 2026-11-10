@@ -323,6 +323,85 @@ async function startServer() {
     }
   });
 
+  // Investment Deposits Security Mode (Pending until Admin Confirms PIX)
+  app.get('/api/investment-deposits', (req, res) => {
+    try {
+      const email = String(req.query.email || '').trim().toLowerCase();
+      const status = String(req.query.status || '').trim().toLowerCase();
+      const store = readServerCloudStore();
+      let list: any[] = store['__global_investment_deposits__'] || [];
+      if (email) {
+        list = list.filter(d => String(d.pilot_email || d.pilotEmail || '').toLowerCase() === email);
+      }
+      if (status) {
+        list = list.filter(d => String(d.status || '').toLowerCase() === status);
+      }
+      return res.json({ ok: true, data: list });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/investment-deposits', (req, res) => {
+    try {
+      const { deposit } = req.body || {};
+      if (!deposit || !deposit.id) {
+        return res.status(400).json({ ok: false, error: 'Invalid deposit payload' });
+      }
+      const store = readServerCloudStore();
+      const list: any[] = store['__global_investment_deposits__'] || [];
+      const row = {
+        ...deposit,
+        status: 'pending',
+        confirmed_at: null,
+        confirmed_by: null,
+        created_at: deposit.created_at || new Date().toISOString(),
+      };
+      const filtered = list.filter(d => d.id !== row.id);
+      store['__global_investment_deposits__'] = [row, ...filtered];
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: row });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/investment-deposits/review', (req, res) => {
+    try {
+      const { depositId, decision, adminEmail } = req.body || {};
+      const cleanAdmin = String(adminEmail || '').trim().toLowerCase();
+      if (cleanAdmin !== 'swamijunior346.sj@gmail.com') {
+        return res.status(403).json({ ok: false, error: 'invalid_credentials' });
+      }
+      if (decision !== 'confirmed' && decision !== 'rejected') {
+        return res.status(400).json({ ok: false, error: 'invalid_decision' });
+      }
+      const store = readServerCloudStore();
+      const list: any[] = store['__global_investment_deposits__'] || [];
+      let updatedRow: any = null;
+      const nextList = list.map(d => {
+        if (d.id === depositId) {
+          updatedRow = {
+            ...d,
+            status: decision,
+            confirmed_at: new Date().toISOString(),
+            confirmed_by: cleanAdmin,
+          };
+          return updatedRow;
+        }
+        return d;
+      });
+      if (!updatedRow) {
+        return res.status(404).json({ ok: false, error: 'not_pending' });
+      }
+      store['__global_investment_deposits__'] = nextList;
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: updatedRow });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
   app.post('/api/gemini/copilot', async (req, res) => {
     try {
       const { question, context } = req.body;
@@ -431,8 +510,19 @@ Responda em no máximo 4 blocos curtos com títulos claros (usando marcadores �
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  🚀 Mochilinha Dev Server rodando:`);
+    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜  Network: http://127.0.0.1:${PORT}/\n`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ Erro: A porta ${PORT} já está sendo utilizada por outro processo.`);
+      console.error(`Tente encerrar o processo anterior ou utilize outra porta: $env:PORT="3001"; npm run dev\n`);
+    } else {
+      console.error('Erro ao iniciar servidor:', err);
+    }
   });
 }
 

@@ -1,6 +1,19 @@
 @import "tailwindcss";
 
+/* Suporte universal a Safe Area Insets (Android Edge-to-Edge & iOS Notch/Home indicator) */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
 @layer base {
+  html, body {
+    height: 100%;
+    overscroll-behavior-y: none;
+  }
+
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
