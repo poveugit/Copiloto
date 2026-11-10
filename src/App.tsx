@@ -871,7 +871,15 @@ export default function App() {
   });
   const [financeAppFilter, setFinanceAppFilter] = useState<string>('all');
   const [financeSortOrder, setFinanceSortOrder] = useState<'date_desc' | 'val_desc' | 'val_asc'>('date_desc');
-  const [dashboardSaldoScope, setDashboardSaldoScope] = useState<'month' | 'all'>('month');
+  const [dashboardSaldoScope, setDashboardSaldoScope] = useState<'month' | 'all' | 'custom'>('month');
+  const [dashboardCustomStartDate, setDashboardCustomStartDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [dashboardCustomEndDate, setDashboardCustomEndDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [isEditingCustomGoalInFinance, setIsEditingCustomGoalInFinance] = useState<boolean>(false);
   const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(0);
   const [tempFinanceGoalDate, setTempFinanceGoalDate] = useState<string>(() => getDefaultFutureDate(20));
@@ -5805,12 +5813,54 @@ export default function App() {
               {/* 2. CARD DE SALDO ATUAL DO MOTOBOY */}
               {(() => {
                 const isMonthScope = dashboardSaldoScope === 'month';
-                const curBalance = isMonthScope ? periodTotals.saldoMonth : totals.lucro;
-                const curGross = isMonthScope ? periodTotals.revMonth : totals.totalRevenue;
-                const curExpenses = isMonthScope ? periodTotals.expMonth : totals.totalExpense;
+                const isCustomScope = dashboardSaldoScope === 'custom';
+
+                let curGross = 0;
+                let curExpenses = 0;
+
+                if (isMonthScope) {
+                  curGross = periodTotals.revMonth;
+                  curExpenses = periodTotals.expMonth;
+                } else if (isCustomScope) {
+                  const start = dashboardCustomStartDate || '1970-01-01';
+                  const end = dashboardCustomEndDate || '2099-12-31';
+                  dbState.entries.forEach(e => {
+                    if (e.date && e.date >= start && e.date <= end) {
+                      curGross += Number(e.revenue || 0);
+                    }
+                  });
+                  dbState.expenses.forEach(ex => {
+                    if (ex.date && ex.date >= start && ex.date <= end) {
+                      curExpenses += Number(ex.amount || 0);
+                    }
+                  });
+                } else {
+                  curGross = totals.totalRevenue;
+                  curExpenses = totals.totalExpense;
+                }
+
+                const curBalance = curGross - curExpenses;
                 const isPositive = curBalance >= 0;
                 const monthlyObligations = financialIntelligence.totalMonthlyCostsAndReserves || 0;
                 const reserveProgress = monthlyObligations > 0 ? Math.min(100, Math.max(0, Math.round((curBalance / monthlyObligations) * 100))) : (curBalance > 0 ? 100 : 0);
+
+                const periodSubtitle = isMonthScope
+                  ? `Livre em ${periodTotals.currentMonthName}`
+                  : isCustomScope
+                  ? `Período: ${formatPtBrDate(dashboardCustomStartDate)} até ${formatPtBrDate(dashboardCustomEndDate)}`
+                  : 'Livre acumulado total';
+
+                const periodSaldoLabel = isMonthScope
+                  ? `Saldo Líquido · ${periodTotals.currentMonthName}`
+                  : isCustomScope
+                  ? `Saldo Líquido · Período Personalizado`
+                  : 'Saldo Líquido Total';
+
+                const entriesScopeLabel = isMonthScope
+                  ? 'Corridas do mês'
+                  : isCustomScope
+                  ? 'Corridas no período'
+                  : 'Todas as corridas';
 
                 return (
                   <div className={`lg:col-span-5 rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} flex flex-col justify-between shadow-sm border-2 ${
@@ -5835,12 +5885,12 @@ export default function App() {
                               <span>Saldo Atual do Motoboy</span>
                             </span>
                             <p className={`text-[10px] font-semibold ${mutedText}`}>
-                              {isMonthScope ? `Livre em ${periodTotals.currentMonthName}` : 'Livre acumulado total'}
+                              {periodSubtitle}
                             </p>
                           </div>
                         </div>
 
-                        {/* Toggle Este Mês / Geral */}
+                        {/* Toggle Este Mês / Geral / Personalizado */}
                         <div className="flex items-center bg-slate-900/60 dark:bg-slate-950 p-1 rounded-xl border border-slate-700/60 text-[11px] font-black">
                           <button
                             type="button"
@@ -5857,28 +5907,67 @@ export default function App() {
                             type="button"
                             onClick={() => setDashboardSaldoScope('all')}
                             className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                              !isMonthScope
+                              dashboardSaldoScope === 'all'
                                 ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
                                 : 'text-slate-400 hover:text-slate-200 font-bold'
                             }`}
                           >
                             Geral
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => setDashboardSaldoScope('custom')}
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                              isCustomScope
+                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
+                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                            }`}
+                          >
+                            <Calendar className="w-3 h-3" />
+                            <span>Personalizado</span>
+                          </button>
                         </div>
                       </div>
+
+                      {/* Seletor de Datas quando Personalizado está ativo */}
+                      {isCustomScope && (
+                        <div className="mb-3.5 p-2.5 sm:p-3 rounded-2xl bg-slate-900/40 dark:bg-slate-950/80 border border-slate-700/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1 shrink-0">
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Filtrar Período:</span>
+                          </span>
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                            <div className="flex items-center gap-1 flex-1 sm:flex-initial">
+                              <span className={`text-[10px] font-bold ${mutedText}`}>De:</span>
+                              <input
+                                type="date"
+                                value={dashboardCustomStartDate}
+                                onChange={e => setDashboardCustomStartDate(e.target.value)}
+                                className={`w-full sm:w-auto px-2 py-1 rounded-xl text-xs font-bold outline-none border border-slate-700/80 ${
+                                  isDark ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
+                                }`}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 flex-1 sm:flex-initial">
+                              <span className={`text-[10px] font-bold ${mutedText}`}>Até:</span>
+                              <input
+                                type="date"
+                                value={dashboardCustomEndDate}
+                                onChange={e => setDashboardCustomEndDate(e.target.value)}
+                                className={`w-full sm:w-auto px-2 py-1 rounded-xl text-xs font-bold outline-none border border-slate-700/80 ${
+                                  isDark ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Saldo Principal em Destaque */}
                       <div className="mt-2">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
-                            {isMonthScope ? `Saldo Líquido · ${periodTotals.currentMonthName}` : 'Saldo Líquido Total'}
-                          </span>
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
-                            isPositive
-                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                          }`}>
-                            {isPositive ? '● No Azul / Lucro Limpo' : '● No Vermelho / Atenção'}
+                            {periodSaldoLabel}
                           </span>
                         </div>
 
@@ -5902,7 +5991,7 @@ export default function App() {
                             {fmtMoney(curGross)}
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                            {isMonthScope ? 'Corridas do mês' : 'Todas as corridas'}
+                            {entriesScopeLabel}
                           </div>
                         </div>
 

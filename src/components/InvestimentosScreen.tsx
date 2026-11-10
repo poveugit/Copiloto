@@ -1243,17 +1243,6 @@ export function InvestimentosScreen({
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 4)}
-              className="w-full sm:w-auto px-5 py-3 rounded-2xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/25 active:scale-98"
-            >
-              <QrCode className="w-4 h-4 stroke-[2.5]" />
-              <span>Investir Agora (Comprar Cotas)</span>
-            </button>
-          </div>
         </div>
 
         {/* KPIs da Carteira do Motoboy */}

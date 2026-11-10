@@ -52,6 +52,9 @@
    - Serviço central: `src/services/nativeNotifications.ts`. Dispara no Android via `@capacitor/local-notifications` com canais configurados (`maintenance` e `investments`), com fallback automático para Web Notification API no navegador desktop.
    - Permissão `android.permission.POST_NOTIFICATIONS` declarada no `AndroidManifest.xml` e ícone nativo `ic_stat_notify.xml` em `android/app/src/main/res/drawable/`.
    - Inclui botão de teste nas Configurações para validar disparos imediatos e programados.
+   - Solicitação automática de permissão no login e inicialização do app no Android 13+.
+   - Watcher de investimentos otimizado (polling a cada 10s e eventos de visibilidade/foco) garantindo que depósitos pendentes só sejam marcados como vistos após a notificação ser entregue com sucesso.
+   - Lista de administradores confiáveis expandida para incluir `junior2026izi@gmail.com` e checagem de flag `is_admin` do Supabase.
 
 7. **Modo de Segurança de Investimentos (Liberação Apenas pelo Admin)**:
    - O entregador **não pode** confirmar o próprio depósito para liberar cotas/saldo.
