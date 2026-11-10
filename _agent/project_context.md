@@ -72,3 +72,4 @@
 - `npm run cap:sync`: Compila e sincroniza os assets com o projeto Android (`android/app/src/main/assets/public`).
 - `npm run cap:open`: Abre o projeto no Android Studio.
 - `npm run build:apk`: Pipeline completo que compila o front, sincroniza o capacitor e gera o APK assinado em `android/app/build/outputs/apk/release/app-release.apk`.
+- Build do AAB (Google Play): Executado via `cd android ; .\gradlew.bat bundleRelease` gerando o arquivo assinado em `android/app/build/outputs/bundle/release/app-release.aab`.
