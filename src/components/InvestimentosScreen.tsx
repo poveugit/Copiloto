@@ -27,6 +27,16 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   ExternalLink,
+  ChevronRight,
+  PieChart,
+  Coins,
+  ShieldCheck,
+  FileText,
+  Sparkles,
+  Calculator,
+  Percent,
+  Info,
+  HelpCircle,
 } from 'lucide-react';
 import {
   createInvestmentEvent,
@@ -624,8 +634,39 @@ export function InvestimentosScreen({
   const [showConfirmPopup, setShowConfirmPopup] = useState<boolean>(false);
   const [isQrCodeGenerated, setIsQrCodeGenerated] = useState<boolean>(false);
 
-  // Withdrawal Confirmation Pop-up state
+  // Withdrawal Confirmation Pop-up state (individual fast action)
   const [withdrawingPosition, setWithdrawingPosition] = useState<MotoboyInvestmentPosition | null>(null);
+
+  // ================= ONE-CLICK TOP CARDS MODAL FLOWS =================
+  const [showActiveInvestmentsModal, setShowActiveInvestmentsModal] = useState<boolean>(false);
+  const [showYieldBreakdownModal, setShowYieldBreakdownModal] = useState<boolean>(false);
+  const [showWithdrawalModal, setShowWithdrawalModal] = useState<boolean>(false);
+  const [showFundRulesModal, setShowFundRulesModal] = useState<boolean>(false);
+
+  // Dedicated Withdrawal Modal form state
+  const [withdrawTargetId, setWithdrawTargetId] = useState<string>('all_eligible');
+  const [withdrawPixType, setWithdrawPixType] = useState<'cpf' | 'celular' | 'email' | 'aleatoria'>('cpf');
+  const [withdrawPixKeyInput, setWithdrawPixKeyInput] = useState<string>(() => {
+    try {
+      return localStorage.getItem(`copilotrider_saved_pix_${userStorageKey}`) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [withdrawAccountHolder, setWithdrawAccountHolder] = useState<string>(() => currentUserName || '');
+  const [withdrawBankName, setWithdrawBankName] = useState<string>('');
+  const [withdrawReceipt, setWithdrawReceipt] = useState<{
+    id: string;
+    amount: number;
+    shares: number;
+    pixKey: string;
+    pixType: string;
+    holder: string;
+    bank: string;
+    planNames: string;
+    date: string;
+  } | null>(null);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   const [modalPlan, setModalPlan] = useState<MotoboyFundPlan>(
     () => fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0]
@@ -652,7 +693,13 @@ export function InvestimentosScreen({
   const surfaceSubtle = isDark
     ? 'bg-[#181B26] border border-slate-800/60'
     : 'bg-slate-100/80 border border-slate-200/70';
-  const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
+  const mutedText = isDark ? 'text-slate-400' : 'text-slate-600';
+  const primaryText = isDark ? 'text-slate-100' : 'text-slate-900';
+  const secondaryText = isDark ? 'text-slate-200' : 'text-slate-800';
+  const subText = isDark ? 'text-slate-300' : 'text-slate-700';
+  const cardBorder = isDark ? 'border-slate-800/80' : 'border-slate-200';
+  const borderSubtle = isDark ? 'border-slate-800/60' : 'border-slate-200';
+  const dividerBorder = isDark ? 'border-slate-800' : 'border-slate-200';
   const inputSurface = isDark
     ? 'bg-[#090A0F] border border-slate-700/80 text-white focus:border-[#FF6A1A]'
     : 'bg-slate-50 border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
@@ -719,6 +766,69 @@ export function InvestimentosScreen({
       availableToWithdraw,
       lockedInGracePeriod,
     };
+  }, [positions, todayIso]);
+
+  // Detalhamento do valor investido em cada fundo pelo motoboy
+  const fundInvestmentsBreakdown = useMemo(() => {
+    const activeList = positions.filter(p => p.status === 'active');
+    const map: Record<
+      string,
+      {
+        planId: string;
+        planName: string;
+        planIcon: string;
+        totalInvested: number;
+        totalShares: number;
+        currentYield: number;
+        totalPatrimony: number;
+        eligibleShares: number;
+        eligibleAmount: number;
+        lockedShares: number;
+        lockedAmount: number;
+        positions: MotoboyInvestmentPosition[];
+      }
+    > = {};
+
+    activeList.forEach(pos => {
+      const key = pos.planId || pos.planName;
+      if (!map[key]) {
+        map[key] = {
+          planId: pos.planId,
+          planName: pos.planName,
+          planIcon: pos.planIcon,
+          totalInvested: 0,
+          totalShares: 0,
+          currentYield: 0,
+          totalPatrimony: 0,
+          eligibleShares: 0,
+          eligibleAmount: 0,
+          lockedShares: 0,
+          lockedAmount: 0,
+          positions: [],
+        };
+      }
+      const elapsedDays = Math.max(1, diffDaysBetweenIso(pos.createdAtIso, todayIso));
+      const { yieldAmount, finalAmount } = calculateCompoundYield(
+        pos.investedAmount,
+        pos.dailyRatePct,
+        elapsedDays
+      );
+      map[key].totalInvested += pos.investedAmount;
+      map[key].totalShares += pos.shares;
+      map[key].currentYield += yieldAmount;
+      map[key].totalPatrimony += finalAmount;
+      map[key].positions.push(pos);
+
+      if (elapsedDays >= pos.minWithdrawDays) {
+        map[key].eligibleShares += pos.shares;
+        map[key].eligibleAmount += finalAmount;
+      } else {
+        map[key].lockedShares += pos.shares;
+        map[key].lockedAmount += finalAmount;
+      }
+    });
+
+    return Object.values(map);
   }, [positions, todayIso]);
 
   const openBuySharesModal = (plan: MotoboyFundPlan, defaultShares = 2) => {
@@ -867,6 +977,109 @@ export function InvestimentosScreen({
 
     setWithdrawFeedback(
       `✅ Solicitação de resgate de ${fmtBRL(pos.investedAmount)} (${pos.shares} cotas) realizada com sucesso! O Admin foi notificado para efetuar o pagamento.`
+    );
+  };
+
+  // Processa o resgate completo pelo Modal de Saque / Resgate
+  const handleExecuteDedicatedWithdrawal = (e: React.FormEvent) => {
+    e.preventDefault();
+    setWithdrawError(null);
+
+    const pixTrimmed = withdrawPixKeyInput.trim();
+    if (!pixTrimmed) {
+      setWithdrawError('Informe a chave PIX onde você deseja receber o valor do resgate.');
+      return;
+    }
+
+    const activeList = positions.filter(p => p.status === 'active');
+    let targetPositions: MotoboyInvestmentPosition[] = [];
+
+    if (withdrawTargetId === 'all_eligible') {
+      targetPositions = activeList.filter(p => {
+        const elapsed = diffDaysBetweenIso(p.createdAtIso, todayIso);
+        return elapsed >= p.minWithdrawDays;
+      });
+    } else {
+      const found = activeList.find(p => p.id === withdrawTargetId);
+      if (found) {
+        const elapsed = diffDaysBetweenIso(found.createdAtIso, todayIso);
+        if (elapsed < found.minWithdrawDays) {
+          setWithdrawError(
+            `Esta cota ainda está sob prazo de carência (${found.minWithdrawDays} dias). O saque será liberado em ${formatIsoToPtBr(
+              found.unlockWithdrawDateIso
+            )}.`
+          );
+          return;
+        }
+        targetPositions = [found];
+      }
+    }
+
+    if (targetPositions.length === 0) {
+      setWithdrawError('Nenhuma cota liberada foi selecionada para resgate.');
+      return;
+    }
+
+    let totalAmount = 0;
+    let totalShares = 0;
+    const posIds: string[] = [];
+    const planNamesSet = new Set<string>();
+
+    targetPositions.forEach(p => {
+      posIds.push(p.id);
+      totalShares += p.shares;
+      const elapsed = Math.max(1, diffDaysBetweenIso(p.createdAtIso, todayIso));
+      const { finalAmount } = calculateCompoundYield(p.investedAmount, p.dailyRatePct, elapsed);
+      totalAmount += finalAmount;
+      planNamesSet.add(p.planName);
+    });
+
+    try {
+      localStorage.setItem(`copilotrider_saved_pix_${userStorageKey}`, pixTrimmed);
+    } catch {
+      // ignore
+    }
+
+    const nextWithdrawn = Array.from(new Set([...withdrawnIds, ...posIds]));
+    setWithdrawnIds(nextWithdrawn);
+    try {
+      localStorage.setItem(withdrawnKey, JSON.stringify(nextWithdrawn));
+    } catch {
+      // ignore
+    }
+
+    const planNamesStr = Array.from(planNamesSet).join(', ');
+    registerInvestmentEvent('withdrawal_requested', {
+      planName: `${planNamesStr} · PIX: ${pixTrimmed} (${withdrawPixType.toUpperCase()})`,
+      shares: totalShares,
+      amount: totalAmount,
+    });
+
+    void sendNativeNotification({
+      tag: `withdraw_req_${Date.now()}`,
+      channel: 'investments',
+      title: '📤 Solicitação de resgate PIX enviada',
+      body: `Pedido de resgate de ${fmtBRL(totalAmount)} (${totalShares} ${
+        totalShares === 1 ? 'cota' : 'cotas'
+      }) para PIX ${pixTrimmed} encaminhado ao Administrador.`,
+      targetTab: 'investments',
+    });
+
+    const receipt = {
+      id: 'SAQ-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+      amount: totalAmount,
+      shares: totalShares,
+      pixKey: pixTrimmed,
+      pixType: withdrawPixType,
+      holder: withdrawAccountHolder.trim() || currentUserName || 'Motoboy Parceiro',
+      bank: withdrawBankName.trim() || 'Conta Bancária informada',
+      planNames: planNamesStr,
+      date: new Date().toLocaleDateString('pt-BR') + ' às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setWithdrawReceipt(receipt);
+    setWithdrawFeedback(
+      `✅ Solicitação de resgate de ${fmtBRL(totalAmount)} enviada com sucesso! O Administrador já recebeu a notificação para fazer o PIX.`
     );
   };
 
@@ -1245,61 +1458,128 @@ export function InvestimentosScreen({
           </div>
         </div>
 
-        {/* KPIs da Carteira do Motoboy */}
+        {/* KPIs da Carteira do Motoboy - CARDS ONE-CLICK INTERATIVOS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 mt-4">
-          <div className={`rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-            <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
-              <span>Patrimônio em Cotas</span>
-              <Wallet className="w-4 h-4 text-[#FF6A1A]" />
+          {/* Card 1: Patrimônio em Cotas -> Abre Modal de Investimentos Ativos do Motoboy */}
+          <button
+            type="button"
+            onClick={() => setShowActiveInvestmentsModal(true)}
+            title="Clique para ver seus investimentos ativos e o detalhamento por fundo"
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-[#FF6A1A]/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-[#FF6A1A]/40 ${surfaceSubtle}`}
+          >
+            <div className="flex items-center justify-between text-[11px] font-bold">
+              <span className={`flex items-center gap-1 ${primaryText}`}>
+                <span>Patrimônio em Cotas</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
+                  isDark ? 'bg-[#FF6A1A]/20 text-[#FF6A1A]' : 'bg-orange-100 text-orange-900 border border-orange-200'
+                }`}>
+                  Ver Cotas ↗
+                </span>
+                <Wallet className="w-4 h-4 text-[#FF6A1A] group-hover:scale-110 transition-transform" />
+              </div>
             </div>
             <div className="text-lg sm:text-2xl font-black tabular-nums mt-1 text-[#FF6A1A]">
               {fmtBRL(portfolioStats.totalPatrimony)}
             </div>
-            <div className={`text-[10px] font-semibold mt-0.5 ${mutedText}`}>
-              {portfolioStats.totalShares}{' '}
-              {portfolioStats.totalShares === 1 ? 'cota ativa' : 'cotas ativas'} · Aplicado:{' '}
-              {fmtBRL(portfolioStats.totalInvested)}
+            <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
+              <span>
+                {portfolioStats.totalShares}{' '}
+                {portfolioStats.totalShares === 1 ? 'cota ativa' : 'cotas ativas'} · {fmtBRL(portfolioStats.totalInvested)}
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-[#FF6A1A]" />
             </div>
-          </div>
+          </button>
 
-          <div className={`rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-            <div className="flex items-center justify-between text-[11px] font-bold text-emerald-400">
-              <span>Rendimento no Vencimento</span>
-              <TrendingUp className="w-4 h-4 text-emerald-400" />
+          {/* Card 2: Rendimento no Vencimento -> Abre Modal de Rendimentos & Projeções */}
+          <button
+            type="button"
+            onClick={() => setShowYieldBreakdownModal(true)}
+            title="Clique para ver o extrato de rendimento diário e projeção de vencimento"
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-emerald-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-emerald-500/40 ${surfaceSubtle}`}
+          >
+            <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+              <span className={primaryText}>Rendimento Projetado</span>
+              <div className="flex items-center gap-1">
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
+                  isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                }`}>
+                  Extrato ↗
+                </span>
+                <TrendingUp className={`w-4 h-4 ${isDark ? 'text-emerald-400' : 'text-emerald-700'} group-hover:scale-110 transition-transform`} />
+              </div>
             </div>
-            <div className="text-lg sm:text-2xl font-black tabular-nums mt-1 text-emerald-400">
+            <div className={`text-lg sm:text-2xl font-black tabular-nums mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
               + {fmtBRL(portfolioStats.projectedMaturityYield)}
             </div>
-            <div className={`text-[10px] font-semibold mt-0.5 ${mutedText}`}>
-              Acumulado hoje: + {fmtBRL(portfolioStats.currentYield)}
+            <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
+              <span>Acumulado hoje: + {fmtBRL(portfolioStats.currentYield)}</span>
+              <ChevronRight className={`w-3.5 h-3.5 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
             </div>
-          </div>
+          </button>
 
-          <div className={`rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-            <div className="flex items-center justify-between text-[11px] font-bold text-sky-400">
-              <span>Liberado p/ Saque</span>
-              <Unlock className="w-4 h-4 text-sky-400" />
+          {/* Card 3: Liberado p/ Saque -> Abre Modal de Solicitação de Resgate / Saque */}
+          <button
+            type="button"
+            onClick={() => {
+              setWithdrawReceipt(null);
+              setWithdrawError(null);
+              setShowWithdrawalModal(true);
+            }}
+            title="Clique para solicitar resgate / saque imediato via PIX"
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-sky-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-sky-500/40 ${surfaceSubtle}`}
+          >
+            <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+              <span className={primaryText}>Liberado p/ Saque</span>
+              <div className="flex items-center gap-1">
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
+                  isDark ? 'bg-sky-500/20 text-sky-300' : 'bg-sky-100 text-sky-900 border border-sky-200'
+                }`}>
+                  Sacar ↗
+                </span>
+                <Unlock className={`w-4 h-4 ${isDark ? 'text-sky-400' : 'text-sky-700'} group-hover:scale-110 transition-transform`} />
+              </div>
             </div>
-            <div className="text-lg sm:text-2xl font-black tabular-nums mt-1 text-sky-400">
+            <div className={`text-lg sm:text-2xl font-black tabular-nums mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
               {fmtBRL(portfolioStats.availableToWithdraw)}
             </div>
-            <div className={`text-[10px] font-semibold mt-0.5 ${mutedText}`}>
-              Carência mínima cumprida
+            <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
+              <span>
+                {portfolioStats.availableToWithdraw > 0 ? 'Disponível p/ PIX imediato' : 'Carência mínima ativa'}
+              </span>
+              <ChevronRight className={`w-3.5 h-3.5 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
             </div>
-          </div>
+          </button>
 
-          <div className={`rounded-2xl p-3 sm:p-4 ${surfaceSubtle}`}>
-            <div className="flex items-center justify-between text-[11px] font-bold text-amber-400">
-              <span>Regra de Saque & Liquidez</span>
-              <Clock className="w-4 h-4 text-amber-400" />
+          {/* Card 4: Regra de Saque & Liquidez -> Abre Modal de Regras do Fundo e Liquidez */}
+          <button
+            type="button"
+            onClick={() => setShowFundRulesModal(true)}
+            title="Clique para ver todas as regras de saque, liquidez e regulamento do fundo"
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-amber-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-amber-500/40 ${surfaceSubtle}`}
+          >
+            <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+              <span className={primaryText}>Regra de Saque & Liquidez</span>
+              <div className="flex items-center gap-1">
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
+                  isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-900 border border-amber-200'
+                }`}>
+                  Regras ↗
+                </span>
+                <Clock className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-amber-700'} group-hover:scale-110 transition-transform`} />
+              </div>
             </div>
-            <div className="text-sm sm:text-base font-black mt-1 text-amber-400">
-              Mínimo de {fundPlans[0]?.minWithdrawDays ?? 3} Dias
+            <div className={`text-sm sm:text-base font-black mt-1 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+              Mínimo de {fundPlans[0]?.minWithdrawDays ?? 3} Dias (72h)
             </div>
-            <div className={`text-[10px] font-semibold mt-0.5 ${mutedText}`}>
-              {fundPlans[0]?.liquidityLabel || 'Saque liberado após 72h do investimento'}
+            <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
+              <span className="truncate pr-1">
+                {fundPlans[0]?.liquidityLabel || 'Saque liberado após 72h'}
+              </span>
+              <ChevronRight className={`w-3.5 h-3.5 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0 ${isDark ? 'text-amber-400' : 'text-amber-700'}`} />
             </div>
-          </div>
+          </button>
         </div>
       </div>
 
@@ -3228,6 +3508,1121 @@ export function InvestimentosScreen({
             >
               Fechar Zoom
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 1. MODAL DE INVESTIMENTOS ATIVOS & DETALHAMENTO DO VALOR POR CADA FUNDO */}
+      {/* ========================================================================= */}
+      {showActiveInvestmentsModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowActiveInvestmentsModal(false)}
+        >
+          <div
+            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center shrink-0">
+                  <Wallet className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
+                      Meus Investimentos Ativos
+                    </h3>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${
+                      isDark ? 'bg-[#FF6A1A]/20 text-[#FF6A1A] border-[#FF6A1A]/30' : 'bg-orange-100 text-orange-950 border-orange-200'
+                    }`}>
+                      {portfolioStats.totalShares}{' '}
+                      {portfolioStats.totalShares === 1 ? 'Cota Ativa' : 'Cotas Ativas'}
+                    </span>
+                  </div>
+                  <p className={`text-xs ${mutedText}`}>
+                    Detalhamento do valor investido em cada fundo, rendimentos e posições ativas
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowActiveInvestmentsModal(false)}
+                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Resumo Consolidado no Topo */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+                <span className={`text-[10px] font-bold uppercase block ${mutedText}`}>
+                  Total Investido
+                </span>
+                <span className={`text-base sm:text-lg font-black tabular-nums ${primaryText}`}>
+                  {fmtBRL(portfolioStats.totalInvested)}
+                </span>
+              </div>
+              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+                <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                  Lucro Acumulado
+                </span>
+                <span className={`text-base sm:text-lg font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                  + {fmtBRL(portfolioStats.currentYield)}
+                </span>
+              </div>
+              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+                <span className="text-[10px] font-bold uppercase block text-[#FF6A1A]">
+                  Patrimônio Atual
+                </span>
+                <span className="text-base sm:text-lg font-black text-[#FF6A1A] tabular-nums">
+                  {fmtBRL(portfolioStats.totalPatrimony)}
+                </span>
+              </div>
+              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+                <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                  Liberado p/ Saque
+                </span>
+                <span className={`text-base sm:text-lg font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                  {fmtBRL(portfolioStats.availableToWithdraw)}
+                </span>
+              </div>
+            </div>
+
+            {/* SEÇÃO 1: VALOR INVESTIDO EM CADA FUNDO */}
+            <div className="flex flex-col gap-2.5 mt-1">
+              <div className="flex items-center justify-between">
+                <h4 className={`text-xs sm:text-sm font-black flex items-center gap-1.5 ${primaryText}`}>
+                  <PieChart className="w-4 h-4 text-[#FF6A1A]" />
+                  <span>Valor Investido em Cada Fundo</span>
+                </h4>
+                <span className={`text-[11px] font-semibold ${mutedText}`}>
+                  {fundInvestmentsBreakdown.length}{' '}
+                  {fundInvestmentsBreakdown.length === 1 ? 'fundo com cotas' : 'fundos com cotas'}
+                </span>
+              </div>
+
+              {fundInvestmentsBreakdown.length === 0 ? (
+                <div className={`p-4 rounded-2xl text-center text-xs ${surfaceSubtle} ${mutedText}`}>
+                  <p className={`font-bold ${primaryText}`}>Você ainda não possui cotas ativas no Fundo Motoboy.</p>
+                  <p className="text-[11px] mt-1">
+                    Escolha um dos fundos abaixo para aplicar e começar a receber rendimentos diários.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActiveInvestmentsModal(false);
+                      openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2);
+                    }}
+                    className="mt-3 px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Investir nas Primeiras Cotas</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {fundInvestmentsBreakdown.map(fund => {
+                    const sharePct =
+                      portfolioStats.totalPatrimony > 0
+                        ? Math.round((fund.totalPatrimony / portfolioStats.totalPatrimony) * 100)
+                        : 0;
+                    return (
+                      <div
+                        key={fund.planId}
+                        className={`p-3.5 sm:p-4 rounded-2xl border transition-all ${surfaceSubtle} ${
+                          isDark ? 'border-slate-700/60 hover:border-[#FF6A1A]/50' : 'border-slate-300 hover:border-[#FF6A1A] shadow-xs'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="text-2xl">{fund.planIcon}</span>
+                            <div className="min-w-0">
+                              <div className={`text-xs sm:text-sm font-black truncate ${primaryText}`}>
+                                {fund.planName}
+                              </div>
+                              <div className={`text-[10px] font-semibold ${mutedText}`}>
+                                {fund.totalShares} {fund.totalShares === 1 ? 'cota ativa' : 'cotas ativas'} · {sharePct}% da carteira
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bloco de Valores Investidos e Rendimento */}
+                        <div className={`mt-3 pt-2.5 border-t ${dividerBorder} grid grid-cols-2 gap-2 text-xs`}>
+                          <div>
+                            <span className={`text-[10px] uppercase font-bold block ${mutedText}`}>
+                              Valor Investido no Fundo:
+                            </span>
+                            <span className={`text-sm font-black tabular-nums ${primaryText}`}>
+                              {fmtBRL(fund.totalInvested)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                              Rendimento Gerado:
+                            </span>
+                            <span className={`text-sm font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                              + {fmtBRL(fund.currentYield)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className={`mt-2.5 pt-2 border-t ${dividerBorder} flex items-center justify-between text-[11px] font-semibold`}>
+                          <span className={mutedText}>Saldo Total Acumulado:</span>
+                          <span className="text-xs font-black text-[#FF6A1A] tabular-nums">
+                            {fmtBRL(fund.totalPatrimony)}
+                          </span>
+                        </div>
+
+                        {/* Status de Saque e Carência */}
+                        <div className={`mt-2 pt-2 border-t ${dividerBorder} flex items-center justify-between text-[10px]`}>
+                          {fund.eligibleShares > 0 ? (
+                            <span className={`font-bold flex items-center gap-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                              <Unlock className="w-3 h-3" />
+                              {fund.eligibleShares} {fund.eligibleShares === 1 ? 'cota liberada' : 'cotas liberadas'} ({fmtBRL(fund.eligibleAmount)})
+                            </span>
+                          ) : (
+                            <span className={`font-bold flex items-center gap-1 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                              <Lock className="w-3 h-3" />
+                              Em carência de 72h
+                            </span>
+                          )}
+
+                          {fund.eligibleShares > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowActiveInvestmentsModal(false);
+                                setWithdrawTargetId(fund.positions[0]?.id || 'all_eligible');
+                                setWithdrawReceipt(null);
+                                setWithdrawError(null);
+                                setShowWithdrawalModal(true);
+                              }}
+                              className={`px-2 py-0.5 rounded font-black cursor-pointer transition-colors ${
+                                isDark ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300'
+                              }`}
+                            >
+                              Sacar deste fundo ↗
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* SEÇÃO 2: LISTA DETALHADA DE TODAS AS APLICAÇÕES ATIVAS */}
+            {positions.filter(p => p.status === 'active').length > 0 && (
+              <div className="flex flex-col gap-2.5 mt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className={`text-xs sm:text-sm font-black flex items-center gap-1.5 ${primaryText}`}>
+                    <Coins className={`w-4 h-4 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
+                    <span>Todas as Aplicações Individuais em Andamento</span>
+                  </h4>
+                  <span className={`text-[11px] ${mutedText}`}>
+                    {positions.filter(p => p.status === 'active').length} aplicações
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {positions
+                    .filter(p => p.status === 'active')
+                    .map(pos => {
+                      const elapsed = diffDaysBetweenIso(pos.createdAtIso, todayIso);
+                      const canWithdraw = elapsed >= pos.minWithdrawDays;
+                      const daysLeft = Math.max(0, pos.minWithdrawDays - elapsed);
+                      const { yieldAmount, finalAmount } = calculateCompoundYield(
+                        pos.investedAmount,
+                        pos.dailyRatePct,
+                        Math.max(1, elapsed)
+                      );
+                      const matCalc = calculateCompoundYield(
+                        pos.investedAmount,
+                        pos.dailyRatePct,
+                        pos.maturityDays
+                      );
+
+                      return (
+                        <div
+                          key={pos.id}
+                          className={`p-3 rounded-2xl border ${surfaceSubtle} ${dividerBorder} flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs`}
+                        >
+                          <div className="flex items-start gap-3 min-w-0">
+                            <span className="text-2xl mt-0.5">{pos.planIcon}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`font-black ${primaryText}`}>{pos.planName}</span>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                                  isDark ? 'bg-[#FF6A1A]/15 text-[#FF6A1A]' : 'bg-orange-100 text-orange-950 border border-orange-200'
+                                }`}>
+                                  {pos.shares} {pos.shares === 1 ? 'Cota' : 'Cotas'}
+                                </span>
+                                {canWithdraw ? (
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 ${
+                                    isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  }`}>
+                                    <Unlock className="w-3 h-3" />
+                                    Liberado para Saque
+                                  </span>
+                                ) : (
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 ${
+                                    isDark ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                  }`}>
+                                    <Lock className="w-3 h-3" />
+                                    Carência: libera em {daysLeft} {daysLeft === 1 ? 'dia' : 'dias'}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className={`text-[11px] font-semibold mt-1 flex items-center gap-2 flex-wrap ${mutedText}`}>
+                                <span>📅 Início: {formatIsoToPtBr(pos.createdAtIso)}</span>
+                                <span>·</span>
+                                <span>🔓 Liberação Saque: <strong className={isDark ? 'text-amber-400' : 'text-amber-700'}>{formatIsoToPtBr(pos.unlockWithdrawDateIso)}</strong></span>
+                                <span>·</span>
+                                <span>🏁 Vencimento ({pos.maturityDays}d): <strong className={isDark ? 'text-sky-400' : 'text-sky-700'}>{formatIsoToPtBr(pos.maturityDateIso)}</strong></span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className={`flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 ${dividerBorder} shrink-0`}>
+                            <div className="text-left md:text-right">
+                              <div className={`font-bold ${secondaryText}`}>
+                                Aplicado: {fmtBRL(pos.investedAmount)}
+                              </div>
+                              <div className={`text-[11px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                                Acumulado hoje: {fmtBRL(finalAmount)} (+{fmtBRL(yieldAmount)})
+                              </div>
+                              <div className={`text-[10px] ${mutedText}`}>
+                                No vencimento: {fmtBRL(matCalc.finalAmount)}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowActiveInvestmentsModal(false);
+                                if (canWithdraw) {
+                                  setWithdrawTargetId(pos.id);
+                                  setWithdrawReceipt(null);
+                                  setWithdrawError(null);
+                                  setShowWithdrawalModal(true);
+                                } else {
+                                  handleWithdrawPosition(pos);
+                                }
+                              }}
+                              className={`px-3 py-2 rounded-xl text-xs font-black cursor-pointer transition-all flex items-center gap-1 ${
+                                canWithdraw
+                                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-md shadow-emerald-500/20'
+                                  : isDark
+                                  ? 'bg-slate-800 text-amber-400 border border-amber-500/30 hover:bg-slate-700'
+                                  : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                              }`}
+                            >
+                              {canWithdraw ? (
+                                <>
+                                  <Unlock className="w-3.5 h-3.5" />
+                                  <span>Sacar</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="w-3.5 h-3.5" />
+                                  <span>Carência {pos.minWithdrawDays}d</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {/* Ações do Rodapé do Modal */}
+            <div className={`flex flex-col sm:flex-row gap-2.5 pt-3 border-t ${borderSubtle}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowActiveInvestmentsModal(false);
+                  setWithdrawTargetId('all_eligible');
+                  setWithdrawReceipt(null);
+                  setWithdrawError(null);
+                  setShowWithdrawalModal(true);
+                }}
+                disabled={portfolioStats.availableToWithdraw <= 0}
+                className={`flex-1 py-3 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  portfolioStats.availableToWithdraw > 0
+                    ? 'bg-sky-500 hover:bg-sky-400 text-black shadow-lg shadow-sky-500/20'
+                    : isDark
+                    ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                }`}
+              >
+                <Unlock className="w-4 h-4" />
+                <span>
+                  {portfolioStats.availableToWithdraw > 0
+                    ? `Solicitar Resgate / Saque (${fmtBRL(portfolioStats.availableToWithdraw)})`
+                    : 'Nenhuma Cota Liberada para Saque'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowActiveInvestmentsModal(false);
+                  openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2);
+                }}
+                className="py-3 px-4 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-[#FF6A1A]/20"
+              >
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>Investir em Novas Cotas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowActiveInvestmentsModal(false)}
+                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} hover:border-slate-400 ${secondaryText}`}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. MODAL DE RENDIMENTOS & PROJEÇÃO FUTURA (ONE-CLICK NO CARD DE RENDIMENTO) */}
+      {/* ========================================================================= */}
+      {showYieldBreakdownModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowYieldBreakdownModal(false)}
+        >
+          <div
+            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
+                    Extrato de Rendimentos & Projeções
+                  </h3>
+                  <p className={`text-xs ${mutedText}`}>
+                    Acompanhe o ganho diário composto e a estimativa no vencimento das suas cotas
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowYieldBreakdownModal(false)}
+                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-emerald-500`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Top Stats */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-emerald-500/30' : 'border-emerald-200 shadow-xs'}`}>
+                <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                  Rendimento Hoje (Acumulado)
+                </span>
+                <div className={`text-xl font-black tabular-nums mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                  + {fmtBRL(portfolioStats.currentYield)}
+                </div>
+                <span className={`text-[10px] block mt-0.5 ${mutedText}`}>
+                  Incidência diária sobre o principal
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/30' : 'border-sky-200 shadow-xs'}`}>
+                <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                  Projeção no Vencimento
+                </span>
+                <div className={`text-xl font-black tabular-nums mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                  + {fmtBRL(portfolioStats.projectedMaturityYield)}
+                </div>
+                <span className={`text-[10px] block mt-0.5 ${mutedText}`}>
+                  Total final estimado:{' '}
+                  {fmtBRL(portfolioStats.totalInvested + portfolioStats.projectedMaturityYield)}
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200 shadow-xs'}`}>
+                <span className="text-[10px] font-bold text-[#FF6A1A] uppercase block">
+                  Equivalente ao CDI
+                </span>
+                <div className="text-xl font-black text-[#FF6A1A] tabular-nums mt-1">
+                  145% a 210%
+                </div>
+                <span className={`text-[10px] block mt-0.5 ${mutedText}`}>
+                  Mais que o dobro da Poupança
+                </span>
+              </div>
+            </div>
+
+            {/* Como é calculado o rendimento */}
+            <div className={`p-3.5 rounded-2xl ${surfaceSubtle} border ${borderSubtle} text-xs space-y-2`}>
+              <div className={`font-black flex items-center gap-1.5 ${primaryText}`}>
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>Como funciona a fórmula de juros diários</span>
+              </div>
+              <p className={`text-[11px] leading-relaxed ${mutedText}`}>
+                O Fundo Motoboy remunera as cotas com <strong>juros compostos creditados diariamente</strong>.
+                Diferente de bancos tradicionais que só pagam após 30 dias (aniversário da poupança), no Fundo Motoboy seu saldo cresce a cada 24 horas, inclusive em sábados, domingos e feriados.
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                <div className={`p-2 rounded-xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <div className={`text-[10px] ${mutedText}`}>Poupança Tradicional</div>
+                  <div className={`text-xs font-bold mt-0.5 ${secondaryText}`}>~0,55% /mês</div>
+                </div>
+                <div className={`p-2 rounded-xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <div className={`text-[10px] ${mutedText}`}>CDI de Banco 100%</div>
+                  <div className={`text-xs font-bold mt-0.5 ${secondaryText}`}>~0,85% /mês</div>
+                </div>
+                <div className={`p-2 rounded-xl border ${isDark ? 'bg-emerald-500/15 border-emerald-500/40' : 'bg-emerald-50 border-emerald-300'}`}>
+                  <div className={`text-[10px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-800'}`}>Fundo Motoboy</div>
+                  <div className={`text-xs font-black mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>1,65% a 2,48% /mês</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabela de Fundos Ativos e Rendimentos */}
+            {fundInvestmentsBreakdown.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <h4 className={`text-xs font-black uppercase tracking-wider ${primaryText}`}>
+                  Rendimentos Acumulados por Fundo Ativo
+                </h4>
+                <div className="flex flex-col gap-2">
+                  {fundInvestmentsBreakdown.map(fund => {
+                    return (
+                      <div
+                        key={fund.planId}
+                        className={`p-3 rounded-xl border ${surfaceSubtle} ${dividerBorder} flex items-center justify-between gap-3 text-xs`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-xl">{fund.planIcon}</span>
+                          <div>
+                            <div className={`font-black ${primaryText}`}>{fund.planName}</div>
+                            <div className={`text-[10px] ${mutedText}`}>
+                              {fund.totalShares} cotas · Aplicado: {fmtBRL(fund.totalInvested)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                            + {fmtBRL(fund.currentYield)}
+                          </div>
+                          <div className={`text-[10px] font-semibold ${secondaryText}`}>
+                            Total: {fmtBRL(fund.totalPatrimony)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Botão de Fechar */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowYieldBreakdownModal(false)}
+                className="w-full py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black transition-all cursor-pointer"
+              >
+                Entendido / Fechar Extrato
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. MODAL DE SOLICITAÇÃO DE RESGATE / SAQUE VIA PIX (ONE-CLICK NO CARD SAQUE) */}
+      {/* ========================================================================= */}
+      {showWithdrawalModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowWithdrawalModal(false)}
+        >
+          <div
+            className={`w-full max-w-xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-400 flex items-center justify-center shrink-0">
+                  <Unlock className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
+                    Solicitação de Resgate de Investimentos (Saque)
+                  </h3>
+                  <p className={`text-xs ${mutedText}`}>
+                    Resgate suas cotas liberadas e receba via PIX na sua conta bancária
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawalModal(false)}
+                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-sky-500`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* SE RESGATE FOI CONCLUÍDO: COMPROVANTE */}
+            {withdrawReceipt ? (
+              <div className="flex flex-col gap-3 py-2 animate-in zoom-in-95 duration-200">
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/40 text-center flex flex-col items-center gap-2">
+                  <div className="w-12 h-12 rounded-full bg-emerald-500 text-black flex items-center justify-center text-xl font-black">
+                    <CheckCircle2 className="w-7 h-7 stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <h4 className={`text-base font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                      Solicitação de Resgate Enviada ao Administrador!
+                    </h4>
+                    <p className={`text-xs mt-1 ${mutedText}`}>
+                      Protocolo: <strong className={primaryText}>{withdrawReceipt.id}</strong> · {withdrawReceipt.date}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Detalhes do comprovante */}
+                <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2.5 text-xs`}>
+                  <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
+                    <span className={mutedText}>Valor Total a Receber via PIX:</span>
+                    <span className={`text-base font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                      {fmtBRL(withdrawReceipt.amount)}
+                    </span>
+                  </div>
+                  <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
+                    <span className={mutedText}>Quantidade de Cotas Resgatadas:</span>
+                    <span className={`font-black ${primaryText}`}>
+                      {withdrawReceipt.shares} {withdrawReceipt.shares === 1 ? 'cota' : 'cotas'}
+                    </span>
+                  </div>
+                  <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
+                    <span className={mutedText}>Chave PIX de Recebimento:</span>
+                    <span className="font-mono font-black text-[#FF6A1A]">
+                      {withdrawReceipt.pixKey} ({withdrawReceipt.pixType.toUpperCase()})
+                    </span>
+                  </div>
+                  <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
+                    <span className={mutedText}>Titular da Conta:</span>
+                    <span className={`font-bold ${secondaryText}`}>{withdrawReceipt.holder}</span>
+                  </div>
+                  <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
+                    <span className={mutedText}>Banco / Instituição:</span>
+                    <span className={`font-bold ${secondaryText}`}>{withdrawReceipt.bank}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={mutedText}>Previsão de Pagamento:</span>
+                    <span className={`font-black ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>Até 24h úteis (D+0/D+1)</span>
+                  </div>
+                </div>
+
+                <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
+                  isDark ? 'bg-sky-500/10 border-sky-500/30 text-sky-300' : 'bg-sky-50 border-sky-300 text-sky-900'
+                }`}>
+                  <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
+                  <span>
+                    O Administrador recebeu uma notificação prioritária no sistema. O comprovante PIX ficará disponível assim que a transferência for efetivada.
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowWithdrawalModal(false)}
+                  className="w-full py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black transition-all cursor-pointer mt-1"
+                >
+                  Concluir / Fechar
+                </button>
+              </div>
+            ) : (
+              /* FORMULÁRIO DE SOLICITAÇÃO DE RESGATE */
+              <form onSubmit={handleExecuteDedicatedWithdrawal} className="flex flex-col gap-3.5">
+                {/* Banner de Saldo Disponível */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className={`p-3 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/40' : 'border-sky-300 shadow-xs'}`}>
+                    <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                      Disponível para Saque
+                    </span>
+                    <span className={`text-lg font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                      {fmtBRL(portfolioStats.availableToWithdraw)}
+                    </span>
+                    <span className={`text-[10px] block ${mutedText}`}>Carência cumprida</span>
+                  </div>
+
+                  <div className={`p-3 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-amber-500/40' : 'border-amber-300 shadow-xs'}`}>
+                    <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                      Em Carência de 72h
+                    </span>
+                    <span className={`text-lg font-black tabular-nums ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                      {fmtBRL(portfolioStats.lockedInGracePeriod)}
+                    </span>
+                    <span className={`text-[10px] block ${mutedText}`}>Bloqueado temporariamente</span>
+                  </div>
+                </div>
+
+                {portfolioStats.availableToWithdraw <= 0 ? (
+                  <div className={`p-4 rounded-2xl border text-center ${surfaceSubtle} space-y-2 ${
+                    isDark ? 'border-amber-500/40' : 'border-amber-300'
+                  }`}>
+                    <div className="w-10 h-10 rounded-full bg-amber-500/15 text-amber-500 flex items-center justify-center mx-auto text-lg">
+                      <Lock className="w-5 h-5" />
+                    </div>
+                    <div className={`text-xs font-black ${primaryText}`}>
+                      Você ainda não tem cotas com carência cumprida para saque imediato.
+                    </div>
+                    <p className={`text-[11px] max-w-sm mx-auto ${mutedText}`}>
+                      Cada cota comprada possui um prazo de carência mínima de <strong>3 dias (72 horas)</strong> para alocação dos rendimentos. Assim que esse prazo terminar, o botão de resgate será liberado.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowWithdrawalModal(false);
+                        setShowFundRulesModal(true);
+                      }}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer mt-1 ${
+                        isDark ? 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10' : 'text-amber-800 border-amber-300 hover:bg-amber-100 bg-white shadow-xs'
+                      }`}
+                    >
+                      Ver Regras de Liquidez e Prazos ↗
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* 1. SELEÇÃO DE COTAS A RESGATAR */}
+                    <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-2.5`}>
+                      <label className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
+                        <Wallet className="w-4 h-4 text-[#FF6A1A]" />
+                        <span>1. Selecione o que deseja resgatar</span>
+                      </label>
+
+                      <div className="flex flex-col gap-2">
+                        {/* Opção Resgatar Tudo */}
+                        <label
+                          className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                            withdrawTargetId === 'all_eligible'
+                              ? isDark
+                                ? 'bg-sky-500/15 border-sky-500'
+                                : 'bg-sky-50 border-sky-500 shadow-xs'
+                              : isDark
+                              ? 'border-slate-700/60 hover:border-slate-600'
+                              : 'border-slate-300 hover:border-slate-400 bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <input
+                              type="radio"
+                              name="withdrawTarget"
+                              checked={withdrawTargetId === 'all_eligible'}
+                              onChange={() => setWithdrawTargetId('all_eligible')}
+                              className="accent-sky-500"
+                            />
+                            <div>
+                              <div className={`text-xs font-black ${primaryText}`}>
+                                Resgatar TODAS as Cotas Liberadas
+                              </div>
+                              <div className={`text-[10px] ${mutedText}`}>
+                                Saque total do saldo liberado da sua carteira
+                              </div>
+                            </div>
+                          </div>
+                          <span className={`text-xs font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                            {fmtBRL(portfolioStats.availableToWithdraw)}
+                          </span>
+                        </label>
+
+                        {/* Cotas individuais liberadas */}
+                        {positions
+                          .filter(
+                            p =>
+                              p.status === 'active' &&
+                              diffDaysBetweenIso(p.createdAtIso, todayIso) >= p.minWithdrawDays
+                          )
+                          .map(pos => {
+                            const elapsed = Math.max(1, diffDaysBetweenIso(pos.createdAtIso, todayIso));
+                            const { finalAmount, yieldAmount } = calculateCompoundYield(
+                              pos.investedAmount,
+                              pos.dailyRatePct,
+                              elapsed
+                            );
+                            const isSelected = withdrawTargetId === pos.id;
+
+                            return (
+                              <label
+                                key={pos.id}
+                                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                                  isSelected
+                                    ? isDark
+                                      ? 'bg-sky-500/15 border-sky-500'
+                                      : 'bg-sky-50 border-sky-500 shadow-xs'
+                                    : isDark
+                                    ? 'border-slate-700/60 hover:border-slate-600'
+                                    : 'border-slate-300 hover:border-slate-400 bg-white'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <input
+                                    type="radio"
+                                    name="withdrawTarget"
+                                    checked={isSelected}
+                                    onChange={() => setWithdrawTargetId(pos.id)}
+                                    className="accent-sky-500"
+                                  />
+                                  <div>
+                                    <div className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
+                                      <span>{pos.planIcon}</span>
+                                      <span>{pos.planName}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.2 rounded ${
+                                        isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-200 text-slate-700'
+                                      }`}>
+                                        {pos.shares} {pos.shares === 1 ? 'cota' : 'cotas'}
+                                      </span>
+                                    </div>
+                                    <div className={`text-[10px] ${mutedText}`}>
+                                      Aplicado: {fmtBRL(pos.investedAmount)} · Lucro: +{fmtBRL(yieldAmount)}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span className={`text-xs font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                                  {fmtBRL(finalAmount)}
+                                </span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+
+                    {/* 2. CHAVE PIX DE DESTINO */}
+                    <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-2.5`}>
+                      <label className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
+                        <QrCode className="w-4 h-4 text-[#FF6A1A]" />
+                        <span>2. Onde deseja receber seu PIX?</span>
+                      </label>
+
+                      {/* Tipo de chave */}
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { id: 'cpf', label: 'CPF/CNPJ' },
+                          { id: 'celular', label: 'Celular' },
+                          { id: 'email', label: 'E-mail' },
+                          { id: 'aleatoria', label: 'Aleatória' },
+                        ].map(t => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setWithdrawPixType(t.id as any)}
+                            className={`py-1.5 text-[11px] font-bold rounded-xl border cursor-pointer transition-all ${
+                              withdrawPixType === t.id
+                                ? isDark
+                                  ? 'bg-sky-500 text-black border-sky-400'
+                                  : 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                                : isDark
+                                ? 'border-slate-700/60 text-slate-300 hover:border-slate-500'
+                                : 'border-slate-300 text-slate-700 hover:border-slate-400 bg-white shadow-xs'
+                            }`}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Input da Chave */}
+                      <div>
+                        <input
+                          type="text"
+                          required
+                          value={withdrawPixKeyInput}
+                          onChange={e => setWithdrawPixKeyInput(e.target.value)}
+                          placeholder={
+                            withdrawPixType === 'cpf'
+                              ? 'Digite seu CPF (apenas números)'
+                              : withdrawPixType === 'celular'
+                              ? 'Digite seu celular com DDD (ex: 11999998888)'
+                              : withdrawPixType === 'email'
+                              ? 'Digite seu e-mail do PIX'
+                              : 'Cole a chave aleatória EVP'
+                          }
+                          className={`w-full px-3 py-2.5 rounded-xl text-xs font-mono font-bold outline-none ${inputSurface}`}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                        <div>
+                          <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                            Nome do Titular da Conta
+                          </label>
+                          <input
+                            type="text"
+                            value={withdrawAccountHolder}
+                            onChange={e => setWithdrawAccountHolder(e.target.value)}
+                            placeholder="Seu nome completo"
+                            className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                          />
+                        </div>
+                        <div>
+                          <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                            Banco / Instituição (Opcional)
+                          </label>
+                          <input
+                            type="text"
+                            value={withdrawBankName}
+                            onChange={e => setWithdrawBankName(e.target.value)}
+                            placeholder="Ex: Nubank, Inter, Caixa..."
+                            className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Alerta de erro se houver */}
+                    {withdrawError && (
+                      <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                        <span>{withdrawError}</span>
+                      </div>
+                    )}
+
+                    {/* Aviso de Confirmação & Alta Prioridade */}
+                    <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
+                      isDark ? 'bg-sky-500/10 border-sky-500/30 text-sky-300' : 'bg-sky-50 border-sky-300 text-sky-900'
+                    }`}>
+                      <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
+                      <span>
+                        <strong>Aviso de Notificação Instantânea:</strong> Ao enviar, o <strong>Administrador recebe um alerta prioritário imediato</strong> com sua chave PIX para efetuar o pagamento.
+                      </span>
+                    </div>
+
+                    {/* Botões do Formulário */}
+                    <div className="flex flex-col sm:flex-row gap-2 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowWithdrawalModal(false)}
+                        className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} ${secondaryText}`}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-sky-500 hover:bg-sky-400 text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20"
+                      >
+                        <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
+                        <span>Confirmar Solicitação de Resgate PIX</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. MODAL / TELA DE REGRAS DO FUNDO, SAQUE & LIQUIDEZ (ONE-CLICK NO CARD 4) */}
+      {/* ========================================================================= */}
+      {showFundRulesModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowFundRulesModal(false)}
+        >
+          <div
+            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
+                  <Clock className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
+                    Regulamento, Prazos de Saque & Liquidez do Fundo
+                  </h3>
+                  <p className={`text-xs ${mutedText}`}>
+                    Entenda detalhadamente como funciona a carência mínima de 72h, liquidação PIX e garantias
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFundRulesModal(false)}
+                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-amber-500`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Grid de Regras em Destaque */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {/* Regra 1: Carência Mínima */}
+              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-amber-500/30' : 'border-amber-200 shadow-xs'} flex flex-col gap-2`}>
+                <div className={`flex items-center gap-2 font-black ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                  <Lock className="w-4 h-4" />
+                  <span>1. Prazo de Carência Mínima (72h / 3 Dias)</span>
+                </div>
+                <p className={`text-[11px] leading-relaxed ${mutedText}`}>
+                  Cada aporte confirmado possui um período mínimo de carência de <strong>3 dias (72 horas)</strong>.
+                  Esse prazo é indispensável para viabilizar as operações de rentabilidade de até <strong>210% do CDI</strong> do Fundo Coletivo de Entregadores. Após as 72h, o saque fica liberado instantaneamente.
+                </p>
+              </div>
+
+              {/* Regra 2: Liquidação PIX */}
+              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/30' : 'border-sky-200 shadow-xs'} flex flex-col gap-2`}>
+                <div className={`flex items-center gap-2 font-black ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                  <ArrowUpRight className="w-4 h-4" />
+                  <span>2. Liquidação via PIX (D+0 / D+1)</span>
+                </div>
+                <p className={`text-[11px] leading-relaxed ${mutedText}`}>
+                  Ao solicitar o resgate pelo aplicativo, o Administrador recebe uma <strong>notificação de alta prioridade</strong> em tempo real. Os pedidos solicitados em horário comercial são processados no mesmo dia (D+0) ou em até 24h úteis (D+1).
+                </p>
+              </div>
+
+              {/* Regra 3: Juros Diários */}
+              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-emerald-500/30' : 'border-emerald-200 shadow-xs'} flex flex-col gap-2`}>
+                <div className={`flex items-center gap-2 font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                  <TrendingUp className="w-4 h-4" />
+                  <span>3. Rendimento Diário Composto</span>
+                </div>
+                <p className={`text-[11px] leading-relaxed ${mutedText}`}>
+                  O rendimento incide diariamente sobre o saldo aplicado + lucros acumulados. Você ganha todo dia (inclusive sábados, domingos e feriados), sem o travamento de 30 dias característico da poupança convencional.
+                </p>
+              </div>
+
+              {/* Regra 4: Resgate Parcial ou Total */}
+              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200 shadow-xs'} flex flex-col gap-2`}>
+                <div className="flex items-center gap-2 text-[#FF6A1A] font-black">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>4. Autonomia de Resgate Parcial</span>
+                </div>
+                <p className={`text-[11px] leading-relaxed ${mutedText}`}>
+                  Você não precisa resgatar todo o seu investimento para cobrir um imprevisto! Pode sacar uma cota específica para trocar o óleo ou pneu da moto e manter o restante rendendo normalmente.
+                </p>
+              </div>
+            </div>
+
+            {/* TABELA COMPARATIVA DE TODOS OS PLANOS */}
+            <div className="flex flex-col gap-2 mt-1">
+              <h4 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${primaryText}`}>
+                <FileText className="w-4 h-4 text-[#FF6A1A]" />
+                <span>Tabela Comparativa de Cotas & Liquidez do Fundo</span>
+              </h4>
+
+              <div className={`overflow-x-auto rounded-2xl border ${cardBorder}`}>
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className={`${isDark ? 'bg-slate-900/90 text-slate-300 border-slate-800' : 'bg-slate-100 text-slate-700 border-slate-200'} text-[10px] uppercase font-black border-b`}>
+                      <th className="p-3">Cota / Fundo</th>
+                      <th className="p-3 text-center">Valor Cota</th>
+                      <th className="p-3 text-center">Taxa Diária</th>
+                      <th className="p-3 text-center">Taxa Mensal</th>
+                      <th className="p-3 text-center">Carência Saque</th>
+                      <th className="p-3 text-center">Vencimento</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${isDark ? 'divide-slate-800/60' : 'divide-slate-200'} font-semibold`}>
+                    {fundPlans.map(plan => (
+                      <tr key={plan.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} transition-colors`}>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{plan.icon}</span>
+                            <div>
+                              <div className={`font-black ${primaryText}`}>{plan.name}</div>
+                              <div className={`text-[10px] ${mutedText}`}>{plan.badge}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3 text-center font-black text-[#FF6A1A]">
+                          {fmtBRL(plan.sharePrice)}
+                        </td>
+                        <td className={`p-3 text-center ${isDark ? 'text-emerald-400 font-bold' : 'text-emerald-700 font-black'}`}>
+                          {plan.dailyRatePct}% /dia
+                        </td>
+                        <td className={`p-3 text-center ${isDark ? 'text-emerald-400 font-black' : 'text-emerald-700 font-black'}`}>
+                          {plan.monthlyRatePct}% /mês
+                        </td>
+                        <td className={`p-3 text-center ${isDark ? 'text-amber-400 font-bold' : 'text-amber-700 font-black'}`}>
+                          {plan.minWithdrawDays} Dias (72h)
+                        </td>
+                        <td className={`p-3 text-center ${isDark ? 'text-sky-400 font-bold' : 'text-sky-700 font-black'}`}>
+                          {plan.maturityDays} Dias
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Dúvidas Frequentes FAQ */}
+            <div className={`p-4 rounded-2xl ${surfaceSubtle} border ${borderSubtle} space-y-2.5 text-xs`}>
+              <div className={`font-black flex items-center gap-1.5 ${primaryText}`}>
+                <HelpCircle className="w-4 h-4 text-[#FF6A1A]" />
+                <span>Dúvidas Frequentes sobre o Fundo do Motoboy</span>
+              </div>
+
+              <div className="space-y-2 text-[11px]">
+                <div>
+                  <strong className={`block ${secondaryText}`}>Posso sacar antes dos 3 dias (72h)?</strong>
+                  <span className={mutedText}>
+                    Não. O sistema bloqueia saques antecipados para preservar o rendimento acordado das operações coletivas.
+                  </span>
+                </div>
+                <div>
+                  <strong className={`block ${secondaryText}`}>Tem desconto de imposto ou taxas ocultas?</strong>
+                  <span className={mutedText}>
+                    Zero taxas administrativas para entregadores parceiros. O valor líquido acumulado é o valor creditado na sua conta.
+                  </span>
+                </div>
+                <div>
+                  <strong className={`block ${secondaryText}`}>Quem realiza a transferência do meu PIX?</strong>
+                  <span className={mutedText}>
+                    A tesouraria da plataforma / Administrador do Fundo recebe o alerta em tempo real e realiza o PIX diretamente para a chave informada.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Botão de Fechar */}
+            <div className={`flex gap-2 pt-1 border-t ${borderSubtle}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFundRulesModal(false);
+                  setShowWithdrawalModal(true);
+                }}
+                className="flex-1 py-3 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-400 text-black transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>Ir para Solicitação de Saque</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFundRulesModal(false)}
+                className={`py-3 px-5 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} ${secondaryText} hover:border-slate-400`}
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}
