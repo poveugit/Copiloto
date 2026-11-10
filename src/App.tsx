@@ -6010,9 +6010,9 @@ export default function App() {
                       </div>
 
                       {/* Barra de Cobertura das Obrigações do Mês */}
-                      <div className={`mt-4 p-3 rounded-xl ${surfaceSubtle} border border-slate-700/40`}>
+                      <div className={`mt-4 p-3 rounded-xl ${surfaceSubtle} ${isDark ? 'border border-slate-700/40' : 'border border-slate-300 shadow-2xs'}`}>
                         <div className="flex items-center justify-between text-[11px] font-bold mb-1.5 flex-wrap gap-1">
-                          <span className="flex items-center gap-1.5 text-slate-300">
+                          <span className={`flex items-center gap-1.5 ${isDark ? 'text-slate-200' : 'text-slate-900 font-black'}`}>
                             <Shield className="w-3.5 h-3.5 text-[#FF6A1A]" />
                             <span>Cobertura das Reservas do Mês</span>
                           </span>
@@ -7076,16 +7076,15 @@ export default function App() {
             {/* Header & Action Bar */}
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} flex flex-col gap-3.5 sm:gap-4`}>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Wrench className="w-5 h-5 text-[#FF6A1A]" />
+                <div className="py-1">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center shrink-0">
+                      <Wrench className="w-5 h-5 stroke-[2.5]" />
+                    </div>
                     <h1 className="text-lg sm:text-2xl font-black tracking-tight">
                       Garagem & Manutenção da Moto (100% Editável)
                     </h1>
                   </div>
-                  <p className={`text-xs sm:text-sm mt-1 leading-relaxed ${mutedText}`}>
-                    Toque em <span className="text-[#FF6A1A] font-bold">Editar Card</span> em qualquer item para personalizar nome, ícone, KM da troca, intervalo, alerta % e dados de combustível.
-                  </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
                   <button
@@ -7696,12 +7695,11 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => startEditMaintenanceCard(item)}
-                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                                className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] min-w-[38px] sm:min-w-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
                                 title="Editar dados deste card"
+                                aria-label="Editar card de manutenção"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">Editar Card</span>
-                                <span className="sm:hidden">Editar</span>
+                                <Edit3 className="w-4 h-4" />
                               </button>
                             </div>
                           </div>
