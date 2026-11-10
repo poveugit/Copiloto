@@ -144,6 +144,7 @@ import {
 import { RelatorioMeiModal } from './components/RelatorioMeiModal';
 import { MetaReversaModal } from './components/MetaReversaModal';
 import { InvestimentosScreen } from './components/InvestimentosScreen';
+import { QuickCalculatorModal } from './components/QuickCalculatorModal';
 import {
   getNotificationPermission,
   initNativeNotifications,
@@ -865,6 +866,10 @@ export default function App() {
     icon: '🏠',
     isActive: true,
   });
+  const [showNewBikeCatInput, setShowNewBikeCatInput] = useState<boolean>(false);
+  const [newBikeCatName, setNewBikeCatName] = useState<string>('');
+  const [showNewHouseholdCatInput, setShowNewHouseholdCatInput] = useState<boolean>(false);
+  const [newHouseholdCatName, setNewHouseholdCatName] = useState<string>('');
   const [selectedFinanceMonth, setSelectedFinanceMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -899,6 +904,28 @@ export default function App() {
   const [selectedKotlinFileIndex, setSelectedKotlinFileIndex] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [showReserveBreakdown, setShowReserveBreakdown] = useState<boolean>(false);
+
+  // ================= CALCULADORA INTEGRADA PARA CAMPOS DE VALOR E DESPESAS =================
+  const [quickCalcState, setQuickCalcState] = useState<{
+    isOpen: boolean;
+    title: string;
+    initialValue: string | number;
+    onApply: (val: string) => void;
+  }>({
+    isOpen: false,
+    title: 'Calculadora de Valores',
+    initialValue: '',
+    onApply: () => {},
+  });
+
+  const openQuickCalculator = useCallback((title: string, initialValue: string | number, onApply: (val: string) => void) => {
+    setQuickCalcState({
+      isOpen: true,
+      title: title || 'Calculadora Rápida',
+      initialValue: initialValue ?? '',
+      onApply,
+    });
+  }, []);
 
   // ================= AUTHENTICATION (LOGIN, CADASTRO, REDEFINIR SENHA & LEMBRAR DADOS) STATE =================
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getActiveSessionUser());
@@ -2063,8 +2090,30 @@ export default function App() {
   };
 
   // ================= BIKE / DESPESAS DA MOTO HANDLERS =================
+  const handleAddBikeCategory = () => {
+    const trimmed = newBikeCatName.trim();
+    if (!trimmed) return;
+    const existing = (dbState.customCategories || []).find(
+      c => c.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+      setBikeDraft(prev => ({ ...prev, category: existing.id as any }));
+      setNewBikeCatName('');
+      setShowNewBikeCatInput(false);
+      return;
+    }
+    const id = 'cat_' + Date.now();
+    const nextCats = [...(dbState.customCategories || []), { id, name: trimmed }];
+    persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
+    setBikeDraft(prev => ({ ...prev, category: id as any }));
+    setNewBikeCatName('');
+    setShowNewBikeCatInput(false);
+  };
+
   const openNewBikeExpenseModal = () => {
     setEditingBikeItem(null);
+    setShowNewBikeCatInput(false);
+    setNewBikeCatName('');
     const today = todayStr();
     setBikeDraft({
       id: 'bike_' + Date.now(),
@@ -2084,6 +2133,8 @@ export default function App() {
   };
 
   const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
+    setShowNewBikeCatInput(false);
+    setNewBikeCatName('');
     const rawList =
       Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
         ? dbState.bikeExpenses
@@ -2283,8 +2334,30 @@ export default function App() {
   };
 
   // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
+  const handleAddHouseholdCategory = () => {
+    const trimmed = newHouseholdCatName.trim();
+    if (!trimmed) return;
+    const existing = (dbState.customCategories || []).find(
+      c => c.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+      setHouseholdDraft(prev => ({ ...prev, category: existing.id as any }));
+      setNewHouseholdCatName('');
+      setShowNewHouseholdCatInput(false);
+      return;
+    }
+    const id = 'cat_h_' + Date.now();
+    const nextCats = [...(dbState.customCategories || []), { id, name: trimmed }];
+    persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
+    setHouseholdDraft(prev => ({ ...prev, category: id as any }));
+    setNewHouseholdCatName('');
+    setShowNewHouseholdCatInput(false);
+  };
+
   const openNewHouseholdExpenseModal = () => {
     setEditingHouseholdItem(null);
+    setShowNewHouseholdCatInput(false);
+    setNewHouseholdCatName('');
     const today = todayStr();
     setHouseholdDraft({
       id: 'house_' + Date.now(),
@@ -2305,6 +2378,8 @@ export default function App() {
 
   const openEditHouseholdExpenseModal = (item: HouseholdExpenseItem) => {
     setEditingHouseholdItem(item);
+    setShowNewHouseholdCatInput(false);
+    setNewHouseholdCatName('');
     const today = todayStr();
     const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
     const intDays = Math.max(1, Number(item.intervalDays) || 30);
@@ -5417,6 +5492,17 @@ export default function App() {
             )}
           </div>
 
+          {/* Botão Global da Calculadora Rápida */}
+          <button
+            type="button"
+            onClick={() => openQuickCalculator('Calculadora Rápida do Motoboy', '', () => {})}
+            aria-label="Calculadora Rápida"
+            title="Abrir Calculadora Inteligente"
+            className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center border ${surfaceSubtle} text-[#FF6A1A] hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10`}
+          >
+            <Calculator className="w-4 h-4 shrink-0" />
+          </button>
+
           {/* Botão de Conta / Login Rápido */}
           <button
             type="button"
@@ -6008,6 +6094,394 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+
+                      {/* ========================================================================= */}
+                      {/* VENCIMENTO DE HOJE (CONTAS DA CASA) & IMPACTO NO SALDO ATUAL DO MOTOBOY  */}
+                      {/* ========================================================================= */}
+                      {(() => {
+                        const today = todayStr();
+                        const curDay = new Date().getDate();
+                        const curMonthStr = today.slice(0, 7);
+
+                        const rawHouseList: HouseholdExpenseItem[] = Array.isArray(dbState.householdExpenses)
+                          ? dbState.householdExpenses
+                          : DEFAULT_HOUSEHOLD_EXPENSES;
+                        const activeHouse = rawHouseList.filter(h => h.isActive !== false);
+
+                        // Verifica se o item já foi pago neste mês em dbState.expenses ou se tem lastPaidDate neste mês
+                        const isHousePaidThisMonth = (h: HouseholdExpenseItem) => {
+                          const inExpenses = dbState.expenses.some(e => {
+                            if (!e.date || !e.date.startsWith(curMonthStr)) return false;
+                            return (
+                              e.householdExpenseId === h.id ||
+                              (e.description && e.description.toLowerCase().includes(h.name.toLowerCase())) ||
+                              (e.category && e.category.toLowerCase() === h.name.toLowerCase())
+                            );
+                          });
+                          if (inExpenses) return true;
+                          if (h.lastPaidDate && h.lastPaidDate.startsWith(curMonthStr)) return true;
+                          return false;
+                        };
+
+                        // Contas da casa com vencimento HOJE (dia do mês ou status today)
+                        const houseDueToday = activeHouse.filter(h => {
+                          const due = getExpenseDueInfo(h);
+                          const day = Number(h.dueDay) || 10;
+                          return due.status === 'today' || day === curDay;
+                        });
+
+                        const pendingHouseDueToday = houseDueToday.filter(h => !isHousePaidThisMonth(h));
+                        const paidHouseDueToday = houseDueToday.filter(h => isHousePaidThisMonth(h));
+
+                        const totalAmountDueToday = pendingHouseDueToday.reduce(
+                          (sum, h) => sum + (Number(h.monthlyAmount) || Number(h.totalCost) || 0),
+                          0
+                        );
+
+                        const hasPendingDueToday = pendingHouseDueToday.length > 0;
+                        const hasPaidDueToday = paidHouseDueToday.length > 0;
+
+                        // Próximo vencimento mais próximo caso não haja conta vencendo hoje
+                        const upcomingBills = activeHouse
+                          .map(h => {
+                            const due = getExpenseDueInfo(h);
+                            const day = Number(h.dueDay) || 10;
+                            const daysUntil = day >= curDay ? day - curDay : (30 - curDay) + day;
+                            return {
+                              item: h,
+                              daysUntil: due.daysRemaining > 0 ? due.daysRemaining : (daysUntil === 0 ? 30 : daysUntil),
+                              amount: Number(h.monthlyAmount) || Number(h.totalCost) || 0,
+                              isPaid: isHousePaidThisMonth(h),
+                            };
+                          })
+                          .filter(x => !x.isPaid && x.daysUntil > 0)
+                          .sort((a, b) => a.daysUntil - b.daysUntil);
+
+                        const nextUpcomingBill = upcomingBills[0] || null;
+
+                        // Cálculos de saldo vs. vencimento de hoje
+                        const isBalanceSufficient = curBalance >= totalAmountDueToday && totalAmountDueToday > 0;
+                        const sobraSaldo = curBalance - totalAmountDueToday;
+                        const faltaCompletar = Math.max(0, totalAmountDueToday - Math.max(0, curBalance));
+                        const coveragePct = totalAmountDueToday > 0
+                          ? Math.min(100, Math.max(0, Math.round((Math.max(0, curBalance) / totalAmountDueToday) * 100)))
+                          : 0;
+
+                        return (
+                          <div className={`mt-3.5 p-3.5 sm:p-4 rounded-2xl border-2 transition-all shadow-md ${
+                            hasPendingDueToday
+                              ? isBalanceSufficient
+                                ? isDark ? 'bg-[#0e1713] border-emerald-500 text-slate-100' : 'bg-white border-emerald-500 text-slate-900'
+                                : isDark ? 'bg-[#15121b] border-rose-500 text-slate-100' : 'bg-white border-rose-500 text-slate-900'
+                              : hasPaidDueToday
+                              ? isDark ? 'bg-[#0f1118] border-emerald-500/50 text-slate-200' : 'bg-white border-emerald-400 text-slate-800'
+                              : isDark ? 'bg-[#0f1118] border-slate-700 text-slate-200' : 'bg-white border-slate-300 text-slate-800'
+                          }`}>
+                            {/* Header do Bloco */}
+                            <div className="flex items-center justify-between gap-2 flex-wrap mb-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
+                                  hasPendingDueToday
+                                    ? isBalanceSufficient
+                                      ? 'bg-emerald-600 text-white border border-emerald-700'
+                                      : 'bg-rose-600 text-white border border-rose-700 animate-pulse'
+                                    : 'bg-slate-800 text-slate-300'
+                                }`}>
+                                  <Home className="w-4 h-4 stroke-[2.5]" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs sm:text-sm font-black tracking-tight">
+                                      {hasPendingDueToday
+                                        ? `Vencimento de Hoje (Dia ${curDay})`
+                                        : hasPaidDueToday
+                                        ? `Contas de Hoje (Dia ${curDay})`
+                                        : `Vencimentos da Casa (Dia ${curDay})`}
+                                    </span>
+                                    {hasPendingDueToday ? (
+                                      isBalanceSufficient ? (
+                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs border border-emerald-700">
+                                          ✅ Saldo Suficiente
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-xs border border-rose-700 animate-pulse">
+                                          🚨 Vence Hoje · Falta Completar
+                                        </span>
+                                      )
+                                    ) : hasPaidDueToday ? (
+                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs">
+                                        ✅ Paga neste Mês
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                                        Nenhuma conta hoje
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setShowHouseholdModal(true)}
+                                className="text-[11px] font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
+                              >
+                                <span>Gerenciar contas da casa</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Conteúdo Se Tem Conta Pendente Vencendo Hoje */}
+                            {hasPendingDueToday ? (
+                              <div className="space-y-3">
+                                {/* Lista de Contas que Vencem Hoje */}
+                                <div className="flex flex-wrap gap-2">
+                                  {pendingHouseDueToday.map(h => (
+                                    <div
+                                      key={h.id}
+                                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-2 shadow-xs ${
+                                        isDark
+                                          ? 'bg-[#1e1319] border-rose-500/80 text-white'
+                                          : 'bg-rose-50 border-rose-500 text-slate-900'
+                                      }`}
+                                    >
+                                      <span className="text-base">{h.icon || '🏠'}</span>
+                                      <span className="font-black">{h.name}</span>
+                                      <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums bg-white dark:bg-black/50 px-1.5 py-0.5 rounded border border-rose-300 dark:border-rose-700">
+                                        {Number(h.monthlyAmount) > 0 ? fmtMoney(Number(h.monthlyAmount)) : 'A definir'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* Cards comparativos: Saldo Atual vs. Vencimento de Hoje vs. Sobra / Falta (SEM TRANSPARÊNCIA) */}
+                                <div className="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
+                                  {/* 1. Saldo Atual (Fundo Sólido Opaque) */}
+                                  <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
+                                    isDark ? 'bg-[#090b12] border-slate-700' : 'bg-slate-100 border-slate-300'
+                                  }`}>
+                                    <div className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-400">
+                                      1. Saldo Atual
+                                    </div>
+                                    <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
+                                      curBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                    }`}>
+                                      {fmtMoney(curBalance)}
+                                    </div>
+                                  </div>
+
+                                  {/* 2. Vencimento de Hoje (Fundo Sólido Opaque com Vermelho Nítido) */}
+                                  <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
+                                    isDark ? 'bg-[#090b12] border-rose-500/80' : 'bg-rose-50 border-rose-400'
+                                  }`}>
+                                    <div className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400">
+                                      2. Vence Hoje
+                                    </div>
+                                    <div className="text-sm sm:text-base font-black text-rose-600 dark:text-rose-400 tabular-nums mt-1">
+                                      {totalAmountDueToday > 0 ? fmtMoney(totalAmountDueToday) : 'R$ 0,00'}
+                                    </div>
+                                  </div>
+
+                                  {/* 3. O Que Falta Pagar / O Que Vai Ficar (SEM NENHUMA TRANSPARÊNCIA - 100% SÓLIDO) */}
+                                  <div className={`p-2.5 rounded-xl border-2 shadow-md ${
+                                    isBalanceSufficient
+                                      ? isDark
+                                        ? 'bg-[#0b2417] border-emerald-500 text-white'
+                                        : 'bg-emerald-100 border-emerald-600 text-emerald-950'
+                                      : isDark
+                                        ? 'bg-[#2b0d18] border-rose-500 text-white'
+                                        : 'bg-rose-100 border-rose-600 text-rose-950'
+                                  }`}>
+                                    <div className={`text-[10px] font-black uppercase tracking-wider ${
+                                      isBalanceSufficient
+                                        ? 'text-emerald-700 dark:text-emerald-300'
+                                        : 'text-rose-700 dark:text-rose-300'
+                                    }`}>
+                                      {isBalanceSufficient ? '3. Vai Ficar (Sobra)' : '3. Falta Pagar'}
+                                    </div>
+                                    <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
+                                      isBalanceSufficient
+                                        ? 'text-emerald-600 dark:text-emerald-300'
+                                        : 'text-rose-600 dark:text-rose-300'
+                                    }`}>
+                                      {isBalanceSufficient ? fmtMoney(sobraSaldo) : fmtMoney(faltaCompletar)}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Barra de Progresso e Mensagem de Diagnóstico */}
+                                {totalAmountDueToday > 0 ? (
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between text-[11px] font-black">
+                                      <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>
+                                        Cobertura da conta com o Saldo Atual:
+                                      </span>
+                                      <span className={`tabular-nums ${isBalanceSufficient ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                        {coveragePct}% coberto
+                                      </span>
+                                    </div>
+                                    <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                      <div
+                                        className={`h-full rounded-full transition-all duration-500 ${
+                                          isBalanceSufficient ? 'bg-emerald-500' : 'bg-rose-500'
+                                        }`}
+                                        style={{ width: `${coveragePct}%` }}
+                                      />
+                                    </div>
+
+                                    {/* Caixa de Alerta de Alto Contraste (Texto Nítido e Legível, Sem Amarelo Apagado) */}
+                                    <div className={`p-3 rounded-xl border-2 shadow-xs flex items-start gap-2.5 ${
+                                      isBalanceSufficient
+                                        ? isDark
+                                          ? 'bg-[#0c2216] border-emerald-500/80 text-white'
+                                          : 'bg-emerald-50 border-emerald-500 text-slate-900'
+                                        : isDark
+                                          ? 'bg-[#261019] border-rose-500 text-white'
+                                          : 'bg-rose-50 border-rose-500 text-slate-900'
+                                    }`}>
+                                      {isBalanceSufficient ? (
+                                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                      ) : (
+                                        <AlertTriangle className="w-5 h-5 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
+                                      )}
+                                      <div className="text-xs leading-relaxed space-y-1">
+                                        {isBalanceSufficient ? (
+                                          <>
+                                            <div className="font-black text-emerald-400 uppercase tracking-wide">
+                                              Saldo Suficiente para Pagar
+                                            </div>
+                                            <p className="font-medium text-slate-100 dark:text-slate-100">
+                                              Excelente! O seu saldo atual cobre integralmente a conta de hoje. Após efetuar o pagamento, ainda{' '}
+                                              <strong className="text-emerald-300 bg-emerald-950/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-500/50">
+                                                vai ficar {fmtMoney(sobraSaldo)} limpo
+                                              </strong>{' '}
+                                              no seu bolso.
+                                            </p>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div className="font-black text-rose-600 dark:text-rose-400 uppercase tracking-wide flex items-center gap-1.5">
+                                              <span>Atenção ao Vencimento de Hoje</span>
+                                            </div>
+                                            <p className="font-semibold text-slate-900 dark:text-slate-100">
+                                              Para que a conta do dia seja paga integralmente,{' '}
+                                              <strong className="text-rose-700 dark:text-rose-200 bg-rose-200 dark:bg-rose-950/90 px-1.5 py-0.5 rounded border border-rose-400 dark:border-rose-500/60 font-black">
+                                                falta completar {fmtMoney(faltaCompletar)}
+                                              </strong>{' '}
+                                              faturando nas próximas corridas.
+                                            </p>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between gap-2 ${
+                                    isDark ? 'bg-[#1b1420] border-amber-500 text-amber-200' : 'bg-amber-50 border-amber-400 text-amber-950'
+                                  }`}>
+                                    <span className="font-bold">
+                                      O valor desta conta está como <strong>R$ 0,00</strong>. Defina o valor mensal para calcular a sobra do saldo.
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const item = pendingHouseDueToday[0];
+                                        if (item) openEditHouseholdExpenseModal(item);
+                                      }}
+                                      className="px-3 py-1.5 rounded-lg bg-[#FF6A1A] text-black font-black text-xs shrink-0 cursor-pointer shadow-sm"
+                                    >
+                                      Definir Valor
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Botão de Lançar Pagamento da Conta de Hoje */}
+                                <div className="flex items-center gap-2 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const firstPending = pendingHouseDueToday[0];
+                                      if (firstPending) {
+                                        setSelectedHouseholdExpenseId(firstPending.id);
+                                        setSelectedCategory(firstPending.name);
+                                        if (firstPending.monthlyAmount > 0) {
+                                          setExpenseAmount(String(firstPending.monthlyAmount));
+                                        }
+                                      }
+                                      setActiveTab('billing');
+                                    }}
+                                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all"
+                                  >
+                                    <Zap className="w-4 h-4 stroke-[2.5]" />
+                                    <span>Registrar Pagamento da Conta ({pendingHouseDueToday[0]?.name || 'Conta'})</span>
+                                  </button>
+                                </div>
+                              </div>
+                            ) : hasPaidDueToday ? (
+                              /* Caso a conta de hoje já foi paga neste mês */
+                              <div className="text-xs space-y-1.5">
+                                <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                  <span>
+                                    Contas com vencimento hoje (Dia {curDay}) já foram pagas neste mês:
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {paidHouseDueToday.map(h => (
+                                    <span
+                                      key={h.id}
+                                      className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold"
+                                    >
+                                      {h.icon || '🏠'} {h.name} ({fmtMoney(Number(h.monthlyAmount) || 0)})
+                                    </span>
+                                  ))}
+                                </div>
+                                <p className={`text-[10px] ${mutedText}`}>
+                                  Seu saldo atual de <strong>{fmtMoney(curBalance)}</strong> está livre dessas despesas hoje.
+                                </p>
+                              </div>
+                            ) : (
+                              /* Caso NÃO haja contas vencendo hoje */
+                              <div className="text-xs space-y-1">
+                                <div className="flex items-center justify-between gap-1 flex-wrap">
+                                  <span className={`text-[11px] font-semibold ${mutedText}`}>
+                                    Hoje (Dia {curDay}): Nenhuma conta da casa agendada para hoje.
+                                  </span>
+                                </div>
+                                {nextUpcomingBill ? (
+                                  <div className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-[11px] mt-1 ${
+                                    isDark ? 'bg-black/25 border-slate-800 text-slate-300' : 'bg-white border-slate-200 text-slate-800'
+                                  }`}>
+                                    <div className="flex items-center gap-1.5 truncate">
+                                      <span>{nextUpcomingBill.item.icon || '🏠'}</span>
+                                      <span className="font-bold truncate">{nextUpcomingBill.item.name}</span>
+                                      <span className={`text-[10px] ${mutedText}`}>
+                                        (Vence dia {nextUpcomingBill.item.dueDay} · em {nextUpcomingBill.daysUntil} {nextUpcomingBill.daysUntil === 1 ? 'dia' : 'dias'})
+                                      </span>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <span className="font-black text-[#FF6A1A] tabular-nums">
+                                        {fmtMoney(nextUpcomingBill.amount)}
+                                      </span>
+                                      <div className="text-[9px] text-slate-400">
+                                        {curBalance >= nextUpcomingBill.amount ? (
+                                          <span className="text-emerald-400 font-bold">Saldo já cobre</span>
+                                        ) : (
+                                          <span>Falta {fmtMoney(nextUpcomingBill.amount - Math.max(0, curBalance))}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className={`text-[10px] ${mutedText}`}>
+                                    Cadastre o dia de vencimento nas despesas da casa para acompanhar aqui.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Barra de Cobertura das Obrigações do Mês */}
                       <div className={`mt-4 p-3 rounded-xl ${surfaceSubtle} ${isDark ? 'border border-slate-700/40' : 'border border-slate-300 shadow-2xs'}`}>
@@ -13443,26 +13917,70 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM Rodados</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="Ex: 65"
-                      value={entryKm}
-                      onChange={e => setEntryKm(e.target.value)}
-                      className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`text-xs font-bold ${mutedText}`}>KM Rodados</label>
+                      <button
+                        type="button"
+                        onClick={() => openQuickCalculator('KM Rodados', entryKm, val => setEntryKm(val))}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Abrir calculadora"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="Ex: 65"
+                        value={entryKm}
+                        onChange={e => setEntryKm(e.target.value)}
+                        className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => openQuickCalculator('KM Rodados', entryKm, val => setEntryKm(val))}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular KM Rodados"
+                        aria-label="Calcular KM Rodados"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Faturamento (R$)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ex: 140"
-                      value={entryRev}
-                      onChange={e => setEntryRev(e.target.value)}
-                      className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`text-xs font-bold ${mutedText}`}>Faturamento (R$)</label>
+                      <button
+                        type="button"
+                        onClick={() => openQuickCalculator('Faturamento da Corrida (R$)', entryRev, val => setEntryRev(val))}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Abrir calculadora"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Ex: 140"
+                        value={entryRev}
+                        onChange={e => setEntryRev(e.target.value)}
+                        className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => openQuickCalculator('Faturamento da Corrida (R$)', entryRev, val => setEntryRev(val))}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular Faturamento"
+                        aria-label="Calcular Faturamento"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Horas Trabalhadas</label>
@@ -13531,7 +14049,18 @@ export default function App() {
                 {expenseType === 'moto' ? (
                   <>
                     <div>
-                      <label className={`block text-xs font-bold mb-2 ${mutedText}`}>Categoria da Moto</label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className={`text-xs font-bold ${mutedText}`}>Categoria da Moto</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowNewCatInput(prev => !prev)}
+                          className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                          title="Criar nova categoria de despesa"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>{showNewCatInput ? 'Cancelar' : '+ Nova Categoria'}</span>
+                        </button>
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         {motoCategories.map(c => (
                           <button
@@ -13608,78 +14137,206 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                              Preço Pago Total (R$) <span className="text-amber-400">*</span>
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Ex: 50.00"
-                              value={expenseAmount}
-                              onChange={e => {
-                                const val = e.target.value;
-                                setExpenseAmount(val);
-                                const numVal = parseFloat(val);
-                                const priceVal = parseFloat(fuelPricePerLiter);
-                                if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
-                                  setFuelLiters((numVal / priceVal).toFixed(2));
-                                }
-                              }}
-                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                            />
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>
+                                Preço Pago (R$) <span className="text-amber-400">*</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Preço Total do Abastecimento (R$)', expenseAmount, val => {
+                                  setExpenseAmount(val);
+                                  const numVal = parseFloat(val);
+                                  const priceVal = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
+                                    setFuelLiters((numVal / priceVal).toFixed(2));
+                                  }
+                                })}
+                                className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 50.00"
+                                value={expenseAmount}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setExpenseAmount(val);
+                                  const numVal = parseFloat(val);
+                                  const priceVal = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
+                                    setFuelLiters((numVal / priceVal).toFixed(2));
+                                  }
+                                }}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Preço Total do Abastecimento (R$)', expenseAmount, val => {
+                                  setExpenseAmount(val);
+                                  const numVal = parseFloat(val);
+                                  const priceVal = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(numVal) && numVal > 0 && !isNaN(priceVal) && priceVal > 0) {
+                                    setFuelLiters((numVal / priceVal).toFixed(2));
+                                  }
+                                })}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Valor Pago"
+                                aria-label="Calcular Valor Pago"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                           <div>
-                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                              Litros Abastecidos (L) <span className="text-[#FF6A1A]">*</span>
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Ex: 8.5"
-                              value={fuelLiters}
-                              onChange={e => {
-                                const val = e.target.value;
-                                setFuelLiters(val);
-                                const litersNum = parseFloat(val);
-                                const amountNum = parseFloat(expenseAmount);
-                                const priceNum = parseFloat(fuelPricePerLiter);
-                                if (!isNaN(litersNum) && litersNum > 0) {
-                                  if (!isNaN(amountNum) && amountNum > 0) {
-                                    setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
-                                  } else if (!isNaN(priceNum) && priceNum > 0) {
-                                    setExpenseAmount((litersNum * priceNum).toFixed(2));
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>
+                                Litros Abastecidos (L) <span className="text-[#FF6A1A]">*</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Litros Abastecidos (L)', fuelLiters, val => {
+                                  setFuelLiters(val);
+                                  const litersNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const priceNum = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(litersNum) && litersNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
+                                    } else if (!isNaN(priceNum) && priceNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
                                   }
-                                }
-                              }}
-                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                            />
+                                })}
+                                className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 8.5"
+                                value={fuelLiters}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setFuelLiters(val);
+                                  const litersNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const priceNum = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(litersNum) && litersNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
+                                    } else if (!isNaN(priceNum) && priceNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
+                                  }
+                                }}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Litros Abastecidos (L)', fuelLiters, val => {
+                                  setFuelLiters(val);
+                                  const litersNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const priceNum = parseFloat(fuelPricePerLiter);
+                                  if (!isNaN(litersNum) && litersNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelPricePerLiter((amountNum / litersNum).toFixed(2));
+                                    } else if (!isNaN(priceNum) && priceNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
+                                  }
+                                })}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Litros"
+                                aria-label="Calcular Litros"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Preço por Litro (R$/L)</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Ex: 5.89"
-                              value={fuelPricePerLiter}
-                              onChange={e => {
-                                const val = e.target.value;
-                                setFuelPricePerLiter(val);
-                                const priceNum = parseFloat(val);
-                                const amountNum = parseFloat(expenseAmount);
-                                const litersNum = parseFloat(fuelLiters);
-                                if (!isNaN(priceNum) && priceNum > 0) {
-                                  if (!isNaN(amountNum) && amountNum > 0) {
-                                    setFuelLiters((amountNum / priceNum).toFixed(2));
-                                  } else if (!isNaN(litersNum) && litersNum > 0) {
-                                    setExpenseAmount((litersNum * priceNum).toFixed(2));
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>Preço por Litro (R$/L)</label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Preço do Litro (R$/L)', fuelPricePerLiter, val => {
+                                  setFuelPricePerLiter(val);
+                                  const priceNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const litersNum = parseFloat(fuelLiters);
+                                  if (!isNaN(priceNum) && priceNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelLiters((amountNum / priceNum).toFixed(2));
+                                    } else if (!isNaN(litersNum) && litersNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
                                   }
-                                }
-                              }}
-                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                            />
+                                })}
+                                className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 5.89"
+                                value={fuelPricePerLiter}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setFuelPricePerLiter(val);
+                                  const priceNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const litersNum = parseFloat(fuelLiters);
+                                  if (!isNaN(priceNum) && priceNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelLiters((amountNum / priceNum).toFixed(2));
+                                    } else if (!isNaN(litersNum) && litersNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
+                                  }
+                                }}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Preço do Litro (R$/L)', fuelPricePerLiter, val => {
+                                  setFuelPricePerLiter(val);
+                                  const priceNum = parseFloat(val);
+                                  const amountNum = parseFloat(expenseAmount);
+                                  const litersNum = parseFloat(fuelLiters);
+                                  if (!isNaN(priceNum) && priceNum > 0) {
+                                    if (!isNaN(amountNum) && amountNum > 0) {
+                                      setFuelLiters((amountNum / priceNum).toFixed(2));
+                                    } else if (!isNaN(litersNum) && litersNum > 0) {
+                                      setExpenseAmount((litersNum * priceNum).toFixed(2));
+                                    }
+                                  }
+                                })}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Preço do Litro"
+                                aria-label="Calcular Preço do Litro"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                           <div>
                             <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM Atual do Odômetro</label>
@@ -13726,15 +14383,37 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Valor (R$)</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Ex: 35.00"
-                              value={expenseAmount}
-                              onChange={e => setExpenseAmount(e.target.value)}
-                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                            />
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>Valor (R$)</label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor da Despesa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 35.00"
+                                value={expenseAmount}
+                                onChange={e => setExpenseAmount(e.target.value)}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor da Despesa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Valor"
+                                aria-label="Calcular Valor"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                         <div>
@@ -13849,17 +14528,39 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                          Valor Pago (R$) <span className="text-amber-400">*</span>
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="Ex: 150.00"
-                          value={expenseAmount}
-                          onChange={e => setExpenseAmount(e.target.value)}
-                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                        />
+                        <div className="flex items-center justify-between mb-1">
+                          <label className={`text-xs font-bold ${mutedText}`}>
+                            Valor Pago (R$) <span className="text-amber-400">*</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                            className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                            title="Abrir calculadora"
+                          >
+                            <Calculator className="w-3 h-3" />
+                            <span>Calc</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Ex: 150.00"
+                            value={expenseAmount}
+                            onChange={e => setExpenseAmount(e.target.value)}
+                            className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                            title="Calcular Valor Pago"
+                            aria-label="Calcular Valor Pago"
+                          >
+                            <Calculator className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -14644,15 +15345,45 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Preço da Gasolina (R$ / Litro)
-                  </label>
-                  <FreeNumberInput
-                    step="0.05"
-                    value={fuelDraft.fuelPrice}
-                    onValueChange={val => setFuelDraft({ ...fuelDraft, fuelPrice: Math.max(0.1, val) })}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`block text-xs font-bold ${mutedText}`}>
+                      Preço da Gasolina (R$ / Litro)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openQuickCalculator('Preço da Gasolina (R$/L)', fuelDraft.fuelPrice, valStr => {
+                          const val = Math.max(0.1, parseFloat(valStr) || 0.1);
+                          setFuelDraft({ ...fuelDraft, fuelPrice: val });
+                        });
+                      }}
+                      className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Calculator className="w-3 h-3" />
+                      <span>Calc</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <FreeNumberInput
+                      step="0.05"
+                      value={fuelDraft.fuelPrice}
+                      onValueChange={val => setFuelDraft({ ...fuelDraft, fuelPrice: Math.max(0.1, val) })}
+                      className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openQuickCalculator('Preço da Gasolina (R$/L)', fuelDraft.fuelPrice, valStr => {
+                          const val = Math.max(0.1, parseFloat(valStr) || 0.1);
+                          setFuelDraft({ ...fuelDraft, fuelPrice: val });
+                        });
+                      }}
+                      className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                      title="Calcular Preço"
+                    >
+                      <Calculator className="w-4 h-4" />
+                    </button>
+                  </div>
                   <span className={`text-[10px] mt-0.5 block ${mutedText}`}>Preço pago na bomba</span>
                 </div>
 
@@ -14883,24 +15614,68 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                          Valor por Abastecimento / Troca (R$)
-                        </label>
-                        <FreeNumberInput
-                          step="5"
-                          value={bikeDraft.totalCost ?? bikeDraft.monthlyAmount}
-                          onValueChange={val => {
-                            const cleanCost = Math.max(0, val);
-                            const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                            const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                            setBikeDraft({
-                              ...bikeDraft,
-                              totalCost: cleanCost,
-                              monthlyAmount: nextM,
-                            });
-                          }}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
+                        <div className="flex items-center justify-between mb-1">
+                          <label className={`block text-[11px] font-bold ${mutedText}`}>
+                            Valor por Abastecimento / Troca (R$)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = bikeDraft.totalCost ?? bikeDraft.monthlyAmount;
+                              openQuickCalculator('Valor da Manutenção / Troca', cur, valStr => {
+                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
+                                const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                                setBikeDraft({
+                                  ...bikeDraft,
+                                  totalCost: cleanCost,
+                                  monthlyAmount: nextM,
+                                });
+                              });
+                            }}
+                            className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Calculator className="w-3 h-3" />
+                            <span>Calc</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <FreeNumberInput
+                            step="5"
+                            value={bikeDraft.totalCost ?? bikeDraft.monthlyAmount}
+                            onValueChange={val => {
+                              const cleanCost = Math.max(0, val);
+                              const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                              const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                              setBikeDraft({
+                                ...bikeDraft,
+                                totalCost: cleanCost,
+                                monthlyAmount: nextM,
+                              });
+                            }}
+                            className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = bikeDraft.totalCost ?? bikeDraft.monthlyAmount;
+                              openQuickCalculator('Valor da Manutenção / Troca', cur, valStr => {
+                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
+                                const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
+                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                                setBikeDraft({
+                                  ...bikeDraft,
+                                  totalCost: cleanCost,
+                                  monthlyAmount: nextM,
+                                });
+                              });
+                            }}
+                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                            title="Calcular Valor"
+                          >
+                            <Calculator className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -14990,15 +15765,45 @@ export default function App() {
               {(bikeDraft.recurrenceType || 'monthly') === 'monthly' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Valor Mensal Estimado (R$)
-                    </label>
-                    <FreeNumberInput
-                      step="5"
-                      value={bikeDraft.monthlyAmount}
-                      onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`block text-xs font-bold ${mutedText}`}>
+                        Valor Mensal Estimado (R$)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor Mensal Estimado (R$)', bikeDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <FreeNumberInput
+                        step="5"
+                        value={bikeDraft.monthlyAmount}
+                        onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
+                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor Mensal Estimado (R$)', bikeDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular Valor Mensal"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                     <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
                       Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
                     </span>
@@ -15024,15 +15829,45 @@ export default function App() {
               {(bikeDraft.recurrenceType || 'monthly') === 'specific_date' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Valor para Reservar por Mês (R$)
-                    </label>
-                    <FreeNumberInput
-                      step="5"
-                      value={bikeDraft.monthlyAmount}
-                      onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`block text-xs font-bold ${mutedText}`}>
+                        Valor para Reservar por Mês (R$)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor para Reservar (R$)', bikeDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <FreeNumberInput
+                        step="5"
+                        value={bikeDraft.monthlyAmount}
+                        onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
+                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor para Reservar (R$)', bikeDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular Valor"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                     <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
                       Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
                     </span>
@@ -15057,21 +15892,80 @@ export default function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Categoria
-                  </label>
-                  <select
-                    value={bikeDraft.category}
-                    onChange={e => setBikeDraft({ ...bikeDraft, category: e.target.value as any })}
-                    className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  >
-                    <option value="combustivel">⛽ Combustível (Gasolina / Álcool)</option>
-                    <option value="manutencao">🔧 Peças & Oficina (Óleo, Pneus, Relação)</option>
-                    <option value="documentacao">📄 Documentação (IPVA, Licenciamento)</option>
-                    <option value="seguro">🛡️ Seguro & Proteção Veicular</option>
-                    <option value="equipamento">🪖 Equipamentos (Capacete, Capa, Luvas)</option>
-                    <option value="outros">✨ Outros Cuidados & Lavagem</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`block text-xs font-bold ${mutedText}`}>
+                      Categoria
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewBikeCatInput(prev => !prev)}
+                      className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Adicionar nova categoria de despesa"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{showNewBikeCatInput ? 'Fechar' : '+ Nova Categoria'}</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={bikeDraft.category}
+                      onChange={e => setBikeDraft({ ...bikeDraft, category: e.target.value as any })}
+                      className={`flex-1 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                    >
+                      <option value="combustivel">⛽ Combustível (Gasolina / Álcool)</option>
+                      <option value="manutencao">🔧 Peças & Oficina (Óleo, Pneus, Relação)</option>
+                      <option value="pecas">⚙️ Peças & Reparos</option>
+                      <option value="documentacao">📄 Documentação (IPVA, Licenciamento)</option>
+                      <option value="seguro">🛡️ Seguro & Proteção Veicular</option>
+                      <option value="equipamento">🪖 Equipamentos (Capacete, Capa, Luvas)</option>
+                      <option value="outros">✨ Outros Cuidados & Lavagem</option>
+                      {(dbState.customCategories || []).map(cat => (
+                        <option key={cat.id} value={cat.id}>
+                          📁 {cat.name} (Personalizada)
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewBikeCatInput(prev => !prev)}
+                      className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                      title="Adicionar Nova Categoria"
+                      aria-label="Adicionar Nova Categoria"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {showNewBikeCatInput && (
+                    <div className={`mt-2 p-2.5 rounded-xl border border-[#FF6A1A]/50 ${surfaceSubtle} flex flex-col gap-2`}>
+                      <span className="text-[11px] font-black text-[#FF6A1A]">
+                        Criar Nova Categoria de Despesa da Moto
+                      </span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newBikeCatName}
+                          onChange={e => setNewBikeCatName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddBikeCategory();
+                            }
+                          }}
+                          placeholder="Ex: Borracharia, Adesivos, Estética..."
+                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddBikeCategory}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Salvar</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -15317,24 +16211,68 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                          Valor da Compra / Conta (R$)
-                        </label>
-                        <FreeNumberInput
-                          step="10"
-                          value={householdDraft.totalCost ?? householdDraft.monthlyAmount}
-                          onValueChange={val => {
-                            const cleanCost = Math.max(0, val);
-                            const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                            const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                            setHouseholdDraft({
-                              ...householdDraft,
-                              totalCost: cleanCost,
-                              monthlyAmount: nextM,
-                            });
-                          }}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
+                        <div className="flex items-center justify-between mb-1">
+                          <label className={`block text-[11px] font-bold ${mutedText}`}>
+                            Valor da Compra / Conta (R$)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = householdDraft.totalCost ?? householdDraft.monthlyAmount;
+                              openQuickCalculator('Valor da Compra / Conta (R$)', cur, valStr => {
+                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
+                                const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                                setHouseholdDraft({
+                                  ...householdDraft,
+                                  totalCost: cleanCost,
+                                  monthlyAmount: nextM,
+                                });
+                              });
+                            }}
+                            className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Calculator className="w-3 h-3" />
+                            <span>Calc</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <FreeNumberInput
+                            step="10"
+                            value={householdDraft.totalCost ?? householdDraft.monthlyAmount}
+                            onValueChange={val => {
+                              const cleanCost = Math.max(0, val);
+                              const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                              const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                              setHouseholdDraft({
+                                ...householdDraft,
+                                totalCost: cleanCost,
+                                monthlyAmount: nextM,
+                              });
+                            }}
+                            className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = householdDraft.totalCost ?? householdDraft.monthlyAmount;
+                              openQuickCalculator('Valor da Compra / Conta (R$)', cur, valStr => {
+                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
+                                const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
+                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
+                                setHouseholdDraft({
+                                  ...householdDraft,
+                                  totalCost: cleanCost,
+                                  monthlyAmount: nextM,
+                                });
+                              });
+                            }}
+                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                            title="Calcular Valor"
+                          >
+                            <Calculator className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -15424,15 +16362,45 @@ export default function App() {
               {(householdDraft.recurrenceType || 'monthly') === 'monthly' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Valor Mensal (R$)
-                    </label>
-                    <FreeNumberInput
-                      step="10"
-                      value={householdDraft.monthlyAmount}
-                      onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`block text-xs font-bold ${mutedText}`}>
+                        Valor Mensal (R$)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor Mensal da Conta (R$)', householdDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <FreeNumberInput
+                        step="10"
+                        value={householdDraft.monthlyAmount}
+                        onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
+                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor Mensal da Conta (R$)', householdDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular Valor Mensal"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                     <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
                       Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
                     </span>
@@ -15458,15 +16426,45 @@ export default function App() {
               {(householdDraft.recurrenceType || 'monthly') === 'specific_date' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Valor para Reservar por Mês (R$)
-                    </label>
-                    <FreeNumberInput
-                      step="10"
-                      value={householdDraft.monthlyAmount}
-                      onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className={`block text-xs font-bold ${mutedText}`}>
+                        Valor para Reservar por Mês (R$)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor para Reservar (R$)', householdDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Calculator className="w-3 h-3" />
+                        <span>Calc</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <FreeNumberInput
+                        step="10"
+                        value={householdDraft.monthlyAmount}
+                        onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
+                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openQuickCalculator('Valor para Reservar (R$)', householdDraft.monthlyAmount, valStr => {
+                            const val = Math.max(0, parseFloat(valStr) || 0);
+                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
+                          });
+                        }}
+                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        title="Calcular Valor"
+                      >
+                        <Calculator className="w-4 h-4" />
+                      </button>
+                    </div>
                     <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
                       Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
                     </span>
@@ -15491,21 +16489,79 @@ export default function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Categoria
-                  </label>
-                  <select
-                    value={householdDraft.category}
-                    onChange={e => setHouseholdDraft({ ...householdDraft, category: e.target.value as any })}
-                    className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                  >
-                    <option value="moradia">🏠 Moradia (Aluguel, Condomínio)</option>
-                    <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
-                    <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
-                    <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
-                    <option value="saude">💊 Saúde (Farmácia, Plano)</option>
-                    <option value="outros">📄 Outros Compromissos</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`block text-xs font-bold ${mutedText}`}>
+                      Categoria
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewHouseholdCatInput(prev => !prev)}
+                      className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Adicionar nova categoria de despesa doméstica"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{showNewHouseholdCatInput ? 'Fechar' : '+ Nova Categoria'}</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={householdDraft.category}
+                      onChange={e => setHouseholdDraft({ ...householdDraft, category: e.target.value as any })}
+                      className={`flex-1 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                    >
+                      <option value="moradia">🏠 Moradia (Aluguel, Condomínio)</option>
+                      <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
+                      <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
+                      <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
+                      <option value="saude">💊 Saúde (Farmácia, Plano)</option>
+                      <option value="outros">📄 Outros Compromissos</option>
+                      {(dbState.customCategories || []).map(cat => (
+                        <option key={cat.id} value={cat.id}>
+                          📁 {cat.name} (Personalizada)
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewHouseholdCatInput(prev => !prev)}
+                      className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                      title="Adicionar Nova Categoria Doméstica"
+                      aria-label="Adicionar Nova Categoria Doméstica"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {showNewHouseholdCatInput && (
+                    <div className={`mt-2 p-2.5 rounded-xl border border-blue-400/50 ${surfaceSubtle} flex flex-col gap-2`}>
+                      <span className="text-[11px] font-black text-blue-400">
+                        Criar Nova Categoria Doméstica
+                      </span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newHouseholdCatName}
+                          onChange={e => setNewHouseholdCatName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddHouseholdCategory();
+                            }
+                          }}
+                          placeholder="Ex: Educação, Pets, Lazer, Vestuário..."
+                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddHouseholdCategory}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Salvar</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -15589,6 +16645,16 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL GLOBAL DA CALCULADORA INTELIGENTE */}
+      <QuickCalculatorModal
+        isOpen={quickCalcState.isOpen}
+        title={quickCalcState.title}
+        initialValue={quickCalcState.initialValue}
+        onClose={() => setQuickCalcState(prev => ({ ...prev, isOpen: false }))}
+        onApply={quickCalcState.onApply}
+        isDark={isDark}
+      />
     </div>
   );
 }
