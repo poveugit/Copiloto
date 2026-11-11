@@ -14,6 +14,7 @@ export interface RideEntry {
   km: number;
   revenue: number;
   hours: number;
+  isCancelled?: boolean;
 }
 
 export interface ExpenseEntry {
@@ -27,6 +28,8 @@ export interface ExpenseEntry {
   description?: string;
   expenseType?: 'moto' | 'casa';
   householdExpenseId?: string;
+  bikeExpenseId?: string;
+  isCancelled?: boolean;
 }
 
 export interface MaintenanceHistoryRecord {
@@ -231,6 +234,7 @@ export interface HouseholdExpenseItem {
   nextDueDate?: string;
   icon?: string;
   isActive: boolean;
+  isCustomEdited?: boolean;
 }
 
 export const DEFAULT_HOUSEHOLD_EXPENSES: HouseholdExpenseItem[] = [
@@ -375,6 +379,83 @@ export function getSupabaseClient(): SupabaseClient | null {
   return supabaseClient;
 }
 
+/**
+ * Indica se uma lista de despesas fixas (casa / moto) foi realmente configurada pelo usuário,
+ * ou se é apenas a lista padrão (valores zerados) criada automaticamente em um aparelho novo.
+ */
+function isExpenseConfigCustomized(
+  list: Array<{ id: string; monthlyAmount: number; totalCost?: number; isCustomEdited?: boolean }> | undefined | null,
+  defaults: Array<{ id: string }>
+): boolean {
+  if (!Array.isArray(list) || list.length === 0) return false;
+  if (list.some(i => Number(i.monthlyAmount) > 0 || Number(i.totalCost) > 0 || i.isCustomEdited)) {
+    return true;
+  }
+  const defaultIds = new Set(defaults.map(d => d.id));
+  return list.length !== defaultIds.size || list.some(i => !defaultIds.has(i.id));
+}
+
+export function isHouseholdListCustomized(list?: HouseholdExpenseItem[] | null): boolean {
+  return isExpenseConfigCustomized(list, DEFAULT_HOUSEHOLD_EXPENSES);
+}
+
+export function isBikeListCustomized(list?: BikeExpenseItem[] | null): boolean {
+  return isExpenseConfigCustomized(list, DEFAULT_BIKE_EXPENSES);
+}
+
+/**
+ * Lê no Supabase as listas de despesas fixas (casa / moto) atualmente gravadas na nuvem para esta conta.
+ * Usado para impedir que um aparelho com lista padrão/vazia sobrescreva a configuração real salva no banco.
+ */
+async function fetchCloudExpenseConfigLists(
+  client: SupabaseClient,
+  deviceId: string
+): Promise<{ household?: HouseholdExpenseItem[]; bike?: BikeExpenseItem[] }> {
+  try {
+    const res: any = await withTimeout(
+      client.from('moto_settings').select('maintenance').eq('device_id', deviceId).maybeSingle(),
+      4000,
+      { data: null } as any
+    );
+    const m = res?.data?.maintenance;
+    if (!m || typeof m !== 'object') return {};
+    const snap = m.cloudSnapshot && typeof m.cloudSnapshot === 'object' ? m.cloudSnapshot : {};
+    const pick = <T,>(a: unknown, b: unknown): T[] | undefined =>
+      Array.isArray(a) && a.length > 0 ? (a as T[]) : Array.isArray(b) && b.length > 0 ? (b as T[]) : undefined;
+    return {
+      household: pick<HouseholdExpenseItem>(snap.householdExpenses, m.householdExpenses),
+      bike: pick<BikeExpenseItem>(snap.bikeExpenses, m.bikeExpenses),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Se o aparelho tem a configuração real de despesas (casa / moto) e o Supabase ainda não a tem,
+ * envia o estado para a nuvem. Garante que aluguel, internet etc. apareçam em todos os dispositivos.
+ */
+async function pushExpenseConfigIfCloudMissing(
+  state: LocalRoomDatabaseState,
+  userEmail?: string | null
+): Promise<void> {
+  if (!userEmail) return;
+  const hasHousehold = isHouseholdListCustomized(state.householdExpenses);
+  const hasBike = isBikeListCustomized(state.bikeExpenses);
+  const client = getSupabaseClient();
+  if (!(hasHousehold || hasBike) || !client) return;
+  try {
+    const cloudLists = await fetchCloudExpenseConfigLists(client, getUserDeviceId(userEmail));
+    const missingHousehold = hasHousehold && !isHouseholdListCustomized(cloudLists.household);
+    const missingBike = hasBike && !isBikeListCustomized(cloudLists.bike);
+    if (missingHousehold || missingBike) {
+      await runWorkManagerCloudSync(state, userEmail, false, false);
+    }
+  } catch {
+    // Falha de rede: será reenviado na próxima sincronização
+  }
+}
+
 export function getUserDeviceId(userEmail?: string | null): string {
   if (userEmail) {
     return 'usr_' + userEmail.trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '_');
@@ -502,6 +583,21 @@ export async function runWorkManagerCloudSync(
   const cleanEntries = (state.entries || []).filter(e => !isLegacyDemoEntry(e));
   const cleanExpenses = (state.expenses || []).filter(e => !isLegacyDemoExpense(e));
 
+  // Proteção anti-sobrescrita: um aparelho com a lista padrão (zerada) nunca pode apagar
+  // as despesas da casa / da moto que o usuário já configurou e que estão salvas no banco.
+  let effectiveHousehold: HouseholdExpenseItem[] = state.householdExpenses || [];
+  let effectiveBike: BikeExpenseItem[] = state.bikeExpenses || [];
+  const syncClient = getSupabaseClient();
+  if (syncClient) {
+    const cloudLists = await fetchCloudExpenseConfigLists(syncClient, deviceId);
+    if (!isHouseholdListCustomized(effectiveHousehold) && isHouseholdListCustomized(cloudLists.household)) {
+      effectiveHousehold = cloudLists.household as HouseholdExpenseItem[];
+    }
+    if (!isBikeListCustomized(effectiveBike) && isBikeListCustomized(cloudLists.bike)) {
+      effectiveBike = cloudLists.bike as BikeExpenseItem[];
+    }
+  }
+
   const cloudSnapshot: LocalRoomDatabaseState = {
     entries: cleanEntries,
     expenses: cleanExpenses,
@@ -526,6 +622,8 @@ export async function runWorkManagerCloudSync(
     deletedAppIds: state.deletedAppIds || [],
     deletedEntryIds: state.deletedEntryIds || [],
     deletedExpenseIds: state.deletedExpenseIds || [],
+    householdExpenses: effectiveHousehold,
+    bikeExpenses: effectiveBike,
     lastSyncedAt: isoNow,
   };
 
@@ -645,6 +743,8 @@ export async function runWorkManagerCloudSync(
         customGoalScope: state.customGoalScope || 'month',
         maintenanceNotificationsEnabled: state.maintenanceNotificationsEnabled ?? true,
         financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
+        householdExpenses: effectiveHousehold,
+        bikeExpenses: effectiveBike,
         cloudSnapshot,
         ...(pilotProfileObj ? { pilotProfile: pilotProfileObj } : {}),
       };
@@ -995,10 +1095,28 @@ function combineSnapshotsList(
 
   const best = sorted[0];
 
+  const bestHousehold =
+    valid.find(
+      s =>
+        Array.isArray(s.householdExpenses) &&
+        s.householdExpenses.some(h => Number(h.monthlyAmount) > 0 || (h as any).isCustomEdited)
+    )?.householdExpenses ||
+    valid.find(s => Array.isArray(s.householdExpenses) && s.householdExpenses.length > 0)?.householdExpenses;
+
+  const bestBike =
+    valid.find(
+      s =>
+        Array.isArray(s.bikeExpenses) &&
+        s.bikeExpenses.some(b => Number(b.monthlyAmount) > 0 || (b as any).isCustomEdited)
+    )?.bikeExpenses ||
+    valid.find(s => Array.isArray(s.bikeExpenses) && s.bikeExpenses.length > 0)?.bikeExpenses;
+
   return {
     ...best,
     entries: Array.from(combinedEntries.values()),
     expenses: Array.from(combinedExpenses.values()),
+    householdExpenses: bestHousehold || best.householdExpenses,
+    bikeExpenses: bestBike || best.bikeExpenses,
     deletedEntryIds: Array.from(delEntries),
     deletedExpenseIds: Array.from(delExpenses),
   };
@@ -1123,11 +1241,26 @@ export async function fetchRemoteCloudData(
 
       const tableExpenses: ExpenseEntry[] = [];
       for (const row of rawExpenses) {
+        const catStr = String(row.category || '').toLowerCase();
+        const isHouseCat =
+          catStr.includes('(casa)') ||
+          catStr.includes('supermercado') ||
+          catStr.includes('feira') ||
+          catStr.includes('aluguel') ||
+          catStr.includes('energia') ||
+          catStr.includes('luz') ||
+          catStr.includes('água') ||
+          catStr.includes('internet');
         const mapped: ExpenseEntry = {
           id: Number(row.id) || Date.now(),
           date: row.expense_date,
           category: row.category,
           amount: Number(row.amount || 0),
+          expenseType: isHouseCat ? 'casa' : 'moto',
+          householdExpenseId:
+            catStr.includes('supermercado') || catStr.includes('feira') || catStr.includes('mercado')
+              ? 'mercado'
+              : undefined,
         };
         if (!isLegacyDemoExpense(mapped)) {
           tableExpenses.push(mapped);
@@ -1168,7 +1301,13 @@ export async function fetchRemoteCloudData(
         if (Array.isArray(snap.expenses)) {
           for (const ex of snap.expenses) {
             if (ex && !deletedExpenseSet.has(Number(ex.id)) && !isLegacyDemoExpense(ex)) {
-              expenseMap.set(Number(ex.id), ex);
+              const existing = expenseMap.get(Number(ex.id));
+              expenseMap.set(Number(ex.id), {
+                ...existing,
+                ...ex,
+                expenseType: ex.expenseType || existing?.expenseType || 'moto',
+                householdExpenseId: ex.householdExpenseId || existing?.householdExpenseId,
+              });
             }
           }
         }
@@ -1262,6 +1401,22 @@ export async function fetchRemoteCloudData(
             odometerBaseKm: Number(m.odometerBaseKm) || 0,
           },
           financialPlan: m.financialPlan || snap.financialPlan || DEFAULT_FINANCIAL_PLAN,
+          householdExpenses:
+            Array.isArray(snap.householdExpenses) && snap.householdExpenses.length > 0
+              ? snap.householdExpenses
+              : Array.isArray(m.householdExpenses) && m.householdExpenses.length > 0
+              ? m.householdExpenses
+              : Array.isArray(settings?.custom_household_expenses)
+              ? settings.custom_household_expenses
+              : undefined,
+          bikeExpenses:
+            Array.isArray(snap.bikeExpenses) && snap.bikeExpenses.length > 0
+              ? snap.bikeExpenses
+              : Array.isArray(m.bikeExpenses) && m.bikeExpenses.length > 0
+              ? m.bikeExpenses
+              : Array.isArray(settings?.custom_bike_expenses)
+              ? settings.custom_bike_expenses
+              : undefined,
           customApps: Array.isArray(settings?.custom_apps)
             ? settings.custom_apps
             : Array.isArray(snap.customApps)
@@ -1352,11 +1507,27 @@ export async function uploadLocalDataToCloud(
     (a, b) => b.date.localeCompare(a.date) || b.id - a.id
   );
 
+  const localHasCustomHousehold = isHouseholdListCustomized(localState.householdExpenses);
+  const finalHouseholdExpenses = localHasCustomHousehold
+    ? localState.householdExpenses
+    : Array.isArray(remote?.householdExpenses) && remote.householdExpenses.length > 0
+    ? remote.householdExpenses
+    : localState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES;
+
+  const localHasCustomBike = isBikeListCustomized(localState.bikeExpenses);
+  const finalBikeExpenses = localHasCustomBike
+    ? localState.bikeExpenses
+    : Array.isArray(remote?.bikeExpenses) && remote.bikeExpenses.length > 0
+    ? remote.bikeExpenses
+    : localState.bikeExpenses || DEFAULT_BIKE_EXPENSES;
+
   // Local maintenance items and local fuelConfig / goals take priority when sending to cloud
   const stateToPush: LocalRoomDatabaseState = {
     ...localState,
     entries: mergedEntries,
     expenses: mergedExpenses,
+    householdExpenses: finalHouseholdExpenses,
+    bikeExpenses: finalBikeExpenses,
     deletedEntryIds,
     deletedExpenseIds,
     lastSyncedAt: isoNow,
@@ -1402,6 +1573,7 @@ export async function downloadCloudDataToLocal(
   const remote = await fetchRemoteCloudData(userEmail);
 
   if (!remote || (!hasPopulatedData(remote) && (remote.entries || []).length === 0 && (remote.expenses || []).length === 0)) {
+    await pushExpenseConfigIfCloudMissing(localState, userEmail);
     const ridesKm = localState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
     const totalKm = (Number(localState.fuelConfig?.odometerBaseKm) || 0) + ridesKm;
     return {
@@ -1520,10 +1692,66 @@ export async function downloadCloudDataToLocal(
     if (s && s.id) shiftMap.set(s.id, s);
   }
 
+  // Merge householdExpenses (Remote wins when downloading, combining with local items)
+  const mergedHouseholdExpenses: HouseholdExpenseItem[] = (() => {
+    const remoteList = Array.isArray(remote.householdExpenses) ? remote.householdExpenses : [];
+    const localList = Array.isArray(localState.householdExpenses) ? localState.householdExpenses : [];
+    if (remoteList.length === 0) return localList.length > 0 ? localList : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
+    if (localList.length === 0) return remoteList;
+
+    const map = new Map<string, HouseholdExpenseItem>();
+    for (const l of localList) map.set(l.id, l);
+    for (const r of remoteList) {
+      const existing = map.get(r.id);
+      if (!existing) {
+        map.set(r.id, r);
+      } else {
+        map.set(r.id, {
+          ...existing,
+          ...r,
+          monthlyAmount: Number(r.monthlyAmount) > 0 ? Number(r.monthlyAmount) : Number(existing.monthlyAmount) || 0,
+          totalCost: Number(r.totalCost) > 0 ? Number(r.totalCost) : Number(existing.totalCost) || 0,
+          isActive: r.isActive !== undefined ? r.isActive : existing.isActive,
+          isCustomEdited: r.isCustomEdited ?? existing.isCustomEdited,
+        });
+      }
+    }
+    return Array.from(map.values());
+  })();
+
+  // Merge bikeExpenses (Remote wins when downloading)
+  const mergedBikeExpenses: BikeExpenseItem[] = (() => {
+    const remoteList = Array.isArray(remote.bikeExpenses) ? remote.bikeExpenses : [];
+    const localList = Array.isArray(localState.bikeExpenses) ? localState.bikeExpenses : [];
+    if (remoteList.length === 0) return localList.length > 0 ? localList : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
+    if (localList.length === 0) return remoteList;
+
+    const map = new Map<string, BikeExpenseItem>();
+    for (const l of localList) map.set(l.id, l);
+    for (const r of remoteList) {
+      const existing = map.get(r.id);
+      if (!existing) {
+        map.set(r.id, r);
+      } else {
+        map.set(r.id, {
+          ...existing,
+          ...r,
+          monthlyAmount: Number(r.monthlyAmount) > 0 ? Number(r.monthlyAmount) : Number(existing.monthlyAmount) || 0,
+          totalCost: Number(r.totalCost) > 0 ? Number(r.totalCost) : Number(existing.totalCost) || 0,
+          isActive: r.isActive !== undefined ? r.isActive : existing.isActive,
+          isCustomEdited: r.isCustomEdited ?? existing.isCustomEdited,
+        });
+      }
+    }
+    return Array.from(map.values());
+  })();
+
   const mergedState: LocalRoomDatabaseState = {
     ...localState,
     entries: mergedEntries,
     expenses: mergedExpenses,
+    householdExpenses: mergedHouseholdExpenses,
+    bikeExpenses: mergedBikeExpenses,
     maintenanceItems: mergedMaintItems,
     dailyGoal: Number(remote.dailyGoal ?? localState.dailyGoal ?? 0),
     weeklyGoal: Number(remote.weeklyGoal ?? localState.weeklyGoal ?? 0),
@@ -1552,6 +1780,10 @@ export async function downloadCloudDataToLocal(
     deletedExpenseIds,
     lastSyncedAt: isoNow,
   };
+
+  // Se este aparelho possui a configuração real de despesas (casa / moto) e o banco (Supabase) ainda
+  // não a tem, envia agora para que todos os outros dispositivos da conta passem a enxergá-la.
+  await pushExpenseConfigIfCloudMissing(mergedState, userEmail);
 
   const ridesKm = mergedState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
   const totalKm = (Number(mergedState.fuelConfig?.odometerBaseKm) || 0) + ridesKm;

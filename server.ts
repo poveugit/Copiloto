@@ -45,7 +45,9 @@ function isStatePopulated(state: any): boolean {
   const odo = Number(state.fuelConfig?.odometerBaseKm || 0);
   const customBike = state.fuelConfig?.bikeModelName && state.fuelConfig.bikeModelName !== 'Minha Moto';
   const hasMaintChanges = Array.isArray(state.maintenanceItems) && state.maintenanceItems.some((m: any) => Number(m.lastChangeKm) > 0 || (Array.isArray(m.history) && m.history.length > 0));
-  return entriesLen > 0 || expensesLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
+  const hasHouseholdChanges = Array.isArray(state.householdExpenses) && state.householdExpenses.some((h: any) => Number(h.monthlyAmount) > 0 || h.isCustomEdited);
+  const hasBikeChanges = Array.isArray(state.bikeExpenses) && state.bikeExpenses.some((b: any) => Number(b.monthlyAmount) > 0 || b.isCustomEdited);
+  return entriesLen > 0 || expensesLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges) || Boolean(hasHouseholdChanges) || Boolean(hasBikeChanges);
 }
 
 async function fetchServerWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 2000): Promise<Response> {

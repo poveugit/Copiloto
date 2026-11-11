@@ -96,8 +96,47 @@
 - **Conteúdo**: Abrange conformidade total com LGPD (Art. 18), dados coletados (cadastrais, faturamento e despesas), permissões do Android (`POST_NOTIFICATIONS`), segurança via Supabase/Vercel e canal de exclusão de dados via e-mail do DPO (`junior2026izi@gmail.com`).
 - **Acesso no App**: Card com link direto nas Configurações do aplicativo.
 
-## Última Geração de Binários Assinados
-- **Data**: 10/11/2026 17:57 (UTC-3)
-- **APK Release**: `android/app/build/outputs/apk/release/app-release.apk` (4.04 MB)
-- **AAB Bundle**: `android/app/build/outputs/bundle/release/app-release.aab` (3.89 MB)
+## Ajuste Inteligente de Saldo do Motoboy
+- **Componente**: [`src/components/AdjustBalanceModal.tsx`](file:///c:/Users/swami/Downloads/Copiloto/src/components/AdjustBalanceModal.tsx).
+- **Acesso**: Botão **"Ajustar Saldo"** no Card 3 da tela de Finanças (`activeTab === 'billing'`) e no Card de Saldo Atual do Painel (`dashboard`).
+- **Comportamento Automático**:
+  - Se o novo saldo for maior que o atual (excedente): cria automaticamente uma transação de Ganho (Entrada) no valor da diferença com app `ajuste` e turno `ajuste` ("Ajuste de Saldo").
+  - Se o novo saldo for menor que o atual (faltante): cria automaticamente uma transação de Gasto (Saída) no valor da diferença com categoria `ajuste` ("Ajuste de Saldo").
+  - Sincronização automática com Room Database e Supabase Cloud Sync.
+- **Barra Superior**: Botão flutuante de calculadora do topo foi removido, mantendo a barra superior limpa e focada.
+- **Data**: 10/11/2026 18:21 (UTC-3)
+- **APK Release**: `android/app/build/outputs/apk/release/app-release.apk` (4.56 MB)
+- **AAB Bundle**: `android/app/build/outputs/bundle/release/app-release.aab` (4.41 MB)
 - **Assinatura**: `release-key.jks` (alias `mochilinha-release`)
+
+## Sincronização de Despesas da Casa / Moto (Correção 11/11/2026)
+- **Causa raiz**: versões antigas do app (APK) nunca enviavam `householdExpenses` / `bikeExpenses` ao Supabase (ficavam só no aparelho) e o download ignorava esses campos. Aluguel/internet do admin existiam apenas no APK.
+- **Correção** (`src/services/supabaseSync.ts`): (1) `runWorkManagerCloudSync` lê a nuvem antes de gravar e nunca deixa lista padrão/zerada sobrescrever lista configurada; (2) `downloadCloudDataToLocal` envia a configuração local ao banco quando a nuvem ainda não a tem (`pushExpenseConfigIfCloudMissing`); (3) critério único `isHouseholdListCustomized` / `isBikeListCustomized`.
+- **Teste E2E**: `brain/.../scratch/sync_test.ts` (2 aparelhos simulados, conta descartável) - PASSOU.
+- **Atenção**: é preciso instalar um NOVO APK (com esta correção) no aparelho do admin e abri-lo logado uma vez para os dados subirem ao banco.
+
+- **APK Release (11/11/2026 09:02)**: `android/app/build/outputs/apk/release/app-release.apk` (4.35 MB), assinado (apksigner v2 OK), contem a correcao de sincronizacao das despesas da casa/moto e o Ajuste de Saldo. **Atencao de build**: o `JAVA_HOME` da sessao e o JDK 17; o Gradle exige JDK 21. Usar `JAVA_HOME=C:\Program Files\Android\Android Studio1\jbr` ao rodar `gradlew.bat` (senao falha com 'invalid source release: 21').
+
+## Dedução de Despesas do Orçamento Mensal & Feedback de Contas Quitadas (11/11/2026)
+- **Dedução do Orçamento ao Lançar Gasto**:
+  - Tanto na aba **Despesas da Casa** quanto na aba **Despesas da Moto**, o Card 1 ("Total Contas a Pagar / Mês") e o Card 2 ("Separar por Dia") agora exibem o valor restante real a pagar (`monthlyHouseholdRemaining` e `monthlyBikeRemaining`), deduzindo automaticamente qualquer despesa já lançada no mês de competência selecionado (`selectedFinanceMonth`).
+  - No rodapé do Card 1, mostra claramente quanto já foi quitado no mês e o orçamento total estipulado.
+- **Feedback Visual de Conta Quitada**:
+  - Quando uma despesa do mês tem seu pagamento lançado (ex: Aluguel de R$ 1.300,00), o card ganha feedback visual esmeralda (`bg-emerald-950/20 border-emerald-500/60`), badge `✓ Quitado`, badge no status `✅ Quitado no mês (R$ 1.300,00)` e o botão de ação passa a ser `✓ Quitado (+ Lançar Outro)`.
+  - Elimina alertas falsos de "vencido" para contas já pagas no mês.
+- **Navegador de Mês & Filtro de Status**:
+  - Barra de navegação rápida com anterior/próximo e dropdown contendo meses passados e meses futuros até +12 meses (com atalho para "Mês Atual").
+  - Filtros de status: `Todas`, `⏳ A Pagar`, `✅ Quitadas` e `🚨 Vencidas`.
+  - Cronograma de vencimentos e ciclos sincronizado com os pagamentos efetuados no mês.
+
+## Anular e Ativar Ganhos/Gastos no Histórico (11/11/2026)
+- **Funcionalidade**:
+  - Na tela de Histórico, cada item de ganho ou gasto possui um botão dedicado para **Anular** (ícone `Ban`) ou **Ativar/Reativar** (ícone `CheckCircle2`).
+  - Função: `toggleEntryOrExpenseCancelled(id, 'ganho' | 'gasto')`.
+- **Efeito Financeiro Inteligente**:
+  - Quando um item é **anulado** (`isCancelled: true`), ele deixa de entrar na soma de faturamento, despesas, quilometragem rodada e saldo atual/lucro, sem ser excluído permanentemente do banco ou do histórico.
+  - Ao ser **reativado** (`isCancelled: false`), volta a compor os totais normalmente.
+- **Feedback Visual no Histórico**:
+  - Item anulado fica esmaecido com valor riscado (`line-through text-slate-500`) e exibe a badge `🚫 Anulado`.
+  - Botão de alternância com estado visual claro: botão de ativação em verde esmeralda quando anulado, e botão sutil de anulação quando ativo.
+  - Filtro adicional no topo do histórico para visualizar: `Todos os Status`, `Ativos` ou `🚫 Anulados`.

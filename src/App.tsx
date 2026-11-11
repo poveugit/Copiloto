@@ -9,6 +9,7 @@ import {
   Plus,
   Edit3,
   Trash2,
+  Ban,
   RotateCcw,
   Check,
   X,
@@ -145,6 +146,7 @@ import { RelatorioMeiModal } from './components/RelatorioMeiModal';
 import { MetaReversaModal } from './components/MetaReversaModal';
 import { InvestimentosScreen } from './components/InvestimentosScreen';
 import { QuickCalculatorModal } from './components/QuickCalculatorModal';
+import { AdjustBalanceModal } from './components/AdjustBalanceModal';
 import {
   getNotificationPermission,
   initNativeNotifications,
@@ -178,6 +180,7 @@ const BASE_APPS: AppDefinition[] = [
   { id: 'rappi', name: 'Rappi', icon: '🍔' },
   { id: 'keeta', name: 'Keeta', icon: '🛵' },
   { id: 'particular', name: 'Particular / Fixo', icon: '💼' },
+  { id: 'ajuste', name: 'Ajuste de Saldo', icon: '⚖️' },
 ];
 
 const BASE_EXPENSE_CATEGORIES: CategoryDefinition[] = [
@@ -188,6 +191,7 @@ const BASE_EXPENSE_CATEGORIES: CategoryDefinition[] = [
   { id: 'documentacao', name: 'Documentação' },
   { id: 'lavagem', name: 'Lavagem' },
   { id: 'outros', name: 'Outros' },
+  { id: 'ajuste', name: 'Ajuste de Saldo' },
 ];
 
 const BASE_SHIFTS: ShiftDefinition[] = [
@@ -196,6 +200,7 @@ const BASE_SHIFTS: ShiftDefinition[] = [
   { id: 'madrugada', name: 'Madrugada (23h-06h)' },
   { id: 'manha', name: 'Manhã (06h-11h)' },
   { id: 'tarde', name: 'Tarde (15h-18h)' },
+  { id: 'ajuste', name: 'Ajuste Automático' },
 ];
 
 interface FreeNumberInputProps
@@ -578,63 +583,212 @@ function addDaysToDateStr(dateStr: string, daysToAdd: number): string {
   return `${nextY}-${nextM}-${nextD}`;
 }
 
+export function matchesHouseholdExpense(expense: ExpenseEntry, item: HouseholdExpenseItem): boolean {
+  if (expense.householdExpenseId && expense.householdExpenseId === item.id) {
+    return true;
+  }
+  const expCat = (expense.category || '').toLowerCase().trim();
+  const itemName = (item.name || '').toLowerCase().trim();
+  const itemId = (item.id || '').toLowerCase().trim();
+
+  if (expCat === itemName || expCat === itemId) return true;
+  if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+
+  // Casos específicos dos itens padrão
+  if (itemId === 'aluguel' && (expCat.includes('aluguel') || expCat.includes('habita'))) return true;
+  if (itemId === 'energia_luz' && (expCat.includes('luz') || expCat.includes('energia') || expCat.includes('enel') || expCat.includes('cpfl') || expCat.includes('eletric'))) return true;
+  if (itemId === 'agua_saneamento' && (expCat.includes('água') || expCat.includes('agua') || expCat.includes('saneamento') || expCat.includes('sabesp') || expCat.includes('sanepar'))) return true;
+  if (itemId === 'internet_fibra' && (expCat.includes('internet') || expCat.includes('fibra') || expCat.includes('celular') || expCat.includes('telefone') || expCat.includes('conectividade'))) return true;
+  if (itemId === 'supermercado_feira' && (expCat.includes('supermercado') || expCat.includes('feira') || expCat.includes('mercado') || expCat.includes('alimenta'))) return true;
+  if (itemId === 'gas_cozinha' && (expCat.includes('gás') || expCat.includes('gas') || expCat.includes('botijão') || expCat.includes('botijao'))) return true;
+
+  if (expense.description) {
+    const desc = expense.description.toLowerCase();
+    if (desc.includes(itemName) || desc.includes(itemId)) return true;
+  }
+
+  return false;
+}
+
+export function matchesBikeExpense(expense: ExpenseEntry, item: BikeExpenseItem): boolean {
+  if ((expense as any).bikeExpenseId && (expense as any).bikeExpenseId === item.id) {
+    return true;
+  }
+  const expCat = (expense.category || '').toLowerCase().trim();
+  const itemName = (item.name || '').toLowerCase().trim();
+  const itemId = (item.id || '').toLowerCase().trim();
+
+  if (expCat === itemName || expCat === itemId) return true;
+  if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+
+  if (itemId === 'combustivel_mensal' && (expCat === 'combustivel' || expCat.includes('gasolina') || expCat.includes('etanol') || expCat.includes('combustível') || expCat.includes('abastecimento'))) return true;
+  if (itemId === 'oleo_filtro' && (expCat.includes('óleo') || expCat.includes('oleo'))) return true;
+  if (itemId === 'pneus_camaras' && expCat.includes('pneu')) return true;
+  if (itemId === 'kit_transmissao' && (expCat.includes('relação') || expCat.includes('relacao') || expCat.includes('corrente') || expCat.includes('transmissão') || expCat.includes('transmissao'))) return true;
+  if (itemId === 'freios_pastilhas' && (expCat.includes('freio') || expCat.includes('pastilha') || expCat.includes('lona'))) return true;
+  if (itemId === 'seguro_rastreador' && (expCat.includes('seguro') || expCat.includes('rastreador') || expCat.includes('proteção') || expCat.includes('protecao'))) return true;
+  if (itemId === 'ipva_licenciamento' && (expCat.includes('ipva') || expCat.includes('licenciamento') || expCat.includes('dpvat') || expCat.includes('crlv'))) return true;
+
+  if (expense.description) {
+    const desc = expense.description.toLowerCase();
+    if (desc.includes(itemName) || desc.includes(itemId)) return true;
+  }
+
+  return false;
+}
+
 interface ExpenseDueInfo {
   label: string;
   daysRemaining: number;
-  status: 'today' | 'near' | 'overdue' | 'future';
+  status: 'today' | 'near' | 'overdue' | 'future' | 'paid' | 'partial';
   targetDateStr: string;
   badgeClass: string;
   detailNote?: string;
   timelineSortKey: number;
+  paidAmount?: number;
+  remainingAmount?: number;
+  isPaid?: boolean;
 }
 
-function getExpenseDueInfo(item: {
-  recurrenceType?: ExpenseRecurrenceType;
-  dueDay?: number;
-  intervalDays?: number;
-  totalCost?: number;
-  lastPaidDate?: string;
-  nextDueDate?: string;
-}): ExpenseDueInfo {
+function getExpenseDueInfo(
+  item: {
+    id?: string;
+    name?: string;
+    recurrenceType?: ExpenseRecurrenceType;
+    dueDay?: number;
+    intervalDays?: number;
+    totalCost?: number;
+    monthlyAmount?: number;
+    lastPaidDate?: string;
+    nextDueDate?: string;
+  },
+  paidInMonth: number = 0,
+  targetYM?: string
+): ExpenseDueInfo {
   const today = todayStr();
   const currentDay = new Date().getDate();
   const recType = item.recurrenceType || 'monthly';
+  const expectedVal = Math.max(0, Number(item.totalCost || item.monthlyAmount) || 0);
 
+  // 1. SE JÁ FOI QUITADO NESTE MÊS/COMPETÊNCIA:
+  if (paidInMonth >= expectedVal && expectedVal > 0) {
+    return {
+      label: `✅ Quitado no mês (${fmtMoney(paidInMonth)})`,
+      daysRemaining: 999,
+      status: 'paid',
+      targetDateStr: item.lastPaidDate || today,
+      badgeClass: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+      detailNote: `Quitado · ${fmtMoney(paidInMonth)}`,
+      timelineSortKey: 1000,
+      paidAmount: paidInMonth,
+      remainingAmount: 0,
+      isPaid: true,
+    };
+  }
+
+  // 2. SE FOI PAGO PARCIALMENTE:
+  if (paidInMonth > 0 && expectedVal > 0 && paidInMonth < expectedVal) {
+    const remaining = expectedVal - paidInMonth;
+    return {
+      label: `⏳ Parcial: ${fmtMoney(paidInMonth)} pago (resta ${fmtMoney(remaining)})`,
+      daysRemaining: 3,
+      status: 'partial',
+      targetDateStr: today,
+      badgeClass: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
+      detailNote: `Falta ${fmtMoney(remaining)}`,
+      timelineSortKey: 10,
+      paidAmount: paidInMonth,
+      remainingAmount: remaining,
+      isPaid: false,
+    };
+  }
+
+  // Se targetYM for um mês futuro ou passado em relação ao mês atual do relógio
+  const now = new Date();
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const isFutureMonth = Boolean(targetYM && targetYM > currentYM);
+  const isPastMonth = Boolean(targetYM && targetYM < currentYM);
+
+  if (isFutureMonth && targetYM) {
+    const [fy, fm] = targetYM.split('-').map(Number);
+    const futureDueDay = Math.max(1, Math.min(31, Number(item.dueDay) || 10));
+    const targetDate = `${fy}-${String(fm).padStart(2, '0')}-${String(futureDueDay).padStart(2, '0')}`;
+    const daysDiff = calculateDaysDifference(today, targetDate);
+    const mName = PT_BR_MONTH_NAMES[fm - 1] || `${fm}`;
+    return {
+      label: `📅 Previsão: dia ${futureDueDay} de ${mName} (${daysDiff > 0 ? `em ${daysDiff} dias` : 'próximo'})`,
+      daysRemaining: daysDiff,
+      status: 'future',
+      targetDateStr: targetDate,
+      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      detailNote: `Previsão ${mName}`,
+      timelineSortKey: daysDiff,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
+    };
+  }
+
+  if (isPastMonth) {
+    return {
+      label: `⚠️ Mês Encerrado sem Pagamento Registrado`,
+      daysRemaining: -99,
+      status: 'overdue',
+      targetDateStr: today,
+      badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+      detailNote: `Pendente no mês anterior`,
+      timelineSortKey: -99,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
+    };
+  }
+
+  // 3. Regras para o Mês Atual em Andamento
   if (recType === 'interval_days' && item.intervalDays && item.intervalDays > 0) {
     const targetDate = item.nextDueDate || (item.lastPaidDate ? addDaysToDateStr(item.lastPaidDate, item.intervalDays) : addDaysToDateStr(today, item.intervalDays));
     const daysDiff = calculateDaysDifference(today, targetDate);
 
     if (daysDiff === 0) {
       return {
-        label: `🚨 Troca / Vencimento Hoje (${formatPtBrDate(targetDate)})!`,
+        label: `🚨 Vencimento Hoje (${formatPtBrDate(targetDate)})!`,
         daysRemaining: 0,
         status: 'today',
         targetDateStr: targetDate,
         badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     if (daysDiff < 0) {
       return {
-        label: `🚨 Trocar Agora! Venceu há ${Math.abs(daysDiff)} dias (${formatPtBrDate(targetDate)})`,
+        label: `🚨 Venceu há ${Math.abs(daysDiff)} dias (${formatPtBrDate(targetDate)})`,
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: targetDate,
         badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     if (daysDiff <= 7) {
       return {
-        label: `⚠️ Troca Próxima: faltam ${daysDiff} dias (${formatPtBrDate(targetDate)})`,
+        label: `⚠️ Vencimento Próximo: faltam ${daysDiff} dias (${formatPtBrDate(targetDate)})`,
         daysRemaining: daysDiff,
         status: 'near',
         targetDateStr: targetDate,
         badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     return {
@@ -645,6 +799,9 @@ function getExpenseDueInfo(item: {
       badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
       detailNote: `A cada ${item.intervalDays} dias`,
       timelineSortKey: daysDiff,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
     };
   }
 
@@ -659,6 +816,9 @@ function getExpenseDueInfo(item: {
         badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     if (daysDiff < 0) {
@@ -670,6 +830,9 @@ function getExpenseDueInfo(item: {
         badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     if (daysDiff <= 7) {
@@ -681,6 +844,9 @@ function getExpenseDueInfo(item: {
         badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
       };
     }
     return {
@@ -691,6 +857,9 @@ function getExpenseDueInfo(item: {
       badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
       detailNote: 'Data específica',
       timelineSortKey: daysDiff,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
     };
   }
 
@@ -706,6 +875,9 @@ function getExpenseDueInfo(item: {
       badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: 0,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
     };
   }
   if (daysUntilDue > 0 && daysUntilDue <= 4) {
@@ -717,17 +889,23 @@ function getExpenseDueInfo(item: {
       badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
     };
   }
   if (daysUntilDue < 0 && daysUntilDue >= -5) {
     return {
-      label: `Venceu há ${Math.abs(daysUntilDue)} dias (dia ${dueDay})`,
+      label: `🚨 Venceu há ${Math.abs(daysUntilDue)} dias (dia ${dueDay})`,
       daysRemaining: daysUntilDue,
       status: 'overdue',
       targetDateStr: today,
-      badgeClass: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
+      badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue + 30,
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
     };
   }
   return {
@@ -738,6 +916,9 @@ function getExpenseDueInfo(item: {
     badgeClass: 'bg-slate-800/60 text-slate-400 border border-slate-700/40',
     detailNote: `Todo dia ${dueDay}`,
     timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
+    paidAmount: 0,
+    remainingAmount: expectedVal,
+    isPaid: false,
   };
 }
 
@@ -841,6 +1022,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
   const [bikeCategoryFilter, setBikeCategoryFilter] = useState<string>('all');
+  const [bikeStatusFilter, setBikeStatusFilter] = useState<'all' | 'pending' | 'paid' | 'overdue'>('all');
   const [showBikeModal, setShowBikeModal] = useState<boolean>(false);
   const [editingBikeItem, setEditingBikeItem] = useState<BikeExpenseItem | null>(null);
   const [deletingBikeId, setDeletingBikeId] = useState<string | null>(null);
@@ -854,6 +1036,7 @@ export default function App() {
     isActive: true,
   });
   const [householdCategoryFilter, setHouseholdCategoryFilter] = useState<string>('all');
+  const [householdStatusFilter, setHouseholdStatusFilter] = useState<'all' | 'pending' | 'paid' | 'overdue'>('all');
   const [showHouseholdModal, setShowHouseholdModal] = useState<boolean>(false);
   const [editingHouseholdItem, setEditingHouseholdItem] = useState<HouseholdExpenseItem | null>(null);
   const [deletingHouseholdId, setDeletingHouseholdId] = useState<string | null>(null);
@@ -1365,25 +1548,28 @@ export default function App() {
 
   // Computed MVVM Totals (includes live GPS shift distance in real time when shift is active)
   const totals = useMemo(() => {
-    const ridesKm = dbState.entries.reduce((s, e) => s + Number(e.km || 0), 0);
+    const activeEntries = dbState.entries.filter(e => !e.isCancelled);
+    const activeExpenses = dbState.expenses.filter(e => !e.isCancelled);
+
+    const ridesKm = activeEntries.reduce((s, e) => s + Number(e.km || 0), 0);
     const baseTotalKm = (Number(dbState.fuelConfig.odometerBaseKm) || 0) + ridesKm;
     const liveShiftGpsKm =
       activeShiftSession?.isActive && activeShiftSession?.gpsEnabled !== false
         ? Number(activeShiftSession.gpsDistanceKm || 0)
         : 0;
     const totalKm = Math.round((baseTotalKm + liveShiftGpsKm) * 10) / 10;
-    const totalHours = dbState.entries.reduce((s, e) => s + Number(e.hours || 0), 0);
+    const totalHours = activeEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
 
     const revenueByApp: Record<string, number> = {};
     allApps.forEach(a => (revenueByApp[a.id] = 0));
-    dbState.entries.forEach(e => {
+    activeEntries.forEach(e => {
       revenueByApp[e.app] = (revenueByApp[e.app] || 0) + Number(e.revenue || 0);
     });
     const totalRevenue = Object.values(revenueByApp).reduce((a, b) => a + b, 0);
 
     const expenseByCat: Record<string, number> = {};
     allCategories.forEach(c => (expenseByCat[c.id] = 0));
-    dbState.expenses.forEach(e => {
+    activeExpenses.forEach(e => {
       expenseByCat[e.category] = (expenseByCat[e.category] || 0) + Number(e.amount || 0);
     });
     const totalExpense = Object.values(expenseByCat).reduce((a, b) => a + b, 0);
@@ -1450,7 +1636,7 @@ export default function App() {
     let expYear = 0;
 
     dbState.entries.forEach(e => {
-      if (!e.date) return;
+      if (e.isCancelled || !e.date) return;
       const rev = Number(e.revenue || 0);
       const entryDate = new Date(e.date + 'T12:00:00');
       if (entryDate.getFullYear() === currentYear) revYear += rev;
@@ -1459,7 +1645,7 @@ export default function App() {
     });
 
     dbState.expenses.forEach(ex => {
-      if (!ex.date) return;
+      if (ex.isCancelled || !ex.date) return;
       const amt = Number(ex.amount || 0);
       const expDate = new Date(ex.date + 'T12:00:00');
       if (expDate.getFullYear() === currentYear) expYear += amt;
@@ -1499,9 +1685,9 @@ export default function App() {
     dbState.expenses.forEach(ex => {
       if (ex.date && ex.date.length >= 7) set.add(ex.date.slice(0, 7));
     });
-    // Adiciona os últimos 12 meses para o motoboy sempre poder navegar e visualizar
+    // Adiciona os próximos 6 meses futuros e os últimos 12 meses anteriores
     const [cy, cm] = currentYM.split('-').map(Number);
-    for (let i = 1; i <= 12; i++) {
+    for (let i = -6; i <= 12; i++) {
       const d = new Date(cy, cm - 1 - i, 1);
       const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       set.add(ym);
@@ -1512,10 +1698,10 @@ export default function App() {
   // Finanças completas do mês selecionado na Central de Finanças
   const selectedMonthFinancials = useMemo(() => {
     const mEntries = dbState.entries.filter(
-      e => e.date && e.date.startsWith(selectedFinanceMonth)
+      e => !e.isCancelled && e.date && e.date.startsWith(selectedFinanceMonth)
     );
     const mExpenses = dbState.expenses.filter(
-      ex => ex.date && ex.date.startsWith(selectedFinanceMonth)
+      ex => !ex.isCancelled && ex.date && ex.date.startsWith(selectedFinanceMonth)
     );
 
     const totalRevenue = mEntries.reduce((s, e) => s + (Number(e.revenue) || 0), 0);
@@ -1579,8 +1765,9 @@ export default function App() {
   // Shift & Bike Diagnostics
   const shiftEval = useMemo(() => {
     const today = todayStr();
-    const todayEntries = dbState.entries.filter(e => e.date === today);
-    return evaluateShiftWorthiness(todayEntries, dbState.dailyGoal, dbState.entries);
+    const activeEntries = dbState.entries.filter(e => !e.isCancelled);
+    const todayEntries = activeEntries.filter(e => e.date === today);
+    return evaluateShiftWorthiness(todayEntries, dbState.dailyGoal, activeEntries);
   }, [dbState.entries, dbState.dailyGoal]);
 
   const bikeDiagnostics = useMemo(() => {
@@ -2316,15 +2503,45 @@ export default function App() {
     });
   };
 
+  const getHouseholdExpenseMonthPayments = useCallback(
+    (item: HouseholdExpenseItem, targetYM: string) => {
+      const matching = (dbState.expenses || []).filter(
+        e => !e.isCancelled && e.date && e.date.startsWith(targetYM) && matchesHouseholdExpense(e, item)
+      );
+      const totalPaid = matching.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+      return { matching, totalPaid };
+    },
+    [dbState.expenses]
+  );
+
+  const getBikeExpenseMonthPayments = useCallback(
+    (item: BikeExpenseItem, targetYM: string) => {
+      const matching = (dbState.expenses || []).filter(
+        e => !e.isCancelled && e.date && e.date.startsWith(targetYM) && matchesBikeExpense(e, item)
+      );
+      const totalPaid = matching.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+      return { matching, totalPaid };
+    },
+    [dbState.expenses]
+  );
+
   const openNewBikePaymentModal = (item: BikeExpenseItem) => {
     setEditingEntryId(null);
     setEntryMode('gasto');
     setExpenseType('moto');
+    setSelectedBikeExpenseId(item.id);
+    setSelectedHouseholdExpenseId('');
     setSelectedCategory(item.name);
     setEntryDate(todayStr());
-    const payVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
+
+    const targetYM = selectedFinanceMonth || todayStr().slice(0, 7);
+    const { totalPaid } = getBikeExpenseMonthPayments(item, targetYM);
+    const fullVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
       ? item.totalCost
-      : item.monthlyAmount;
+      : ((item as any).monthlyCost || item.monthlyAmount);
+    const remainingVal = Math.max(0, fullVal - totalPaid);
+    const payVal = remainingVal > 0 ? remainingVal : fullVal;
+
     setExpenseAmount(payVal > 0 ? String(payVal) : '');
     setExpenseDescription(`Pagamento / Manutenção: ${item.name}`);
     setShowNewHouseholdInModal(false);
@@ -2494,6 +2711,7 @@ export default function App() {
   const [expenseType, setExpenseType] = useState<'moto' | 'casa'>('moto');
   const [expenseDescription, setExpenseDescription] = useState<string>('');
   const [selectedHouseholdExpenseId, setSelectedHouseholdExpenseId] = useState<string>('');
+  const [selectedBikeExpenseId, setSelectedBikeExpenseId] = useState<string>('');
   const [showNewHouseholdInModal, setShowNewHouseholdInModal] = useState<boolean>(false);
   const [newHouseholdNameInModal, setNewHouseholdNameInModal] = useState<string>('');
   const [newHouseholdCatInModal, setNewHouseholdCatInModal] = useState<HouseholdCategory>('outros');
@@ -2518,6 +2736,60 @@ export default function App() {
   // Expense Category Add State
   const [newCustomCatName, setNewCustomCatName] = useState<string>('');
   const [showNewCatInput, setShowNewCatInput] = useState<boolean>(false);
+
+  // ================= MODAL AJUSTAR SALDO ATUAL =================
+  const [showAdjustBalanceModal, setShowAdjustBalanceModal] = useState<boolean>(false);
+  const [adjustBaseBalance, setAdjustBaseBalance] = useState<number>(0);
+
+  const handleOpenAdjustBalance = (currentBal: number) => {
+    setAdjustBaseBalance(currentBal);
+    setShowAdjustBalanceModal(true);
+  };
+
+  const handleConfirmAdjustBalance = ({
+    targetBalance,
+    diff,
+    date,
+    notes,
+  }: {
+    targetBalance: number;
+    diff: number;
+    date: string;
+    notes: string;
+  }) => {
+    if (Math.abs(diff) < 0.01) return;
+
+    let nextDb: LocalRoomDatabaseState = { ...dbState };
+    const txDate = date || todayStr();
+    const txNote = notes.trim() || 'Ajuste de Saldo';
+
+    if (diff > 0) {
+      // Excedente -> Criar transação de Ganho (RideEntry)
+      const newEntry: RideEntry = {
+        id: Date.now(),
+        date: txDate,
+        app: 'ajuste',
+        shift: 'ajuste',
+        km: 0,
+        revenue: Math.round(diff * 100) / 100,
+        hours: 0,
+      };
+      nextDb.entries = [...(nextDb.entries || []), newEntry];
+    } else {
+      // Faltante -> Criar transação de Despesa (ExpenseEntry)
+      const newExpense: ExpenseEntry = {
+        id: Date.now(),
+        date: txDate,
+        category: 'ajuste',
+        amount: Math.round(Math.abs(diff) * 100) / 100,
+        expenseType: 'moto',
+        description: txNote,
+      };
+      nextDb.expenses = [...(nextDb.expenses || []), newExpense];
+    }
+
+    persistAndEnqueueWorkManager(nextDb);
+  };
 
   // ================= NEW FEATURES MODALS & SHIFT / VOICE / GPS STATE =================
   const [showRadarModal, setShowRadarModal] = useState<boolean>(false);
@@ -2879,13 +3151,20 @@ export default function App() {
     setEntryMode('gasto');
     setExpenseType('casa');
     setSelectedHouseholdExpenseId(item.id);
+    setSelectedBikeExpenseId('');
     setSelectedCategory(item.name);
     setEntryDate(todayStr());
-    const payVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
+
+    const targetYM = selectedFinanceMonth || todayStr().slice(0, 7);
+    const { totalPaid } = getHouseholdExpenseMonthPayments(item, targetYM);
+    const fullVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
       ? item.totalCost
       : item.monthlyAmount;
+    const remainingVal = Math.max(0, fullVal - totalPaid);
+    const payVal = remainingVal > 0 ? remainingVal : fullVal;
+
     setExpenseAmount(payVal > 0 ? String(payVal) : '');
-    setExpenseDescription('');
+    setExpenseDescription(`Pagamento: ${item.name}`);
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
     setEntryModalFeedback(null);
@@ -2926,6 +3205,20 @@ export default function App() {
       );
       const isHousehold =
         item.expenseType === 'casa' ||
+        Boolean(item.householdExpenseId) ||
+        Boolean(
+          item.category &&
+            (item.category.toLowerCase().includes('(casa)') ||
+              item.category.toLowerCase().includes('casa') ||
+              item.category.toLowerCase().includes('supermercado') ||
+              item.category.toLowerCase().includes('feira') ||
+              item.category.toLowerCase().includes('mercado') ||
+              item.category.toLowerCase().includes('aluguel') ||
+              item.category.toLowerCase().includes('energia') ||
+              item.category.toLowerCase().includes('luz') ||
+              item.category.toLowerCase().includes('água') ||
+              item.category.toLowerCase().includes('internet'))
+        ) ||
         (dbState.householdExpenses || []).some(
           (h: HouseholdExpenseItem) =>
             h.id === item.householdExpenseId ||
@@ -3287,6 +3580,10 @@ export default function App() {
                       expenseType === 'casa'
                         ? selectedHouseholdExpenseId || undefined
                         : undefined,
+                    bikeExpenseId:
+                      expenseType === 'moto'
+                        ? selectedBikeExpenseId || undefined
+                        : undefined,
                     ...(isFuel
                       ? {
                           liters: litersVal,
@@ -3313,6 +3610,10 @@ export default function App() {
                   expenseType === 'casa'
                     ? selectedHouseholdExpenseId || undefined
                     : undefined,
+                bikeExpenseId:
+                  expenseType === 'moto'
+                    ? selectedBikeExpenseId || undefined
+                    : undefined,
                 ...(isFuel
                   ? {
                       liters: litersVal,
@@ -3331,6 +3632,42 @@ export default function App() {
         };
       }
 
+      if (expenseType === 'casa') {
+        const targetHId = selectedHouseholdExpenseId;
+        nextDb.householdExpenses = (nextDb.householdExpenses || []).map(h => {
+          if (h.id === targetHId || h.name.toLowerCase() === finalCategoryId.toLowerCase()) {
+            const intDays = Math.max(1, Number(h.intervalDays) || 30);
+            return {
+              ...h,
+              lastPaidDate: entryDate,
+              nextDueDate:
+                h.recurrenceType === 'interval_days'
+                  ? addDaysToDateStr(entryDate, intDays)
+                  : addDaysToDateStr(entryDate, 30),
+            };
+          }
+          return h;
+        });
+      }
+
+      if (expenseType === 'moto') {
+        const targetBId = selectedBikeExpenseId;
+        nextDb.bikeExpenses = (nextDb.bikeExpenses || []).map(b => {
+          if (b.id === targetBId || b.name.toLowerCase() === finalCategoryId.toLowerCase()) {
+            const intDays = Math.max(1, Number(b.intervalDays) || 30);
+            return {
+              ...b,
+              lastPaidDate: entryDate,
+              nextDueDate:
+                b.recurrenceType === 'interval_days'
+                  ? addDaysToDateStr(entryDate, intDays)
+                  : addDaysToDateStr(entryDate, 30),
+            };
+          }
+          return b;
+        });
+      }
+
       persistAndEnqueueWorkManager({
         ...nextDb,
         expenses: updatedExpenses,
@@ -3341,6 +3678,8 @@ export default function App() {
     setEntryModalFeedback(null);
     setShowEntryModal(false);
     setEditingEntryId(null);
+    setSelectedHouseholdExpenseId('');
+    setSelectedBikeExpenseId('');
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
   };
@@ -3348,6 +3687,21 @@ export default function App() {
   // History Filters
   const [historyTypeFilter, setHistoryTypeFilter] = useState<'all' | 'ganho' | 'gasto'>('all');
   const [historySubFilter, setHistorySubFilter] = useState<string>('all');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'active' | 'cancelled'>('all');
+
+  const toggleEntryOrExpenseCancelled = (id: number, type: 'ganho' | 'gasto') => {
+    let nextDb: LocalRoomDatabaseState = { ...dbState };
+    if (type === 'ganho') {
+      nextDb.entries = (nextDb.entries || []).map(e =>
+        e.id === id ? { ...e, isCancelled: !e.isCancelled } : e
+      );
+    } else {
+      nextDb.expenses = (nextDb.expenses || []).map(ex =>
+        ex.id === id ? { ...ex, isCancelled: !ex.isCancelled } : ex
+      );
+    }
+    persistAndEnqueueWorkManager(nextDb);
+  };
 
   // Mochilinha Chat Modal
   const [showCopilotModal, setShowCopilotModal] = useState<boolean>(false);
@@ -3415,7 +3769,7 @@ export default function App() {
       d.setDate(d.getDate() - i);
       const iso = d.toISOString().slice(0, 10);
       const [, m, dd] = iso.split('-');
-      const dayEntries = dbState.entries.filter(e => e.date === iso);
+      const dayEntries = dbState.entries.filter(e => !e.isCancelled && e.date === iso);
       days.push({
         date: iso,
         label: `${dd}/${m}`,
@@ -3432,7 +3786,7 @@ export default function App() {
     const d = new Date();
     while (true) {
       const ds = d.toISOString().slice(0, 10);
-      const has = dbState.entries.some(e => e.date === ds) || dbState.expenses.some(e => e.date === ds);
+      const has = dbState.entries.some(e => !e.isCancelled && e.date === ds) || dbState.expenses.some(e => !e.isCancelled && e.date === ds);
       if (has) {
         streak++;
         d.setDate(d.getDate() - 1);
@@ -3459,7 +3813,7 @@ export default function App() {
     const customGoalTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Ganhos';
 
     // Today stats
-    const todayEntries = dbState.entries.filter(e => e.date === today);
+    const todayEntries = dbState.entries.filter(e => !e.isCancelled && e.date === today);
     const revToday = todayEntries.reduce((s, e) => s + Number(e.revenue || 0), 0);
     const kmToday = todayEntries.reduce((s, e) => s + Number(e.km || 0), 0);
     const hoursToday = todayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
@@ -3477,7 +3831,7 @@ export default function App() {
     sunday.setHours(23, 59, 59, 999);
 
     const weekEntries = dbState.entries.filter(e => {
-      if (!e.date) return false;
+      if (e.isCancelled || !e.date) return false;
       const dt = new Date(e.date + 'T12:00:00');
       return dt >= monday && dt <= sunday;
     });
@@ -3506,7 +3860,7 @@ export default function App() {
     > = {};
 
     dbState.entries.forEach(e => {
-      if (!e.date) return;
+      if (e.isCancelled || !e.date) return;
       if (!byDateMap[e.date]) {
         byDateMap[e.date] = { date: e.date, rev: 0, km: 0, hours: 0, count: 0, exp: 0 };
       }
@@ -3517,7 +3871,7 @@ export default function App() {
     });
 
     dbState.expenses.forEach(ex => {
-      if (!ex.date) return;
+      if (ex.isCancelled || !ex.date) return;
       if (!byDateMap[ex.date]) {
         byDateMap[ex.date] = { date: ex.date, rev: 0, km: 0, hours: 0, count: 0, exp: 0 };
       }
@@ -3604,6 +3958,7 @@ export default function App() {
       appStatsMap[a.id] = { id: a.id, name: a.name, icon: a.icon, rev: 0, km: 0, hours: 0, count: 0 };
     });
     dbState.entries.forEach(e => {
+      if (e.isCancelled) return;
       if (!appStatsMap[e.app]) {
         appStatsMap[e.app] = {
           id: e.app,
@@ -3641,6 +3996,7 @@ export default function App() {
       shiftStatsMap[s.id] = { id: s.id, name: s.name, rev: 0, km: 0, hours: 0, count: 0 };
     });
     dbState.entries.forEach(e => {
+      if (e.isCancelled) return;
       const shId = e.shift || 'almoco';
       if (!shiftStatsMap[shId]) {
         shiftStatsMap[shId] = { id: shId, name: shId, rev: 0, km: 0, hours: 0, count: 0 };
@@ -3675,7 +4031,7 @@ export default function App() {
 
     // Last 7 days detailed evolution
     const last7DaysDetailed = chart7Days.map(d => {
-      const dayEntries = dbState.entries.filter(e => e.date === d.date);
+      const dayEntries = dbState.entries.filter(e => !e.isCancelled && e.date === d.date);
       const hours = dayEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
       const goalPct = dailyGoal > 0 ? Math.min(100, Math.round((d.rev / dailyGoal) * 100)) : 0;
       const revPerHour = hours > 0 ? d.rev / hours : 0;
@@ -4273,7 +4629,65 @@ export default function App() {
       (sum, h) => sum + Math.max(0, Number(h.monthlyAmount) || 0),
       0
     );
-    const dailyHouseholdReserve = monthlyHouseholdCost / workDaysPerMonth;
+
+    // Mês de referência para conferência de pagamentos realizados e dedução do orçamento
+    const currentYM = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const targetFinanceYM = selectedFinanceMonth || currentYM;
+
+    // Calcula pagamentos efetuados e saldo restante a quitar das contas da casa
+    let monthlyHouseholdPaid = 0;
+    let monthlyHouseholdRemaining = 0;
+    let householdPaidCount = 0;
+    let householdPendingCount = 0;
+
+    activeHouseholdExpenses.forEach(h => {
+      const matching = (dbState.expenses || []).filter(
+        e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesHouseholdExpense(e, h)
+      );
+      const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const budget = Math.max(0, Number(h.monthlyAmount) || 0);
+      monthlyHouseholdPaid += paid;
+      const rem = Math.max(0, budget - paid);
+      monthlyHouseholdRemaining += rem;
+      if (paid >= budget && budget > 0) {
+        householdPaidCount++;
+      } else {
+        householdPendingCount++;
+      }
+    });
+
+    // Calcula pagamentos efetuados e saldo restante a quitar das contas da moto
+    let monthlyBikePaid = 0;
+    let monthlyBikeRemaining = 0;
+    let bikePaidCount = 0;
+    let bikePendingCount = 0;
+
+    activeEnrichedBikeExpenses.forEach(b => {
+      const matching = (dbState.expenses || []).filter(
+        e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesBikeExpense(e, b)
+      );
+      const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const budget = (b as any).monthlyCost ?? Number(b.monthlyAmount || 0);
+      monthlyBikePaid += paid;
+      const rem = Math.max(0, budget - paid);
+      monthlyBikeRemaining += rem;
+      if (paid >= budget && budget > 0) {
+        bikePaidCount++;
+      } else {
+        bikePendingCount++;
+      }
+    });
+
+    // Rateio diário obrigatório das despesas da moto considerando o que resta pagar (deduzido dos gastos já lançados)
+    const dailyBikeRemainingReserve = monthlyBikeRemaining > 0
+      ? monthlyBikeRemaining / workDaysPerMonth
+      : 0;
+    const weeklyBikeRemainingReserve = dailyBikeRemainingReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
+
+    // Rateio diário obrigatório das despesas da casa considerando o que resta pagar (deduzido dos gastos já lançados)
+    const dailyHouseholdReserve = monthlyHouseholdRemaining > 0
+      ? monthlyHouseholdRemaining / workDaysPerMonth
+      : 0;
     const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
 
@@ -4293,7 +4707,7 @@ export default function App() {
     const totalDailyCostsAndReserves =
       dailyBikeCostsTotal + dailyHouseholdReserve + dailyEmergencyReserve;
     const totalMonthlyCostsAndReserves =
-      monthlyBikeCostsTotal + monthlyHouseholdCost + monthlyEmergencyReserve;
+      monthlyBikeCostsTotal + monthlyHouseholdRemaining + monthlyEmergencyReserve;
     const totalReservesPctOfGross =
       dailyGross > 0 ? Math.round((totalDailyCostsAndReserves / dailyGross) * 100) : 0;
 
@@ -4308,7 +4722,7 @@ export default function App() {
     const breakEvenBikeDaily = dailyBikeCostsTotal;
     // Nível 2: Break-even Total (Moto + Casa: R$/dia para pagar trabalho e contas da casa)
     const breakEvenDaily = dailyBikeCostsTotal + dailyHouseholdReserve;
-    const breakEvenMonthly = monthlyBikeCostsTotal + monthlyHouseholdCost;
+    const breakEvenMonthly = monthlyBikeCostsTotal + monthlyHouseholdRemaining;
     // Nível 3: Ponto de Blindagem (Moto + Casa + Emergência)
     const shieldDaily = totalDailyCostsAndReserves;
 
@@ -4368,13 +4782,23 @@ export default function App() {
       enrichedBikeExpenses,
       activeEnrichedBikeExpenses,
       monthlyBikeExpensesTotal,
+      monthlyBikePaid,
+      monthlyBikeRemaining,
+      bikePaidCount,
+      bikePendingCount,
       dailyBikeExpensesReserve,
       weeklyBikeExpensesReserve,
+      dailyBikeRemainingReserve,
+      weeklyBikeRemainingReserve,
       bikeExpensesPctOfGross,
       // Despesas da Casa & Família
       rawHouseholdExpenses,
       activeHouseholdExpenses,
       monthlyHouseholdCost,
+      monthlyHouseholdPaid,
+      monthlyHouseholdRemaining,
+      householdPaidCount,
+      householdPendingCount,
       dailyHouseholdReserve,
       weeklyHouseholdReserve,
       housePctOfGross,
@@ -4405,13 +4829,13 @@ export default function App() {
       totalRealLoggedExp,
       totalRealLoggedProfit,
     };
-  }, [dbState, finPlan, progressAnalytics, totals]);
+  }, [dbState, finPlan, progressAnalytics, totals, selectedFinanceMonth]);
 
   // ================= TELEMETRIA REAL DO COMBUSTÍVEL & AUTONOMIA BASEADA EM ABASTECIMENTO =================
   const fuelTelemetry = useMemo(() => {
     const kmPerLiter = Math.max(5, Number(dbState.fuelConfig.kmPerLiter) || 35);
     const fuelExpenses = dbState.expenses
-      .filter(ex => ex.category === 'combustivel')
+      .filter(ex => !ex.isCancelled && ex.category === 'combustivel')
       .sort((a, b) => {
         if (a.date !== b.date) {
           return b.date.localeCompare(a.date);
@@ -4489,8 +4913,8 @@ export default function App() {
       const iso = d.toISOString().slice(0, 10);
       const [yyyy, mm, dd] = iso.split('-');
 
-      const dayEntries = dbState.entries.filter(e => e.date === iso);
-      const dayExpenses = dbState.expenses.filter(e => e.date === iso);
+      const dayEntries = dbState.entries.filter(e => !e.isCancelled && e.date === iso);
+      const dayExpenses = dbState.expenses.filter(e => !e.isCancelled && e.date === iso);
 
       const rev = dayEntries.reduce((s, e) => s + (Number(e.revenue) || 0), 0);
       const km = dayEntries.reduce((s, e) => s + (Number(e.km) || 0), 0);
@@ -4626,8 +5050,8 @@ export default function App() {
       const yearMonth = `${yyyy}-${mmStr}`;
       const shortYear = String(yyyy).slice(-2);
 
-      const monthEntries = dbState.entries.filter(e => (e.date || '').startsWith(yearMonth));
-      const monthExpenses = dbState.expenses.filter(ex => (ex.date || '').startsWith(yearMonth));
+      const monthEntries = dbState.entries.filter(e => !e.isCancelled && (e.date || '').startsWith(yearMonth));
+      const monthExpenses = dbState.expenses.filter(ex => !ex.isCancelled && (ex.date || '').startsWith(yearMonth));
 
       const rev = monthEntries.reduce((acc, e) => acc + (Number(e.revenue) || 0), 0);
       const exp = monthExpenses.reduce((acc, ex) => acc + (Number(ex.amount) || 0), 0);
@@ -5492,17 +5916,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Botão Global da Calculadora Rápida */}
-          <button
-            type="button"
-            onClick={() => openQuickCalculator('Calculadora Rápida do Motoboy', '', () => {})}
-            aria-label="Calculadora Rápida"
-            title="Abrir Calculadora Inteligente"
-            className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center border ${surfaceSubtle} text-[#FF6A1A] hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10`}
-          >
-            <Calculator className="w-4 h-4 shrink-0" />
-          </button>
-
           {/* Botão de Conta / Login Rápido */}
           <button
             type="button"
@@ -6055,6 +6468,15 @@ export default function App() {
                           <span className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
                             {periodSaldoLabel}
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAdjustBalance(curBalance)}
+                            className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
+                            title="Ajustar Saldo Atual e Gerar Transação Automática"
+                          >
+                            <SlidersHorizontal className="w-3.5 h-3.5" />
+                            <span>Ajustar Saldo</span>
+                          </button>
                         </div>
 
                         <div className="mt-1 flex items-baseline gap-2 flex-wrap">
@@ -8698,15 +9120,26 @@ export default function App() {
                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
                           3. Saldo Atual (Lucro Real)
                         </span>
-                        <span
-                          className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
-                            selectedMonthFinancials.currentBalance >= 0
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-rose-500/20 text-rose-300'
-                          }`}
-                        >
-                          {selectedMonthFinancials.netMarginPct}% livre
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAdjustBalance(selectedMonthFinancials.currentBalance)}
+                            className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
+                            title="Ajustar Saldo Atual e Gerar Transação Automática"
+                          >
+                            <SlidersHorizontal className="w-3 h-3" />
+                            <span>Ajustar Saldo</span>
+                          </button>
+                          <span
+                            className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                              selectedMonthFinancials.currentBalance >= 0
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-rose-500/20 text-rose-300'
+                            }`}
+                          >
+                            {selectedMonthFinancials.netMarginPct}% livre
+                          </span>
+                        </div>
                       </div>
                       <div
                         className={`text-xl sm:text-2xl font-black tabular-nums mt-1 ${
@@ -8720,9 +9153,14 @@ export default function App() {
                     </div>
                     <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Dinheiro limpo:</span>
-                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-200">
-                        Sobra no seu bolso
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAdjustBalance(selectedMonthFinancials.currentBalance)}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Ajustar Saldo Real</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
 
@@ -8872,13 +9310,16 @@ export default function App() {
                 {/* CARD DETALHADO DE RECONCILIAÇÃO FINANCEIRA: SALDO DO MÊS VS. PROVISÃO DA CASA E MOTO */}
                 {(() => {
                   const houseMonthly = financialIntelligence.monthlyHouseholdCost;
+                  const houseRemaining = financialIntelligence.monthlyHouseholdRemaining;
+                  const housePaid = financialIntelligence.monthlyHouseholdPaid;
                   const bikeMonthly = financialIntelligence.monthlyBikeExpensesTotal;
                   const curBal = selectedMonthFinancials.currentBalance;
-                  const netAfterHouse = curBal - houseMonthly;
+                  // O saldo livre deduz apenas o orçamento que ainda resta quitar no mês (sem duplicar gastos já lançados)
+                  const netAfterHouse = curBal - houseRemaining;
                   const isCovered = netAfterHouse >= 0;
-                  const missingForHouse = Math.max(0, houseMonthly - curBal);
+                  const missingForHouse = Math.max(0, houseRemaining - curBal);
                   const houseCoveragePct = houseMonthly > 0
-                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, curBal) / houseMonthly) * 100)))
+                    ? Math.min(100, Math.max(0, Math.round(((housePaid + Math.max(0, curBal)) / houseMonthly) * 100)))
                     : 100;
                   const remainingWorkDays = Math.max(
                     1,
@@ -8906,11 +9347,13 @@ export default function App() {
                                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                                   : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                               }`}>
-                                {isCovered ? '✅ Contas da Casa Cobertas!' : `⏳ ${houseCoveragePct}% das Contas da Casa Coberto`}
+                                {isCovered
+                                  ? (houseRemaining === 0 ? '✅ Contas da Casa 100% Quitadas no Mês!' : '✅ Contas Restantes da Casa Cobertas!')
+                                  : `⏳ ${houseCoveragePct}% das Contas da Casa Coberto`}
                               </span>
                             </div>
                             <p className={`text-[11px] mt-0.5 ${mutedText}`}>
-                              Mostra quanto sobra livre no seu bolso após descontar do seu <strong>Saldo Atual do Mês</strong> todas as contas fixas da sua residência.
+                              Mostra quanto sobra livre no seu bolso após descontar do seu <strong>Saldo Atual do Mês</strong> as contas fixas que ainda restam pagar neste mês.
                             </p>
                           </div>
                         </div>
@@ -8950,17 +9393,19 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Bloco 2: Provisão Mensal das Contas da Casa */}
+                        {/* Bloco 2: Provisão Mensal das Contas da Casa Restantes */}
                         <div className={`rounded-xl p-3 border border-blue-500/25 bg-blue-500/5`}>
                           <div className="text-[10px] font-bold uppercase text-blue-400 flex items-center justify-between">
-                            <span>2. (−) Provisão Contas da Casa</span>
-                            <span>{financialIntelligence.activeHouseholdExpenses.length} ativas</span>
+                            <span>2. (−) Contas da Casa a Pagar</span>
+                            <span>{financialIntelligence.householdPaidCount}/{financialIntelligence.activeHouseholdExpenses.length} quitadas</span>
                           </div>
                           <div className="text-base sm:text-lg font-black tabular-nums text-blue-400 mt-0.5">
-                            - {fmtCurrencyExact(houseMonthly)}
+                            - {fmtCurrencyExact(houseRemaining)}
                           </div>
                           <div className={`text-[10px] mt-1 ${mutedText}`}>
-                            Rateio: {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia útil ({financialIntelligence.workDaysPerMonth} dias)
+                            {housePaid > 0
+                              ? `${fmtMoney(housePaid)} já quitado no mês · Orçamento total: ${fmtMoney(houseMonthly)}`
+                              : `Rateio: ${fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia útil (${financialIntelligence.workDaysPerMonth} dias)`}
                           </div>
                         </div>
 
@@ -8984,8 +9429,10 @@ export default function App() {
                             isCovered ? 'text-emerald-300/90' : 'text-rose-300/90'
                           }`}>
                             {isCovered
-                              ? 'Dinheiro limpo após pagar todas as contas da casa!'
-                              : `Faltam ${fmtMoney(missingForHouse)} para cobrir as contas da casa`}
+                              ? (houseRemaining === 0
+                                  ? '🎉 Todas as contas da casa do mês estão pagas! Saldo 100% livre!'
+                                  : 'Saldo suficiente para quitar todas as contas restantes da casa!')
+                              : `Faltam ${fmtMoney(missingForHouse)} para quitar as contas restantes da casa`}
                           </div>
                         </div>
 
@@ -8995,12 +9442,12 @@ export default function App() {
                             4. Meta p/ Quitar Casa no Mês
                           </div>
                           <div className="text-base sm:text-lg font-black tabular-nums text-[#FF6A1A] mt-0.5">
-                            {isCovered ? 'R$ 0,00/dia' : `${fmtCurrencyExact(dailyNeededToCoverHouse)}/dia`}
+                            {houseRemaining === 0 ? 'R$ 0,00/dia' : `${fmtCurrencyExact(dailyNeededToCoverHouse)}/dia`}
                           </div>
                           <div className={`text-[10px] mt-1 ${mutedText}`}>
-                            {isCovered
-                              ? 'Meta residencial concluída neste mês!'
-                              : `Nos próximos ~${remainingWorkDays} dias úteis (+ Moto: ${fmtCurrencyExact(financialIntelligence.dailyBikeExpensesReserve)}/dia)`}
+                            {houseRemaining === 0
+                              ? 'Contas da casa 100% concluídas neste mês!'
+                              : `Nos próximos ~${remainingWorkDays} dias úteis (${fmtCurrencyExact(houseRemaining)} restante)`}
                           </div>
                         </div>
                       </div>
@@ -9377,17 +9824,19 @@ export default function App() {
                       <div className="flex items-center justify-between text-xs font-bold mb-1">
                         <span className="text-[#FF6A1A] flex items-center gap-1.5 font-black">
                           <span>🏍️</span>
-                          <span>Total Custos Moto / Mês</span>
+                          <span>Total Custos Moto a Pagar</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A]">
-                          {financialIntelligence.activeBikeExpenses.length} ativas
+                          {financialIntelligence.bikePaidCount}/{financialIntelligence.activeBikeExpenses.length} quitadas
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black text-[#FF6A1A] tabular-nums">
-                        {fmtCurrencyExact(financialIntelligence.monthlyBikeExpensesTotal)}
+                        {fmtCurrencyExact(financialIntelligence.monthlyBikeRemaining)}
                       </div>
                       <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                        Custos operacionais e peças da moto
+                        {financialIntelligence.monthlyBikePaid > 0
+                          ? `${fmtMoney(financialIntelligence.monthlyBikePaid)} já quitado · Orçamento: ${fmtMoney(financialIntelligence.monthlyBikeExpensesTotal)}`
+                          : `Orçamento total definido: ${fmtMoney(financialIntelligence.monthlyBikeExpensesTotal)}`}
                       </div>
                     </div>
 
@@ -9396,18 +9845,20 @@ export default function App() {
                       <div className="flex items-center justify-between text-xs font-bold mb-1">
                         <span className="text-amber-400 flex items-center gap-1.5 font-black">
                           <span>📅</span>
-                          <span>Separar por Dia</span>
+                          <span>Separar por Dia (Restante)</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
                           {financialIntelligence.workDaysPerMonth} dias úteis
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
-                        {fmtCurrencyExact(financialIntelligence.dailyBikeExpensesReserve)}
+                        {fmtCurrencyExact(financialIntelligence.dailyBikeRemainingReserve)}
                         <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                       </div>
                       <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                        {fmtCurrencyExact(financialIntelligence.weeklyBikeExpensesReserve)}/semana estimada
+                        {financialIntelligence.monthlyBikeRemaining === 0
+                          ? '🎉 100% dos custos da moto quitados no mês!'
+                          : `${fmtCurrencyExact(financialIntelligence.weeklyBikeRemainingReserve)}/semana restante`}
                       </div>
                     </div>
 
@@ -9470,42 +9921,141 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* FILTRO POR CATEGORIA E LISTAGEM DAS CONTAS DA MOTO */}
+                {/* FILTRO POR CATEGORIA, MÊS, STATUS E LISTAGEM DAS CONTAS DA MOTO */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/50">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-sm sm:text-base font-black">
-                        Suas Contas e Despesas da Moto
-                      </h3>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                        {financialIntelligence.rawBikeExpenses.length} cadastradas
-                      </span>
+                  <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-slate-800/50">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm sm:text-base font-black">
+                          Suas Contas e Despesas da Moto
+                        </h3>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                          {financialIntelligence.rawBikeExpenses.length} cadastradas
+                        </span>
+                      </div>
+
+                      {/* Seletor / Navegação de Mês de Competência */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                            const d = new Date(y, m - 2, 1);
+                            setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                          title="Mês Anterior"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                          <span className="hidden sm:inline">Anterior</span>
+                        </button>
+
+                        <div className="relative">
+                          <select
+                            value={selectedFinanceMonth}
+                            onChange={e => setSelectedFinanceMonth(e.target.value)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none pr-7 ${inputSurface}`}
+                          >
+                            {availableFinanceMonths.map(ym => {
+                              const [y, m] = ym.split('-');
+                              const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+                              const now = new Date();
+                              const nowYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                              const isFuture = ym > nowYM;
+                              return (
+                                <option key={ym} value={ym}>
+                                  {name} de {y} {ym === nowYM ? '· (Atual)' : isFuture ? '· (Futuro)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <ChevronDown className="w-3 h-3 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-70" />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                            const d = new Date(y, m, 1);
+                            setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                          title="Próximo Mês"
+                        >
+                          <span className="hidden sm:inline">Próximo</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+
+                        {selectedFinanceMonth !== `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}` && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const now = new Date();
+                              setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 cursor-pointer transition-colors"
+                          >
+                            Mês Atual
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Filtros Rápidos de Categoria */}
-                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
-                      {[
-                        { id: 'all', label: 'Todas' },
-                        { id: 'combustivel', label: '⛽ Combustível' },
-                        { id: 'manutencao', label: '🔧 Peças & Oficina' },
-                        { id: 'documentacao', label: '📄 Documentos & IPVA' },
-                        { id: 'seguro', label: '🛡️ Seguro & Proteção' },
-                        { id: 'equipamento', label: '🪖 Equipamentos' },
-                        { id: 'outros', label: 'Outros' },
-                      ].map(cat => (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => setBikeCategoryFilter(cat.id)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
-                            bikeCategoryFilter === cat.id
-                              ? 'bg-[#FF6A1A] text-black font-black'
-                              : `${surfaceSubtle} ${mutedText} hover:text-current`
-                          }`}
-                        >
-                          {cat.label}
-                        </button>
-                      ))}
+                    {/* Filtros de Status (Todas, A Pagar, Quitadas, Vencidas) */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/30">
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-0.5">
+                        <span className={`text-[10px] font-bold uppercase mr-1 ${mutedText}`}>Status:</span>
+                        {[
+                          { id: 'all', label: 'Todas' },
+                          { id: 'pending', label: `⏳ A Pagar (${financialIntelligence.bikePendingCount})` },
+                          { id: 'paid', label: `✅ Quitadas (${financialIntelligence.bikePaidCount})` },
+                          { id: 'overdue', label: '🚨 Vencidas' },
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setBikeStatusFilter(st.id as any)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                              bikeStatusFilter === st.id
+                                ? st.id === 'paid'
+                                  ? 'bg-emerald-600 text-white font-black'
+                                  : st.id === 'overdue'
+                                  ? 'bg-rose-600 text-white font-black'
+                                  : 'bg-[#FF6A1A] text-black font-black'
+                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Filtros Rápidos de Categoria */}
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-0.5">
+                        <span className={`text-[10px] font-bold uppercase mr-1 ${mutedText}`}>Categoria:</span>
+                        {[
+                          { id: 'all', label: 'Todas' },
+                          { id: 'combustivel', label: '⛽ Combustível' },
+                          { id: 'manutencao', label: '🔧 Peças' },
+                          { id: 'documentacao', label: '📄 Docs/IPVA' },
+                          { id: 'seguro', label: '🛡️ Seguro' },
+                          { id: 'equipamento', label: '🪖 Equipamentos' },
+                          { id: 'outros', label: 'Outros' },
+                        ].map(cat => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => setBikeCategoryFilter(cat.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                              bikeCategoryFilter === cat.id
+                                ? 'bg-[#FF6A1A] text-black font-black'
+                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -9513,8 +10063,15 @@ export default function App() {
                   {(() => {
                     const sourceList = financialIntelligence.enrichedBikeExpenses || financialIntelligence.rawBikeExpenses;
                     const filteredList = sourceList.filter(item => {
-                      if (bikeCategoryFilter === 'all') return true;
-                      return item.category === bikeCategoryFilter;
+                      if (bikeCategoryFilter !== 'all' && item.category !== bikeCategoryFilter) return false;
+                      if (bikeStatusFilter !== 'all') {
+                        const { totalPaid } = getBikeExpenseMonthPayments(item, selectedFinanceMonth);
+                        const dueInfo = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                        if (bikeStatusFilter === 'paid') return dueInfo.status === 'paid';
+                        if (bikeStatusFilter === 'pending') return dueInfo.status !== 'paid';
+                        if (bikeStatusFilter === 'overdue') return dueInfo.status === 'overdue';
+                      }
+                      return true;
                     });
 
                     if (filteredList.length === 0) {
@@ -9522,7 +10079,7 @@ export default function App() {
                         <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
                           <span className="text-3xl">🏍️</span>
                           <p className={`text-xs ${mutedText}`}>
-                            Nenhuma despesa encontrada nesta categoria.
+                            Nenhuma despesa encontrada para os filtros selecionados.
                           </p>
                           <button
                             type="button"
@@ -9538,10 +10095,14 @@ export default function App() {
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                         {filteredList.map(item => {
-                          const dueInfo = getExpenseDueInfo(item);
+                          const { totalPaid } = getBikeExpenseMonthPayments(item, selectedFinanceMonth);
+                          const dueInfo = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                          const isPaid = dueInfo.status === 'paid';
                           const dailyShare = (item as any).dailyRateio ?? (Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth);
                           const monthlyCost = (item as any).monthlyCost ?? Number(item.monthlyAmount || 0);
                           const totalCost = (item as any).totalCost ?? (item.totalCost || monthlyCost);
+                          const expectedVal = item.recurrenceType === 'interval_days' && totalCost > 0 ? totalCost : monthlyCost;
+                          const remainingVal = Math.max(0, expectedVal - totalPaid);
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
@@ -9560,6 +10121,10 @@ export default function App() {
                               className={`rounded-2xl p-4 border transition-all ${
                                 !item.isActive
                                   ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  : isPaid
+                                  ? isDark
+                                    ? 'bg-emerald-950/20 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                                    : 'bg-emerald-50/80 border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
                                   : isDark
                                   ? 'bg-slate-900/60 border-slate-800 hover:border-[#FF6A1A]/40'
                                   : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]/40'
@@ -9582,6 +10147,11 @@ export default function App() {
                                         {isInterval && (
                                           <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
                                             A cada {item.intervalDays} dias
+                                          </span>
+                                        )}
+                                        {isPaid && (
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                            ✓ Quitado
                                           </span>
                                         )}
                                       </div>
@@ -9607,19 +10177,19 @@ export default function App() {
                                 <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between gap-2">
                                   <div>
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      {isInterval ? `Reserva p/ Mês (Troca: ${fmtCurrencyExact(totalCost)})` : 'Valor Mensal'}
+                                      {isInterval ? `Reserva p/ Mês (Troca: ${fmtCurrencyExact(totalCost)})` : 'Orçamento Mensal'}
                                     </span>
-                                    <span className="text-lg font-black text-[#FF6A1A] tabular-nums">
+                                    <span className={`text-lg font-black tabular-nums ${isPaid ? 'text-emerald-400 line-through opacity-85' : 'text-[#FF6A1A]'}`}>
                                       {fmtCurrencyExact(monthlyCost)}
                                       <span className="text-[10px] font-bold text-slate-400 ml-0.5">/mês</span>
                                     </span>
                                   </div>
                                   <div className="text-right shrink-0">
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      {(item as any).isProportional ? 'Rateio Proporcional' : 'Rateio Diário'}
+                                      {isPaid ? 'Pago no Mês' : (item as any).isProportional ? 'Rateio Proporcional' : 'Rateio Diário'}
                                     </span>
-                                    <span className="text-xs font-extrabold text-amber-400 tabular-nums">
-                                      {fmtCurrencyExact(dailyShare)}/dia
+                                    <span className={`text-xs font-extrabold tabular-nums ${isPaid ? 'text-emerald-400 font-black' : 'text-amber-400'}`}>
+                                      {isPaid ? fmtCurrencyExact(totalPaid) : `${fmtCurrencyExact(dailyShare)}/dia`}
                                     </span>
                                   </div>
                                 </div>
@@ -9633,27 +10203,44 @@ export default function App() {
                                 )}
 
                                 {/* Status de Vencimento / Revisão Personalizado */}
-                                <div className="mt-2">
+                                <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                                   <span
                                     className={`text-[10px] font-black px-2 py-1 rounded-lg inline-flex items-center gap-1.5 ${dueInfo.badgeClass}`}
                                   >
                                     <Calendar className="w-3 h-3 shrink-0" />
                                     <span className="truncate">{dueInfo.label}</span>
                                   </span>
+                                  {isPaid && (
+                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                      {fmtMoney(totalPaid)} quitado
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
                               {/* Ações: Lançar Gasto, Editar e Excluir */}
                               <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
-                                <button
-                                  type="button"
-                                  onClick={() => openNewBikePaymentModal(item)}
-                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
-                                  title="Registrar pagamento ou compra desta peça como gasto real"
-                                >
-                                  <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                                  <span>Lançar Gasto</span>
-                                </button>
+                                {isPaid ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openNewBikePaymentModal(item)}
+                                    className="p-1.5 rounded-lg text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1 transition-colors"
+                                    title="Esta despesa já foi quitada neste mês. Clique para lançar outro pagamento"
+                                  >
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                    <span>✓ Quitado (+ Lançar Outro)</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openNewBikePaymentModal(item)}
+                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                    title="Registrar pagamento ou compra desta peça como gasto real"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    <span>Lançar Gasto{remainingVal > 0 && remainingVal < expectedVal ? ` (${fmtMoney(remainingVal)})` : ''}</span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => openEditBikeExpenseModal(item)}
@@ -9723,34 +10310,53 @@ export default function App() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 mt-3">
                     {(() => {
                       const activeList = financialIntelligence.activeEnrichedBikeExpenses || financialIntelligence.activeBikeExpenses;
-                      const activeSorted = [...activeList].sort(
-                        (a, b) => getExpenseDueInfo(a).timelineSortKey - getExpenseDueInfo(b).timelineSortKey
-                      );
+                      const activeSorted = [...activeList].sort((a, b) => {
+                        const { totalPaid: paidA } = getBikeExpenseMonthPayments(a, selectedFinanceMonth);
+                        const { totalPaid: paidB } = getBikeExpenseMonthPayments(b, selectedFinanceMonth);
+                        return (
+                          getExpenseDueInfo(a, paidA, selectedFinanceMonth).timelineSortKey -
+                          getExpenseDueInfo(b, paidB, selectedFinanceMonth).timelineSortKey
+                        );
+                      });
 
                       return activeSorted.map(item => {
-                        const info = getExpenseDueInfo(item);
+                        const { totalPaid } = getBikeExpenseMonthPayments(item, selectedFinanceMonth);
+                        const info = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                        const isPaid = info.status === 'paid';
                         const displayMonthly = (item as any).monthlyCost ?? item.monthlyAmount;
                         return (
                           <div
                             key={'timeline_bike_' + item.id}
                             onClick={() => openEditBikeExpenseModal(item)}
-                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all hover:border-[#FF6A1A]/50 ${
-                              isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all ${
+                              isPaid
+                                ? 'bg-emerald-950/25 border-emerald-500/40 hover:border-emerald-400'
+                                : isDark
+                                ? 'bg-slate-900/40 border-slate-800 hover:border-[#FF6A1A]/50'
+                                : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]/50'
                             }`}
                             title="Clique para editar o prazo ou ciclo desta despesa"
                           >
-                            <div className="text-[10px] font-black uppercase text-[#FF6A1A] tracking-wider truncate">
-                              {info.detailNote}
+                            <div className={`text-[10px] font-black uppercase tracking-wider truncate ${isPaid ? 'text-emerald-400' : 'text-[#FF6A1A]'}`}>
+                              {isPaid ? '✅ PAGO NO MÊS' : info.detailNote}
                             </div>
                             <span className="text-xl my-0.5">{item.icon || '🏍️'}</span>
                             <span className="text-xs font-black truncate">{item.name}</span>
-                            <span className="text-xs font-bold text-slate-300 tabular-nums">
-                              {fmtCurrencyExact(displayMonthly)}/mês
+                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-400' : 'text-slate-300'}`}>
+                              {isPaid ? `Pago: ${fmtCurrencyExact(totalPaid)}` : `${fmtCurrencyExact(displayMonthly)}/mês`}
                             </span>
                             <span className={`text-[10px] font-bold truncate ${
-                              info.daysRemaining <= 0 ? 'text-rose-400' : info.daysRemaining <= 7 ? 'text-amber-400' : mutedText
+                              isPaid
+                                ? 'text-emerald-400 font-extrabold'
+                                : info.daysRemaining <= 0
+                                ? 'text-rose-400'
+                                : info.daysRemaining <= 7
+                                ? 'text-amber-400'
+                                : mutedText
                             }`}>
-                              {info.daysRemaining === 0
+                              {isPaid
+                                ? '✓ Quitado no Mês'
+                                : info.daysRemaining === 0
                                 ? 'Vence hoje!'
                                 : info.daysRemaining < 0
                                 ? `Venceu há ${Math.abs(info.daysRemaining)}d`
@@ -9816,17 +10422,19 @@ export default function App() {
                       <div className="flex items-center justify-between text-xs font-bold mb-1">
                         <span className="text-blue-400 flex items-center gap-1.5 font-black">
                           <span>🏠</span>
-                          <span>Total Contas / Mês</span>
+                          <span>Total Contas a Pagar / Mês</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
-                          {financialIntelligence.activeHouseholdExpenses.length} ativas
+                          {financialIntelligence.householdPaidCount}/{financialIntelligence.activeHouseholdExpenses.length} quitadas
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black text-blue-400 tabular-nums">
-                        {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}
+                        {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}
                       </div>
                       <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                        Compromissos fixos da sua residência
+                        {financialIntelligence.monthlyHouseholdPaid > 0
+                          ? `${fmtMoney(financialIntelligence.monthlyHouseholdPaid)} já quitado · Orçamento: ${fmtMoney(financialIntelligence.monthlyHouseholdCost)}`
+                          : `Orçamento total definido: ${fmtMoney(financialIntelligence.monthlyHouseholdCost)}`}
                       </div>
                     </div>
 
@@ -9835,7 +10443,7 @@ export default function App() {
                       <div className="flex items-center justify-between text-xs font-bold mb-1">
                         <span className="text-sky-400 flex items-center gap-1.5 font-black">
                           <span>📅</span>
-                          <span>Separar por Dia</span>
+                          <span>Separar por Dia (Restante)</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">
                           {financialIntelligence.workDaysPerMonth} dias úteis
@@ -9846,7 +10454,9 @@ export default function App() {
                         <span className="text-xs font-semibold ml-1 text-slate-400">/dia</span>
                       </div>
                       <div className={`text-xs mt-1 font-semibold ${mutedText}`}>
-                        {fmtCurrencyExact(financialIntelligence.weeklyHouseholdReserve)}/semana estimada
+                        {financialIntelligence.monthlyHouseholdRemaining === 0
+                          ? '🎉 100% das contas quitadas neste mês!'
+                          : `${fmtCurrencyExact(financialIntelligence.weeklyHouseholdReserve)}/semana restante`}
                       </div>
                     </div>
 
@@ -9909,50 +10519,158 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* FILTRO POR CATEGORIA E LISTAGEM DAS CONTAS DA CASA */}
+                {/* FILTRO POR CATEGORIA, MÊS, STATUS E LISTAGEM DAS CONTAS DA CASA */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/50">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-sm sm:text-base font-black">
-                        Suas Contas e Despesas Domésticas
-                      </h3>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                        {financialIntelligence.rawHouseholdExpenses.length} cadastradas
-                      </span>
+                  <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-slate-800/50">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm sm:text-base font-black">
+                          Suas Contas e Despesas Domésticas
+                        </h3>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                          {financialIntelligence.rawHouseholdExpenses.length} cadastradas
+                        </span>
+                      </div>
+
+                      {/* Seletor / Navegação de Mês de Competência */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                            const d = new Date(y, m - 2, 1);
+                            setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-blue-500`}
+                          title="Mês Anterior"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                          <span className="hidden sm:inline">Anterior</span>
+                        </button>
+
+                        <div className="relative">
+                          <select
+                            value={selectedFinanceMonth}
+                            onChange={e => setSelectedFinanceMonth(e.target.value)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none pr-7 ${inputSurface}`}
+                          >
+                            {availableFinanceMonths.map(ym => {
+                              const [y, m] = ym.split('-');
+                              const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+                              const now = new Date();
+                              const nowYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                              const isFuture = ym > nowYM;
+                              return (
+                                <option key={ym} value={ym}>
+                                  {name} de {y} {ym === nowYM ? '· (Atual)' : isFuture ? '· (Futuro)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <ChevronDown className="w-3 h-3 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-70" />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                            const d = new Date(y, m, 1);
+                            setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-blue-500`}
+                          title="Próximo Mês"
+                        >
+                          <span className="hidden sm:inline">Próximo</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+
+                        {selectedFinanceMonth !== `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}` && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const now = new Date();
+                              setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/30 cursor-pointer transition-colors"
+                          >
+                            Mês Atual
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Filtros Rápidos de Categoria */}
-                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
-                      {[
-                        { id: 'all', label: 'Todas' },
-                        { id: 'moradia', label: '🏠 Moradia' },
-                        { id: 'utilidades', label: '⚡ Utilidades' },
-                        { id: 'alimentacao', label: '🛒 Alimentação' },
-                        { id: 'conectividade', label: '📶 Internet/Cel' },
-                        { id: 'saude', label: '💊 Saúde' },
-                        { id: 'outros', label: 'Outros' },
-                      ].map(cat => (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => setHouseholdCategoryFilter(cat.id)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
-                            householdCategoryFilter === cat.id
-                              ? 'bg-blue-600 text-white font-black'
-                              : `${surfaceSubtle} ${mutedText} hover:text-current`
-                          }`}
-                        >
-                          {cat.label}
-                        </button>
-                      ))}
+                    {/* Filtros de Status (Todas, A Pagar, Quitadas, Vencidas) */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/30">
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-0.5">
+                        <span className={`text-[10px] font-bold uppercase mr-1 ${mutedText}`}>Status:</span>
+                        {[
+                          { id: 'all', label: 'Todas' },
+                          { id: 'pending', label: `⏳ A Pagar (${financialIntelligence.householdPendingCount})` },
+                          { id: 'paid', label: `✅ Quitadas (${financialIntelligence.householdPaidCount})` },
+                          { id: 'overdue', label: '🚨 Vencidas' },
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setHouseholdStatusFilter(st.id as any)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                              householdStatusFilter === st.id
+                                ? st.id === 'paid'
+                                  ? 'bg-emerald-600 text-white font-black'
+                                  : st.id === 'overdue'
+                                  ? 'bg-rose-600 text-white font-black'
+                                  : 'bg-blue-600 text-white font-black'
+                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Filtros Rápidos de Categoria */}
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-full pb-0.5">
+                        <span className={`text-[10px] font-bold uppercase mr-1 ${mutedText}`}>Categoria:</span>
+                        {[
+                          { id: 'all', label: 'Todas' },
+                          { id: 'moradia', label: '🏠 Moradia' },
+                          { id: 'utilidades', label: '⚡ Utilidades' },
+                          { id: 'alimentacao', label: '🛒 Alimentação' },
+                          { id: 'conectividade', label: '📶 Internet/Cel' },
+                          { id: 'saude', label: '💊 Saúde' },
+                          { id: 'outros', label: 'Outros' },
+                        ].map(cat => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => setHouseholdCategoryFilter(cat.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                              householdCategoryFilter === cat.id
+                                ? 'bg-slate-200 text-black font-black'
+                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
                   {/* Grid das Contas Cadastradas */}
                   {(() => {
                     const filteredList = financialIntelligence.rawHouseholdExpenses.filter(item => {
-                      if (householdCategoryFilter === 'all') return true;
-                      return item.category === householdCategoryFilter;
+                      if (householdCategoryFilter !== 'all' && item.category !== householdCategoryFilter) {
+                        return false;
+                      }
+                      if (householdStatusFilter !== 'all') {
+                        const { totalPaid } = getHouseholdExpenseMonthPayments(item, selectedFinanceMonth);
+                        const dueInfo = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                        if (householdStatusFilter === 'paid') return dueInfo.status === 'paid';
+                        if (householdStatusFilter === 'pending') return dueInfo.status !== 'paid';
+                        if (householdStatusFilter === 'overdue') return dueInfo.status === 'overdue';
+                      }
+                      return true;
                     });
 
                     if (filteredList.length === 0) {
@@ -9960,7 +10678,7 @@ export default function App() {
                         <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
                           <span className="text-3xl">🏠</span>
                           <p className={`text-xs ${mutedText}`}>
-                            Nenhuma despesa encontrada nesta categoria.
+                            Nenhuma despesa encontrada para os filtros selecionados.
                           </p>
                           <button
                             type="button"
@@ -9976,7 +10694,13 @@ export default function App() {
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                         {filteredList.map(item => {
-                          const dueInfo = getExpenseDueInfo(item);
+                          const { totalPaid } = getHouseholdExpenseMonthPayments(item, selectedFinanceMonth);
+                          const dueInfo = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                          const isPaid = dueInfo.status === 'paid';
+                          const expectedVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
+                            ? item.totalCost
+                            : Number(item.monthlyAmount || 0);
+                          const remainingVal = Math.max(0, expectedVal - totalPaid);
                           const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
@@ -9996,6 +10720,10 @@ export default function App() {
                               className={`rounded-2xl p-4 border transition-all ${
                                 !item.isActive
                                   ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  : isPaid
+                                  ? isDark
+                                    ? 'bg-emerald-950/20 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                                    : 'bg-emerald-50/80 border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
                                   : isDark
                                   ? 'bg-slate-900/60 border-slate-800 hover:border-blue-500/40'
                                   : 'bg-slate-50 border-slate-200 hover:border-blue-400'
@@ -10018,6 +10746,11 @@ export default function App() {
                                         {isInterval && (
                                           <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30">
                                             A cada {item.intervalDays} dias
+                                          </span>
+                                        )}
+                                        {isPaid && (
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                            ✓ Quitado
                                           </span>
                                         )}
                                       </div>
@@ -10043,45 +10776,62 @@ export default function App() {
                                 <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-end justify-between gap-2">
                                   <div>
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      {isInterval ? `Reserva p/ Mês (Compra: ${fmtCurrencyExact(item.totalCost || item.monthlyAmount)})` : 'Valor Mensal'}
+                                      {isInterval ? `Reserva p/ Mês (Compra: ${fmtCurrencyExact(item.totalCost || item.monthlyAmount)})` : 'Orçamento Mensal'}
                                     </span>
-                                    <span className="text-lg font-black text-blue-400 tabular-nums">
+                                    <span className={`text-lg font-black tabular-nums ${isPaid ? 'text-emerald-400 line-through opacity-85' : 'text-blue-400'}`}>
                                       {fmtCurrencyExact(item.monthlyAmount)}
                                       <span className="text-[10px] font-bold text-slate-400 ml-0.5">/mês</span>
                                     </span>
                                   </div>
                                   <div className="text-right shrink-0">
                                     <span className={`text-[10px] font-bold block ${mutedText}`}>
-                                      Rateio Diário
+                                      {isPaid ? 'Pago no Mês' : 'Rateio Diário'}
                                     </span>
-                                    <span className="text-xs font-extrabold text-sky-400 tabular-nums">
-                                      {fmtCurrencyExact(dailyShare)}/dia
+                                    <span className={`text-xs font-extrabold tabular-nums ${isPaid ? 'text-emerald-400 font-black' : 'text-sky-400'}`}>
+                                      {isPaid ? fmtCurrencyExact(totalPaid) : `${fmtCurrencyExact(dailyShare)}/dia`}
                                     </span>
                                   </div>
                                 </div>
 
-                                {/* Status de Vencimento Personalizado */}
-                                <div className="mt-2">
+                                {/* Status de Vencimento / Quitado Personalizado */}
+                                <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                                   <span
                                     className={`text-[10px] font-black px-2 py-1 rounded-lg inline-flex items-center gap-1.5 ${dueInfo.badgeClass}`}
                                   >
                                     <Calendar className="w-3 h-3 shrink-0" />
                                     <span className="truncate">{dueInfo.label}</span>
                                   </span>
+                                  {isPaid && (
+                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                      {fmtMoney(totalPaid)} quitado
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
                               {/* Ações: Lançar Gasto, Editar e Excluir */}
                               <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
-                                <button
-                                  type="button"
-                                  onClick={() => openNewHouseholdPaymentModal(item)}
-                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
-                                  title="Registrar pagamento desta conta como gasto real"
-                                >
-                                  <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                                  <span>Lançar Gasto</span>
-                                </button>
+                                {isPaid ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openNewHouseholdPaymentModal(item)}
+                                    className="p-1.5 rounded-lg text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1 transition-colors"
+                                    title="Esta conta já foi quitada neste mês. Clique para lançar outro pagamento"
+                                  >
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                    <span>✓ Quitado (+ Lançar Outro)</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openNewHouseholdPaymentModal(item)}
+                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                    title="Registrar pagamento desta conta como gasto real"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    <span>Lançar Gasto{remainingVal > 0 && remainingVal < expectedVal ? ` (${fmtMoney(remainingVal)})` : ''}</span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => openEditHouseholdExpenseModal(item)}
@@ -10150,33 +10900,52 @@ export default function App() {
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 mt-3">
                     {(() => {
-                      const activeSorted = [...financialIntelligence.activeHouseholdExpenses].sort(
-                        (a, b) => getExpenseDueInfo(a).timelineSortKey - getExpenseDueInfo(b).timelineSortKey
-                      );
+                      const activeSorted = [...financialIntelligence.activeHouseholdExpenses].sort((a, b) => {
+                        const { totalPaid: paidA } = getHouseholdExpenseMonthPayments(a, selectedFinanceMonth);
+                        const { totalPaid: paidB } = getHouseholdExpenseMonthPayments(b, selectedFinanceMonth);
+                        return (
+                          getExpenseDueInfo(a, paidA, selectedFinanceMonth).timelineSortKey -
+                          getExpenseDueInfo(b, paidB, selectedFinanceMonth).timelineSortKey
+                        );
+                      });
 
                       return activeSorted.map(item => {
-                        const info = getExpenseDueInfo(item);
+                        const { totalPaid } = getHouseholdExpenseMonthPayments(item, selectedFinanceMonth);
+                        const info = getExpenseDueInfo(item, totalPaid, selectedFinanceMonth);
+                        const isPaid = info.status === 'paid';
                         return (
                           <div
                             key={'timeline_' + item.id}
                             onClick={() => openEditHouseholdExpenseModal(item)}
-                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all hover:border-blue-500/50 ${
-                              isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+                            className={`p-3 rounded-xl border text-center flex flex-col justify-between gap-1 cursor-pointer transition-all ${
+                              isPaid
+                                ? 'bg-emerald-950/25 border-emerald-500/40 hover:border-emerald-400'
+                                : isDark
+                                ? 'bg-slate-900/40 border-slate-800 hover:border-blue-500/50'
+                                : 'bg-slate-50 border-slate-200 hover:border-blue-500/50'
                             }`}
                             title="Clique para editar o prazo ou ciclo desta conta"
                           >
-                            <div className="text-[10px] font-black uppercase text-blue-400 tracking-wider truncate">
-                              {info.detailNote}
+                            <div className={`text-[10px] font-black uppercase tracking-wider truncate ${isPaid ? 'text-emerald-400' : 'text-blue-400'}`}>
+                              {isPaid ? '✅ PAGO NO MÊS' : info.detailNote}
                             </div>
                             <span className="text-xl my-0.5">{item.icon || '🏠'}</span>
                             <span className="text-xs font-black truncate">{item.name}</span>
-                            <span className="text-xs font-bold text-slate-300 tabular-nums">
-                              {fmtCurrencyExact(item.monthlyAmount)}/mês
+                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-400' : 'text-slate-300'}`}>
+                              {isPaid ? `Pago: ${fmtCurrencyExact(totalPaid)}` : `${fmtCurrencyExact(item.monthlyAmount)}/mês`}
                             </span>
                             <span className={`text-[10px] font-bold truncate ${
-                              info.daysRemaining <= 0 ? 'text-rose-400' : info.daysRemaining <= 7 ? 'text-amber-400' : mutedText
+                              isPaid
+                                ? 'text-emerald-400 font-extrabold'
+                                : info.daysRemaining <= 0
+                                ? 'text-rose-400'
+                                : info.daysRemaining <= 7
+                                ? 'text-amber-400'
+                                : mutedText
                             }`}>
-                              {info.daysRemaining === 0
+                              {isPaid
+                                ? '✓ Quitado no Mês'
+                                : info.daysRemaining === 0
                                 ? 'Vence hoje!'
                                 : info.daysRemaining < 0
                                 ? `Venceu há ${Math.abs(info.daysRemaining)}d`
@@ -11650,25 +12419,51 @@ export default function App() {
           <div className="flex flex-col gap-4 sm:gap-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <h1 className="text-xl sm:text-2xl font-black">Histórico de Corridas & Despesas</h1>
-              <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
-                {[
-                  { id: 'all', label: 'Todos' },
-                  { id: 'ganho', label: 'Ganhos' },
-                  { id: 'gasto', label: 'Gastos' },
-                ].map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setHistoryTypeFilter(t.id as any);
-                      setHistorySubFilter('all');
-                    }}
-                    className={`px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                      historyTypeFilter === t.id ? 'bg-[#FF6A1A] text-black' : mutedText
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Filtro por Tipo */}
+                <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
+                  {[
+                    { id: 'all', label: 'Todos' },
+                    { id: 'ganho', label: 'Ganhos' },
+                    { id: 'gasto', label: 'Gastos' },
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setHistoryTypeFilter(t.id as any);
+                        setHistorySubFilter('all');
+                      }}
+                      className={`px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                        historyTypeFilter === t.id ? 'bg-[#FF6A1A] text-black font-black' : mutedText
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filtro por Status (Todos / Ativos / Anulados) */}
+                <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
+                  {[
+                    { id: 'all', label: 'Todos' },
+                    { id: 'active', label: 'Ativos' },
+                    { id: 'cancelled', label: '🚫 Anulados' },
+                  ].map(st => (
+                    <button
+                      key={st.id}
+                      onClick={() => setHistoryStatusFilter(st.id as any)}
+                      className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                        historyStatusFilter === st.id
+                          ? st.id === 'cancelled'
+                            ? 'bg-rose-600 text-white font-black'
+                            : 'bg-slate-200 text-black font-black'
+                          : mutedText
+                      }`}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -11698,6 +12493,8 @@ export default function App() {
                   ...dbState.expenses.map(e => ({ ...e, itemType: 'gasto' as const })),
                 ]
                   .filter(item => {
+                    if (historyStatusFilter === 'active' && item.isCancelled) return false;
+                    if (historyStatusFilter === 'cancelled' && !item.isCancelled) return false;
                     if (historyTypeFilter === 'all') return true;
                     if (historyTypeFilter !== item.itemType) return false;
                     if (historySubFilter === 'all') return true;
@@ -11730,18 +12527,27 @@ export default function App() {
                       return (
                         <div
                           key={`ganho-${item.id}`}
-                          className="py-3 sm:py-4 flex items-center justify-between gap-2.5"
+                          className={`py-3 sm:py-4 flex items-center justify-between gap-2.5 transition-all ${
+                            item.isCancelled ? 'opacity-50 grayscale-[40%]' : ''
+                          }`}
                         >
                           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                             <span className="text-lg sm:text-xl shrink-0">{app.icon}</span>
                             <div className="min-w-0 flex-1">
-                              <div className="text-xs sm:text-sm font-bold truncate">
-                                {app.name} · {d}/{m}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-bold truncate">
+                                  {app.name} · {d}/{m}
+                                </span>
+                                {item.isCancelled && (
+                                  <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                    🚫 Anulado
+                                  </span>
+                                )}
                               </div>
                               <div className={`text-[11px] sm:text-xs tabular-nums truncate ${mutedText}`}>
                                 {shift ? shift.name.split(' ')[0] : 'Turno'} · {item.km} km · {item.hours || 0}h
                               </div>
-                              {km > 0 && (
+                              {km > 0 && !item.isCancelled && (
                                 <div className="flex items-center gap-1.5 flex-wrap mt-1 text-[10px] font-bold">
                                   <span className="text-amber-400 tabular-nums">
                                     🏍️ Moto: {fmtCurrencyExact(netAfterBike)}
@@ -11759,10 +12565,28 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                            <span className="text-xs sm:text-base font-black text-emerald-400 tabular-nums whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+                            <span className={`text-xs sm:text-base font-black tabular-nums whitespace-nowrap ${
+                              item.isCancelled ? 'line-through text-slate-500' : 'text-emerald-400'
+                            }`}>
                               + {fmtMoney(item.revenue)}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleEntryOrExpenseCancelled(item.id, 'ganho')}
+                              className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl cursor-pointer transition-colors ${
+                                item.isCancelled
+                                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30'
+                                  : `${surfaceSubtle} hover:border-amber-500 text-slate-400 hover:text-amber-400`
+                              }`}
+                              title={item.isCancelled ? 'Ativar ganho (voltará a somar nos totais e saldo)' : 'Anular ganho (não somará nos totais nem no saldo)'}
+                            >
+                              {item.isCancelled ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                              ) : (
+                                <Ban className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              )}
+                            </button>
                             <button
                               onClick={() => openEditHistoryItem(item, 'ganho')}
                               className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
@@ -11791,6 +12615,20 @@ export default function App() {
                     } else {
                       const isHousehold =
                         item.expenseType === 'casa' ||
+                        Boolean(item.householdExpenseId) ||
+                        Boolean(
+                          item.category &&
+                            (item.category.toLowerCase().includes('(casa)') ||
+                              item.category.toLowerCase().includes('casa') ||
+                              item.category.toLowerCase().includes('supermercado') ||
+                              item.category.toLowerCase().includes('feira') ||
+                              item.category.toLowerCase().includes('mercado') ||
+                              item.category.toLowerCase().includes('aluguel') ||
+                              item.category.toLowerCase().includes('energia') ||
+                              item.category.toLowerCase().includes('luz') ||
+                              item.category.toLowerCase().includes('água') ||
+                              item.category.toLowerCase().includes('internet'))
+                        ) ||
                         (dbState.householdExpenses || []).some(
                           (h: HouseholdExpenseItem) =>
                             h.id === item.householdExpenseId ||
@@ -11799,7 +12637,8 @@ export default function App() {
                       const householdItem = (dbState.householdExpenses || []).find(
                         (h: HouseholdExpenseItem) =>
                           h.id === item.householdExpenseId ||
-                          h.name.toLowerCase() === (item.category || '').toLowerCase()
+                          h.name.toLowerCase() === (item.category || '').toLowerCase() ||
+                          (item.category && item.category.toLowerCase().includes(h.id.toLowerCase()))
                       );
 
                       const getExpenseIcon = () => {
@@ -11821,15 +12660,24 @@ export default function App() {
                       return (
                         <div
                           key={`gasto-${item.id}`}
-                          className="py-3 sm:py-4 flex items-center justify-between gap-2.5"
+                          className={`py-3 sm:py-4 flex items-center justify-between gap-2.5 transition-all ${
+                            item.isCancelled ? 'opacity-50 grayscale-[40%]' : ''
+                          }`}
                         >
                           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                             <span className="text-lg sm:text-xl shrink-0 p-1 rounded-lg bg-slate-800/40">
                               {getExpenseIcon()}
                             </span>
                             <div className="min-w-0 flex-1">
-                              <div className="text-xs sm:text-sm font-bold truncate">
-                                {displayTitle} · {d}/{m}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-bold truncate">
+                                  {displayTitle} · {d}/{m}
+                                </span>
+                                {item.isCancelled && (
+                                  <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                    🚫 Anulado
+                                  </span>
+                                )}
                               </div>
                               <div className={`text-[11px] sm:text-xs ${mutedText} truncate flex items-center gap-1.5 mt-0.5`}>
                                 <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${
@@ -11846,10 +12694,28 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                            <span className="text-xs sm:text-base font-black text-rose-400 tabular-nums whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+                            <span className={`text-xs sm:text-base font-black tabular-nums whitespace-nowrap ${
+                              item.isCancelled ? 'line-through text-slate-500' : 'text-rose-400'
+                            }`}>
                               - {fmtMoney(item.amount)}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleEntryOrExpenseCancelled(item.id, 'gasto')}
+                              className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl cursor-pointer transition-colors ${
+                                item.isCancelled
+                                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30'
+                                  : `${surfaceSubtle} hover:border-amber-500 text-slate-400 hover:text-amber-400`
+                              }`}
+                              title={item.isCancelled ? 'Ativar despesa (voltará a somar nos totais e saldo)' : 'Anular despesa (não somará nos totais nem no saldo)'}
+                            >
+                              {item.isCancelled ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                              ) : (
+                                <Ban className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              )}
+                            </button>
                             <button
                               onClick={() => openEditHistoryItem(item, 'gasto')}
                               className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
@@ -13528,23 +14394,25 @@ export default function App() {
               </button>
             </div>
 
-            {/* In-Modal Voice Dictation Banner */}
-            <button
-              type="button"
-              onClick={handleTriggerVoiceDictation}
-              className={`w-full mb-4 py-2.5 px-3.5 rounded-2xl border flex items-center justify-center gap-2 text-xs font-black transition-all cursor-pointer ${
-                isRecordingVoice
-                  ? 'bg-rose-500 text-white border-rose-400 animate-pulse ring-4 ring-rose-500/30'
-                  : 'bg-[#FF6A1A]/10 text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-[#FF6A1A]/20'
-              }`}
-            >
-              <Mic className={`w-4 h-4 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
-              <span>
-                {isRecordingVoice
-                  ? 'Ouvindo... Fale sua corrida ou gasto agora!'
-                  : 'Preencher por Voz (Ex: "Ganho 25 reais no iFood 8 km")'}
-              </span>
-            </button>
+            {/* In-Modal Voice Dictation Banner (apenas no registro de corrida; removido do registro de despesa) */}
+            {entryMode === 'ganho' && (
+              <button
+                type="button"
+                onClick={handleTriggerVoiceDictation}
+                className={`w-full mb-4 py-2.5 px-3.5 rounded-2xl border flex items-center justify-center gap-2 text-xs font-black transition-all cursor-pointer ${
+                  isRecordingVoice
+                    ? 'bg-rose-500 text-white border-rose-400 animate-pulse ring-4 ring-rose-500/30'
+                    : 'bg-[#FF6A1A]/10 text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-[#FF6A1A]/20'
+                }`}
+              >
+                <Mic className={`w-4 h-4 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
+                <span>
+                  {isRecordingVoice
+                    ? 'Ouvindo... Fale sua corrida ou gasto agora!'
+                    : 'Preencher por Voz (Ex: "Ganho 25 reais no iFood 8 km")'}
+                </span>
+              </button>
+            )}
 
             <div className="grid grid-cols-2 gap-2 mb-5">
               <button
@@ -14494,7 +15362,9 @@ export default function App() {
                               }}
                               className={`p-2.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col gap-1 ${
                                 isSelected
-                                  ? 'bg-amber-500/20 border-amber-400 text-amber-200 shadow-xs'
+                                  ? isDark
+                                     ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-white shadow-xs'
+                                     : 'bg-[#FF6A1A]/10 border-[#FF6A1A] text-slate-900 shadow-xs'
                                   : `${surfaceSubtle} border-slate-700/50 hover:border-slate-500`
                               }`}
                             >
@@ -14504,7 +15374,7 @@ export default function App() {
                                   {item.name}
                                 </span>
                               </div>
-                              <span className={`text-[10px] tabular-nums font-semibold ${isSelected ? 'text-amber-300' : mutedText}`}>
+                              <span className={`text-[10px] tabular-nums font-semibold ${isSelected ? (isDark ? 'text-[#FFB27A]' : 'text-[#C2410C]') : mutedText}`}>
                                 {item.monthlyAmount > 0 ? fmtMoney(item.monthlyAmount) : 'Variável'}
                               </span>
                             </button>
@@ -16680,6 +17550,15 @@ export default function App() {
         initialValue={quickCalcState.initialValue}
         onClose={() => setQuickCalcState(prev => ({ ...prev, isOpen: false }))}
         onApply={quickCalcState.onApply}
+        isDark={isDark}
+      />
+
+      {/* MODAL DE AJUSTE MANUAL DE SALDO DO MOTOBOY */}
+      <AdjustBalanceModal
+        isOpen={showAdjustBalanceModal}
+        onClose={() => setShowAdjustBalanceModal(false)}
+        currentBalance={adjustBaseBalance}
+        onConfirmAdjust={handleConfirmAdjustBalance}
         isDark={isDark}
       />
     </div>
