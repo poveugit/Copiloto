@@ -140,3 +140,4 @@
   - Item anulado fica esmaecido com valor riscado (`line-through text-slate-500`) e exibe a badge `🚫 Anulado`.
   - Botão de alternância com estado visual claro: botão de ativação em verde esmeralda quando anulado, e botão sutil de anulação quando ativo.
   - Filtro adicional no topo do histórico para visualizar: `Todos os Status`, `Ativos` ou `🚫 Anulados`.
+- **APK Release (11/11/2026 13:19)**: `android/app/build/outputs/apk/release/app-release.apk` (4.36 MB), assinado (apksigner v2 OK), commit `a4ed917` enviado ao GitHub `main`. Contém dedução orçamentária, feedback de contas quitadas, filtros de competência/status e anulação/ativação no histórico.
