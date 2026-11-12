@@ -108,7 +108,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
               <h2 id="adjust-modal-title" className="text-base sm:text-lg font-black leading-tight">
                 Ajustar Saldo Atual
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 Alinhe o saldo do app com o saldo real do seu bolso ou conta
               </p>
             </div>
@@ -116,7 +116,9 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
+            className={`p-2 rounded-xl transition-colors cursor-pointer ${
+              isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800/60' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
             aria-label="Fechar"
           >
             <X className="w-5 h-5" />
@@ -209,7 +211,11 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
             <button
               type="button"
               onClick={handleSetZero}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-700/30 text-slate-300 hover:bg-slate-700/60 border border-slate-600/40 transition-all cursor-pointer"
+              className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                isDark
+                  ? 'bg-slate-700/30 text-slate-300 hover:bg-slate-700/60 border-slate-600/40'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300'
+              }`}
             >
               Zerar (R$ 0)
             </button>
@@ -220,20 +226,24 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
             <div
               className={`p-3.5 sm:p-4 rounded-2xl border transition-all ${
                 isSurplus
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  ? isDark
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                  : isDark
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  : 'bg-rose-50 border-rose-300 text-rose-900'
               }`}
             >
               <div className="flex items-center justify-between font-black text-sm mb-1.5">
                 <span className="flex items-center gap-1.5">
                   {isSurplus ? (
                     <>
-                      <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                      <ArrowUpRight className={`w-4 h-4 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
                       <span>Excedente Identificado:</span>
                     </>
                   ) : (
                     <>
-                      <ArrowDownRight className="w-4 h-4 text-rose-400" />
+                      <ArrowDownRight className={`w-4 h-4 ${isDark ? 'text-rose-400' : 'text-rose-700'}`} />
                       <span>Valor Faltante Identificado:</span>
                     </>
                   )}
@@ -242,17 +252,17 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
                   {isSurplus ? `+${fmtBRL(diff)}` : `-${fmtBRL(Math.abs(diff))}`}
                 </span>
               </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
+              <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                 {isSurplus ? (
                   <>
                     Será criada <strong>automaticamente uma transação de Ganho (Entrada)</strong> no valor de{' '}
-                    <strong className="text-emerald-400">{fmtBRL(diff)}</strong> com o aplicativo/motivo{' '}
+                    <strong className={isDark ? 'text-emerald-400' : 'text-emerald-700 font-black'}>{fmtBRL(diff)}</strong> com o aplicativo/motivo{' '}
                     <em>"Ajuste de Saldo"</em> para igualar seu caixa.
                   </>
                 ) : (
                   <>
                     Será criada <strong>automaticamente uma transação de Gasto (Despesa)</strong> no valor de{' '}
-                    <strong className="text-rose-400">{fmtBRL(Math.abs(diff))}</strong> com a categoria{' '}
+                    <strong className={isDark ? 'text-rose-400' : 'text-rose-700 font-black'}>{fmtBRL(Math.abs(diff))}</strong> com a categoria{' '}
                     <em>"Ajuste de Saldo"</em> para equilibrar seu caixa.
                   </>
                 )}
@@ -261,7 +271,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           )}
 
           {isValidNumber && !isDifferent && (
-            <div className={`p-3 rounded-2xl border text-xs text-slate-400 text-center ${surfaceSubtle}`}>
+            <div className={`p-3 rounded-2xl border text-xs text-center ${surfaceSubtle} ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
               O valor digitado é igual ao saldo atual do sistema. Nenhuma transação será gerada.
             </div>
           )}

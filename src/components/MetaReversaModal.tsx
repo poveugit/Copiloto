@@ -132,7 +132,9 @@ export function MetaReversaModal({
         className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[90vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/50">
+        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b ${
+          isDark ? 'border-slate-800/50' : 'border-slate-200'
+        }`}>
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-emerald-500 text-black flex items-center justify-center font-black">
               <Calculator className="w-5 h-5" />
@@ -140,7 +142,9 @@ export function MetaReversaModal({
             <div>
               <div className="flex items-center gap-1.5">
                 <h3 className="text-sm sm:text-base font-black">Simulador de Meta Reversa</h3>
-                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                  isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                }`}>
                   Lucro Limpo
                 </span>
               </div>
@@ -160,11 +164,11 @@ export function MetaReversaModal({
         {/* Input Parameters */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
           <div className={`p-3 rounded-2xl border ${surfaceSubtle}`}>
-            <label className={`block text-[11px] font-bold mb-1 text-emerald-400`}>
+            <label className={`block text-[11px] font-bold mb-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
               Salário Limpo no Bolso / Mês (R$)
             </label>
             <div className="flex items-center gap-1.5">
-              <span className="text-sm font-black text-emerald-400">R$</span>
+              <span className={`text-sm font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>R$</span>
               <FreeNumberInput
                 step="100"
                 value={desejadoMensal}
@@ -242,8 +246,8 @@ export function MetaReversaModal({
               </span>
             </div>
             <div className="text-right">
-              <span className="text-[10px] font-bold uppercase text-emerald-400 block">Sobra Limpo</span>
-              <span className="text-lg sm:text-xl font-black text-emerald-400 tabular-nums">
+              <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>Sobra Limpo</span>
+              <span className={`text-lg sm:text-xl font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                 R$ {results.netTargetDaily.toFixed(2)}/dia
               </span>
             </div>
@@ -262,8 +266,12 @@ export function MetaReversaModal({
                 onClick={() => setIncludeHousehold(!includeHousehold)}
                 className={`text-[10px] font-black px-2 py-0.5 rounded-lg border transition-colors cursor-pointer ${
                   includeHousehold
-                    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                    ? isDark
+                      ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                      : 'bg-blue-50 text-blue-700 border-blue-300'
+                    : isDark
+                    ? 'bg-slate-800 text-slate-400 border-slate-700'
+                    : 'bg-slate-100 text-slate-700 border-slate-300'
                 }`}
               >
                 {includeHousehold ? '✓ Contas Casa Inclusas' : '+ Incluir Contas Casa'}
@@ -272,8 +280,8 @@ export function MetaReversaModal({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <Fuel className="w-3.5 h-3.5 text-amber-400" />
+              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 dark:text-amber-400">
+                <Fuel className="w-3.5 h-3.5" />
                 <span>Gasolina</span>
               </div>
               <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
@@ -282,8 +290,8 @@ export function MetaReversaModal({
             </div>
 
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <Wrench className="w-3.5 h-3.5 text-rose-400" />
+              <div className="flex items-center gap-1.5 text-xs font-bold text-rose-500 dark:text-rose-400">
+                <Wrench className="w-3.5 h-3.5" />
                 <span>Manutenção</span>
               </div>
               <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
@@ -292,8 +300,8 @@ export function MetaReversaModal({
             </div>
 
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <Utensils className="w-3.5 h-3.5 text-sky-400" />
+              <div className="flex items-center gap-1.5 text-xs font-bold text-sky-500 dark:text-sky-400">
+                <Utensils className="w-3.5 h-3.5" />
                 <span>Almoço/Lanche</span>
               </div>
               <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
@@ -302,8 +310,8 @@ export function MetaReversaModal({
             </div>
 
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <FileText className="w-3.5 h-3.5 text-purple-400" />
+              <div className="flex items-center gap-1.5 text-xs font-bold text-purple-500 dark:text-purple-400">
+                <FileText className="w-3.5 h-3.5" />
                 <span>IPVA/MEI/Docs</span>
               </div>
               <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
@@ -313,19 +321,19 @@ export function MetaReversaModal({
 
             {includeHousehold && results.dailyHouseholdCost > 0 && (
               <div className={`p-2.5 rounded-xl border border-blue-500/30 ${isDark ? 'bg-blue-500/10' : 'bg-blue-50'}`}>
-                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
+                <div className={`flex items-center gap-1.5 text-xs font-bold ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                   <span>🏠</span>
                   <span>Contas da Casa</span>
                 </div>
-                <span className="text-xs sm:text-sm font-black tabular-nums block mt-1 text-blue-400">
+                <span className={`text-xs sm:text-sm font-black tabular-nums block mt-1 ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                   R$ {results.dailyHouseholdCost.toFixed(2)}
                 </span>
               </div>
             )}
 
             <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <Shield className="w-3.5 h-3.5 text-teal-400" />
+              <div className="flex items-center gap-1.5 text-xs font-bold text-teal-600 dark:text-teal-400">
+                <Shield className="w-3.5 h-3.5" />
                 <span>Emergência (10%)</span>
               </div>
               <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
@@ -333,12 +341,14 @@ export function MetaReversaModal({
               </span>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
-              <div className="flex items-center gap-1.5 text-xs font-black text-emerald-400">
+            <div className={`p-2.5 rounded-xl border ${
+              isDark ? 'bg-emerald-500/15 border-emerald-500/30' : 'bg-emerald-50 border-emerald-300'
+            }`}>
+              <div className={`flex items-center gap-1.5 text-xs font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>LUCRO LIMPO</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1 text-emerald-400">
+              <span className={`text-xs sm:text-sm font-black tabular-nums block mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                 R$ {results.netTargetDaily.toFixed(2)}
               </span>
             </div>

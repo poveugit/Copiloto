@@ -391,8 +391,8 @@ export function RadarCorridaModal({
         >
           <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-blue-500/20">
             <div className="flex items-center gap-1.5">
-              <Home className="w-4 h-4 text-blue-400 shrink-0" />
-              <span className="text-xs font-black text-blue-400">
+              <Home className={`w-4 h-4 shrink-0 ${isDark ? 'text-blue-400' : 'text-blue-700'}`} />
+              <span className={`text-xs font-black ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                 O Que Sobra Após Custos da Moto + Casa/Pessoal
               </span>
             </div>
@@ -409,12 +409,14 @@ export function RadarCorridaModal({
                 isDark ? 'bg-slate-950/60 border-blue-500/25' : 'bg-white border-blue-200'
               }`}
             >
-              <span className="block text-[10px] font-bold text-blue-400">
+              <span className={`block text-[10px] font-bold ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                 🏠 Após Moto + Contas Casa
               </span>
               <div
                 className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
-                  analysis.netAfterHouseOnly >= 0 ? 'text-blue-400' : 'text-rose-400'
+                  analysis.netAfterHouseOnly >= 0
+                    ? isDark ? 'text-blue-400' : 'text-blue-700'
+                    : isDark ? 'text-rose-400' : 'text-rose-700'
                 }`}
               >
                 R$ {analysis.netAfterHouseOnly.toFixed(2)}
@@ -439,7 +441,9 @@ export function RadarCorridaModal({
               <div className="flex items-center justify-between gap-1">
                 <span
                   className={`text-[10px] font-black ${
-                    analysis.netFreeAfterAll >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    analysis.netFreeAfterAll >= 0
+                      ? isDark ? 'text-emerald-400' : 'text-emerald-800'
+                      : isDark ? 'text-rose-400' : 'text-rose-800'
                   }`}
                 >
                   💵 Sobra Livre (Moto+Casa+Pessoal)
@@ -447,7 +451,9 @@ export function RadarCorridaModal({
               </div>
               <div
                 className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
-                  analysis.netFreeAfterAll >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  analysis.netFreeAfterAll >= 0
+                    ? isDark ? 'text-emerald-400' : 'text-emerald-700'
+                    : isDark ? 'text-rose-400' : 'text-rose-700'
                 }`}
               >
                 R$ {analysis.netFreeAfterAll.toFixed(2)}
@@ -463,31 +469,31 @@ export function RadarCorridaModal({
 
           {/* Equação Passo a Passo Desta Corrida */}
           <div
-            className={`mt-2.5 p-2 rounded-xl text-[10px] font-bold grid grid-cols-2 sm:grid-cols-4 gap-1.5 ${
-              isDark ? 'bg-slate-900/80' : 'bg-white/90'
+            className={`mt-2.5 p-2 rounded-xl text-[10px] font-bold grid grid-cols-2 sm:grid-cols-4 gap-1.5 border ${
+              isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-100 border-slate-200'
             }`}
           >
             <div className="flex flex-col">
               <span className={mutedText}>1. Ganho Bruto</span>
-              <span className="text-slate-200 font-black tabular-nums">
+              <span className={`${isDark ? 'text-slate-200' : 'text-slate-900'} font-black tabular-nums`}>
                 + R$ {analysis.revenue.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-rose-400">2. Custo Moto ({analysis.km}km)</span>
-              <span className="text-rose-400 font-black tabular-nums">
+              <span className={isDark ? 'text-rose-400' : 'text-rose-700'}>2. Custo Moto ({analysis.km}km)</span>
+              <span className={`${isDark ? 'text-rose-400' : 'text-rose-700'} font-black tabular-nums`}>
                 - R$ {analysis.totalBikeCost.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-blue-400">3. Contas Casa ({analysis.km}km)</span>
-              <span className="text-blue-400 font-black tabular-nums">
+              <span className={isDark ? 'text-blue-400' : 'text-blue-700'}>3. Contas Casa ({analysis.km}km)</span>
+              <span className={`${isDark ? 'text-blue-400' : 'text-blue-700'} font-black tabular-nums`}>
                 - R$ {analysis.rideHouseCost.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-orange-400">4. Pessoal/Rua ({analysis.km}km)</span>
-              <span className="text-orange-400 font-black tabular-nums">
+              <span className={isDark ? 'text-orange-400' : 'text-orange-700'}>4. Pessoal/Rua ({analysis.km}km)</span>
+              <span className={`${isDark ? 'text-orange-400' : 'text-orange-700'} font-black tabular-nums`}>
                 - R$ {analysis.ridePersonalCost.toFixed(2)}
               </span>
             </div>
@@ -495,10 +501,10 @@ export function RadarCorridaModal({
 
           <div className={`mt-2 text-[10px] flex items-center justify-between gap-2 flex-wrap ${mutedText}`}>
             <span>
-              🏠 Custo Casa/KM: <strong className="text-blue-400">R$ {analysis.houseCostPerKm.toFixed(2)}/km</strong> (R$ {analysis.dailyHouseReserve.toFixed(2)}/dia)
+              🏠 Custo Casa/KM: <strong className={isDark ? 'text-blue-400' : 'text-blue-700'}>R$ {analysis.houseCostPerKm.toFixed(2)}/km</strong> (R$ {analysis.dailyHouseReserve.toFixed(2)}/dia)
             </span>
             <span>
-              🍱 Pessoal/KM: <strong className="text-orange-400">R$ {analysis.personalCostPerKm.toFixed(2)}/km</strong> (R$ {analysis.dailyPersonalFood.toFixed(2)}/dia)
+              🍱 Pessoal/KM: <strong className={isDark ? 'text-orange-400' : 'text-orange-700'}>R$ {analysis.personalCostPerKm.toFixed(2)}/km</strong> (R$ {analysis.dailyPersonalFood.toFixed(2)}/dia)
             </span>
           </div>
         </div>
@@ -507,7 +513,7 @@ export function RadarCorridaModal({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5">
           <div className={`rounded-xl p-2.5 ${surfaceSubtle}`}>
             <span className={`block text-[10px] font-bold ${mutedText}`}>R$ / KM Bruto</span>
-            <span className="text-xs sm:text-sm font-black tabular-nums mt-0.5 block text-sky-400">
+            <span className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
               R$ {analysis.grossPerKm.toFixed(2)} / km
             </span>
             <span className={`text-[9px] block mt-0.5 ${mutedText}`}>Sem descontos</span>

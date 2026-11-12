@@ -612,15 +612,19 @@ export function RelatorioMeiModal({
         className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard} mei-modal-card`}
       >
         {/* Header (No print) */}
-        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/50 no-print">
+        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b no-print ${
+          isDark ? 'border-slate-800/50' : 'border-slate-200'
+        }`}>
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center font-black shadow-md">
-              <FileText className="w-5 h-5 text-white" />
+              <FileText className="w-5 h-5 text-black" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm sm:text-base font-black">Extrato & Relatório Fiscal MEI</h3>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                  isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                }`}>
                   Compatível DASN-SIMEI
                 </span>
               </div>
@@ -641,8 +645,10 @@ export function RelatorioMeiModal({
 
         {/* Feedback Alert Toast */}
         {feedbackMsg && (
-          <div className="my-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 no-print animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+          <div className={`my-3 p-3 rounded-xl border text-xs font-bold flex items-center gap-2 no-print animate-in fade-in ${
+            isDark ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+          }`}>
+            <CheckCircle2 className={`w-4 h-4 shrink-0 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
             <span className="flex-1">{feedbackMsg}</span>
           </div>
         )}

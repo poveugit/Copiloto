@@ -3170,12 +3170,14 @@ export function InvestimentosScreen({
             {!isQrCodeGenerated ? (
               /* ETAPA 1: Antes da Confirmação -> QR Code NÃO APARECE */
               <div className="mt-4 flex flex-col gap-3">
-                <div className="w-full p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 text-[11px] text-slate-300 font-semibold flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 text-amber-400">
+                <div className={`w-full p-3 rounded-xl border text-[11px] font-semibold flex items-center justify-between gap-2 ${
+                  isDark ? 'bg-slate-900/60 border-slate-800/80 text-slate-300' : 'bg-slate-100 border-slate-300 text-slate-700'
+                }`}>
+                  <span className="flex items-center gap-1.5 text-amber-500 dark:text-amber-400">
                     <Clock className="w-4 h-4 shrink-0" />
                     <span>Carência de Saque:</span>
                   </span>
-                  <span className="font-black text-slate-100">
+                  <span className={`font-black ${primaryText}`}>
                     Liberado após {modalPlan.minWithdrawDays} dias
                   </span>
                 </div>
@@ -3345,34 +3347,34 @@ export function InvestimentosScreen({
             </div>
 
             <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2 text-xs`}>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Plano Selecionado:</span>
-                <span className="font-black text-slate-100 flex items-center gap-1.5">
+                <span className={`font-black ${primaryText} flex items-center gap-1.5`}>
                   <span>{modalPlan.icon}</span>
                   <span>{modalPlan.name}</span>
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Quantidade de Cotas:</span>
-                <span className="font-black text-slate-100">
+                <span className={`font-black ${primaryText}`}>
                   {modalShares} {modalShares === 1 ? 'cota' : 'cotas'} ({fmtBRL(modalPlan.sharePrice)}/cota)
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Valor Total a Depositar:</span>
                 <span className="text-base font-black text-[#FF6A1A]">
                   {fmtBRL(modalTotalDeposit)}
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Rendimento Mensal:</span>
-                <span className="font-black text-emerald-400">
+                <span className="font-black text-emerald-500 dark:text-emerald-400">
                   {modalPlan.monthlyRatePct}% ao mês
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className={mutedText}>Carência Mínima p/ Saque:</span>
-                <span className="font-bold text-amber-400">
+                <span className="font-bold text-amber-500 dark:text-amber-400">
                   {modalPlan.minWithdrawDays} dias
                 </span>
               </div>
@@ -3424,20 +3426,20 @@ export function InvestimentosScreen({
             </div>
 
             <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2 text-xs`}>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Plano:</span>
-                <span className="font-black text-slate-100 flex items-center gap-1.5">
+                <span className={`font-black ${primaryText} flex items-center gap-1.5`}>
                   <span>{withdrawingPosition.planIcon}</span>
                   <span>{withdrawingPosition.planName}</span>
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Cotas a Resgatar:</span>
-                <span className="font-black text-slate-100">
+                <span className={`font-black ${primaryText}`}>
                   {withdrawingPosition.shares} cotas
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-700/40">
+              <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Valor Original Investido:</span>
                 <span className="font-black text-[#FF6A1A]">
                   {fmtBRL(withdrawingPosition.investedAmount)}
@@ -3445,14 +3447,16 @@ export function InvestimentosScreen({
               </div>
               <div className="flex justify-between items-center">
                 <span className={mutedText}>Data de Início da Aplicação:</span>
-                <span className="font-bold text-slate-300">
+                <span className={`font-bold ${secondaryText}`}>
                   {formatIsoToPtBr(withdrawingPosition.createdAtIso)}
                 </span>
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2.5 text-[11px] text-rose-300">
-              <BellRing className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+            <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
+              isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-rose-50 border-rose-300 text-rose-800'
+            }`}>
+              <BellRing className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5 animate-pulse" />
               <span>
                 <strong>Aviso de Alta Prioridade:</strong> Ao confirmar, uma <strong>notificação imediata de resgate será enviada ao administrador</strong> para processar a transferência do valor para você.
               </span>

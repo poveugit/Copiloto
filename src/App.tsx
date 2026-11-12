@@ -708,7 +708,7 @@ function getExpenseDueInfo(
       daysRemaining: 999,
       status: 'paid',
       targetDateStr: item.lastPaidDate || today,
-      badgeClass: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+      badgeClass: 'bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/30',
       detailNote: `Quitado${displayPaid > 0 ? ` · ${fmtMoney(displayPaid)}` : ''}`,
       timelineSortKey: 1000,
       paidAmount: displayPaid,
@@ -725,7 +725,7 @@ function getExpenseDueInfo(
       daysRemaining: 3,
       status: 'partial',
       targetDateStr: today,
-      badgeClass: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
+      badgeClass: 'bg-sky-50 text-sky-700 border border-sky-300 dark:bg-sky-500/20 dark:text-sky-300 dark:border-sky-500/30',
       detailNote: `Falta ${fmtMoney(remaining)}`,
       timelineSortKey: 10,
       paidAmount: paidInMonth,
@@ -749,7 +749,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
       detailNote: `Previsão ${mName}`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -764,7 +764,7 @@ function getExpenseDueInfo(
       daysRemaining: -99,
       status: 'overdue',
       targetDateStr: today,
-      badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+      badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
       detailNote: `Pendente no mês anterior`,
       timelineSortKey: -99,
       paidAmount: 0,
@@ -784,7 +784,7 @@ function getExpenseDueInfo(
         daysRemaining: 0,
         status: 'today',
         targetDateStr: targetDate,
-        badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+        badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -798,7 +798,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: targetDate,
-        badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -812,7 +812,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'near',
         targetDateStr: targetDate,
-        badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+        badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -825,7 +825,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
       detailNote: `A cada ${item.intervalDays} dias`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -842,7 +842,7 @@ function getExpenseDueInfo(
         daysRemaining: 0,
         status: 'today',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+        badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -856,7 +856,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -870,7 +870,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'near',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+        badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -883,7 +883,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: item.nextDueDate,
-      badgeClass: 'bg-slate-800/80 text-slate-300 border border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
       detailNote: 'Data específica',
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -901,7 +901,7 @@ function getExpenseDueInfo(
       daysRemaining: 0,
       status: 'today',
       targetDateStr: today,
-      badgeClass: 'bg-rose-500/25 text-rose-300 animate-pulse border border-rose-500/40',
+      badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: 0,
       paidAmount: 0,
@@ -915,7 +915,7 @@ function getExpenseDueInfo(
       daysRemaining: daysUntilDue,
       status: 'near',
       targetDateStr: today,
-      badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+      badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue,
       paidAmount: 0,
@@ -929,7 +929,7 @@ function getExpenseDueInfo(
       daysRemaining: daysUntilDue,
       status: 'overdue',
       targetDateStr: today,
-      badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+      badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue + 30,
       paidAmount: 0,
@@ -942,7 +942,7 @@ function getExpenseDueInfo(
     daysRemaining: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     status: 'future',
     targetDateStr: today,
-    badgeClass: 'bg-slate-800/60 text-slate-400 border border-slate-700/40',
+    badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700/40',
     detailNote: `Todo dia ${dueDay}`,
     timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     paidAmount: 0,
@@ -1040,11 +1040,26 @@ export default function App() {
   // Theme State (Dark Mode / Light Mode)
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem('copilotrider_theme');
-    return saved ? saved === 'dark' : true;
+    const dark = saved ? saved === 'dark' : true;
+    if (typeof document !== 'undefined') {
+      if (dark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+    return dark;
   });
 
   useEffect(() => {
     localStorage.setItem('copilotrider_theme', isDark ? 'dark' : 'light');
+    if (typeof document !== 'undefined') {
+      if (isDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
   }, [isDark]);
 
   // Navigation & Architecture Inspector State
@@ -4089,7 +4104,10 @@ export default function App() {
   const surfaceSubtle = isDark
     ? 'bg-[#181B26] border border-slate-800/60'
     : 'bg-slate-100/80 border border-slate-200/70';
-  const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
+  const mutedText = isDark ? 'text-slate-400' : 'text-slate-600';
+  const primaryText = isDark ? 'text-slate-100' : 'text-slate-900';
+  const secondaryText = isDark ? 'text-slate-200' : 'text-slate-800';
+  const dividerBorder = isDark ? 'border-slate-800/40' : 'border-slate-200';
   const inputSurface = isDark
     ? 'bg-[#090A0F] border border-slate-700/80 text-white focus:border-[#FF6A1A]'
     : 'bg-slate-50 border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
@@ -5741,9 +5759,13 @@ export default function App() {
 
               {/* Feedback Banners */}
               {authError && (
-                <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex flex-col gap-2">
+                <div className={`mb-4 p-3.5 rounded-2xl border text-xs font-bold flex flex-col gap-2 ${
+                  isDark
+                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                    : 'bg-rose-50 border-rose-300 text-rose-800'
+                }`}>
                   <div className="flex items-start gap-2.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? 'text-rose-400' : 'text-rose-600'}`} />
                     <span>{authError}</span>
                   </div>
                   {authMode === 'login' && (
@@ -5756,7 +5778,9 @@ export default function App() {
                         setAuthPassword('');
                         setAuthConfirmPassword('');
                       }}
-                      className="self-start px-3 py-1.5 rounded-xl bg-rose-500/25 hover:bg-rose-500/35 text-rose-200 text-[11px] font-black cursor-pointer flex items-center gap-1.5"
+                      className={`self-start px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer flex items-center gap-1.5 ${
+                        isDark ? 'bg-rose-500/25 hover:bg-rose-500/35 text-rose-200' : 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
+                      }`}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>Redefinir Senha Agora</span>
@@ -5766,8 +5790,12 @@ export default function App() {
               )}
 
               {authSuccess && (
-                <div className="mb-4 p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className={`mb-4 p-3.5 rounded-2xl border text-xs font-bold flex items-start gap-2.5 ${
+                  isDark
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                }`}>
+                  <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
                   <span>{authSuccess}</span>
                 </div>
               )}
@@ -6070,10 +6098,14 @@ export default function App() {
             onClick={() => setShowRelatorioMeiModal(true)}
             aria-label="Extrato MEI"
             title="Emitir Extrato MEI (Relatório Mensal)"
-            className="p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-500/70 shadow-xs"
+            className={`p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 bg-transparent border border-transparent ${
+              isDark
+                ? 'text-purple-400 hover:text-purple-300 hover:bg-white/5'
+                : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50'
+            }`}
           >
-            <Printer className="w-4 h-4 text-purple-400 shrink-0" />
-            <span className="hidden lg:inline text-purple-200">Extrato MEI</span>
+            <Printer className={`w-4 h-4 shrink-0 ${isDark ? 'text-purple-400' : 'text-purple-700'}`} />
+            <span className={`hidden lg:inline ${isDark ? 'text-purple-300' : 'text-purple-800 font-bold'}`}>Extrato MEI</span>
           </button>
 
           {/* Botão de Acesso Rápido ao Modal de Meta Reversa na Barra Superior */}
@@ -6082,7 +6114,11 @@ export default function App() {
             onClick={() => setShowMetaReversaModal(true)}
             aria-label="Meta Reversa"
             title="Simulador de Meta Reversa (Custos Fixos & Metas)"
-            className="p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-black transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 border border-[#FF6A1A]/50 bg-[#FF6A1A]/10 text-[#FF6A1A] hover:bg-[#FF6A1A]/20 hover:border-[#FF6A1A] shadow-xs"
+            className={`p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 bg-transparent border border-transparent ${
+              isDark
+                ? 'text-[#FF6A1A] hover:text-[#ff7b33] hover:bg-white/5'
+                : 'text-[#ea580c] hover:text-[#c2410c] hover:bg-orange-50 font-bold'
+            }`}
           >
             <Target className="w-4 h-4 text-[#FF6A1A] shrink-0" />
             <span className="hidden lg:inline">Meta Reversa</span>
@@ -6097,10 +6133,16 @@ export default function App() {
               title="Menu Cockpit: Radar de Lucro, Turno GPS, Extrato MEI, Meta Reversa"
               className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center relative border ${
                 activeShiftSession?.isActive
-                  ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/25'
+                  ? isDark
+                    ? 'bg-transparent border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10'
+                    : 'bg-emerald-50 border-emerald-500 text-emerald-700 hover:bg-emerald-100'
                   : showCockpitMenu
-                  ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
-                  : `${surfaceSubtle} ${mutedText} hover:text-white hover:border-[#FF6A1A]/50`
+                  ? isDark
+                    ? 'bg-transparent border-[#FF6A1A]/50 text-[#FF6A1A]'
+                    : 'bg-orange-50 border-[#FF6A1A] text-[#ea580c]'
+                  : isDark
+                  ? 'bg-transparent border-transparent text-slate-400 hover:text-white hover:bg-white/5'
+                  : 'bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-black/5'
               }`}
             >
               <Gauge className={`w-4 h-4 shrink-0 ${activeShiftSession?.isActive ? 'text-emerald-400 animate-pulse' : 'text-[#FF6A1A]'}`} />
@@ -6301,7 +6343,11 @@ export default function App() {
               setShowAuthScreen(true);
             }}
             title={currentUser.isGuest ? 'Entrar ou Criar Conta' : `Conta: ${currentUser.name} (${currentUser.email})`}
-            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5 bg-transparent border border-transparent ${
+              isDark
+                ? 'text-slate-300 hover:text-white hover:bg-white/5'
+                : 'text-slate-700 hover:text-slate-900 hover:bg-black/5'
+            }`}
           >
             <User className="w-3.5 h-3.5 text-[#FF6A1A] shrink-0" />
             <span className="hidden sm:inline max-w-[110px] truncate">
@@ -6318,7 +6364,9 @@ export default function App() {
           <div className="flex flex-col gap-4 sm:gap-6">
             {/* CARDS EM DESTAQUE NO TOPO: RESERVAS OBRIGATÓRIAS DO MOTOBOY */}
               {activeShiftSession?.isActive && (
-                <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-emerald-500/15 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg ${
+                  isDark ? 'bg-emerald-500/15 border border-emerald-500/40 text-slate-100' : 'bg-emerald-50 border border-emerald-300 text-slate-900'
+                }`}>
                   <div className="flex items-start sm:items-center gap-3 min-w-0">
                     <span className="relative flex h-3 w-3 shrink-0 mt-1 sm:mt-0">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -6326,10 +6374,12 @@ export default function App() {
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                        <span className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                           Turno Ativo · Odômetro GPS Automático
                         </span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                          isDark ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-white text-emerald-800 border-emerald-300'
+                        }`}>
                           +{(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
@@ -6337,7 +6387,9 @@ export default function App() {
                           km no GPS
                         </span>
                         {(activeShiftSession.currentSpeedKmh || 0) > 0 && (
-                          <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                            isDark ? 'bg-sky-500/20 text-sky-300 border-sky-500/30' : 'bg-white text-sky-800 border-sky-300'
+                          }`}>
                             {activeShiftSession.currentSpeedKmh} km/h
                           </span>
                         )}
@@ -6349,7 +6401,7 @@ export default function App() {
                         <span>·</span>
                         <span>
                           Ganhos no turno:{' '}
-                          <strong className="text-emerald-400 font-black">
+                          <strong className={`${isDark ? 'text-emerald-400' : 'text-emerald-700'} font-black`}>
                             {fmtMoney(Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0)))}
                           </strong>
                         </span>
@@ -7169,7 +7221,7 @@ export default function App() {
                                           <div className="font-black text-emerald-400 uppercase tracking-wide">
                                             Saldo Suficiente para Pagar
                                           </div>
-                                          <p className="font-medium text-slate-100 dark:text-slate-100">
+                                          <p className={`font-medium ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
                                             Excelente! O seu saldo atual cobre integralmente a conta de hoje. Após efetuar o pagamento, ainda{' '}
                                             <strong className="text-emerald-300 bg-emerald-950/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-500/50">
                                               vai ficar {fmtMoney(sobraSaldo)} limpo
@@ -7569,7 +7621,7 @@ export default function App() {
                     </span>
                   </div>
                   <span className={`text-[10px] font-bold ${mutedText}`}>
-                    Cálculo para <strong className="text-slate-200">{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
+                    Cálculo para <strong className={isDark ? 'text-slate-200' : 'text-slate-900 font-black'}>{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
                   </span>
                 </div>
 
@@ -7696,7 +7748,7 @@ export default function App() {
                     </strong>
                     <span className="text-slate-600 hidden sm:inline">•</span>
                     <span className={`${mutedText}`}>
-                      Sua base atual: <strong className="text-slate-300 tabular-nums">{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
+                      Sua base atual: <strong className={`tabular-nums ${isDark ? 'text-slate-300' : 'text-slate-900 font-black'}`}>{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
                     </span>
                   </div>
 
@@ -10454,7 +10506,9 @@ export default function App() {
                                                 📅 Amanhã
                                               </span>
                                             ) : daysDiff > 1 ? (
-                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-500/15 text-slate-300">
+                                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                                isDark ? 'bg-slate-500/15 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                              }`}>
                                                 em {daysDiff} dias
                                               </span>
                                             ) : isPast ? (
@@ -10715,13 +10769,13 @@ export default function App() {
 
                 {/* FILTRO POR CATEGORIA, MÊS, STATUS E LISTAGEM DAS CONTAS DA MOTO */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-slate-800/50">
+                  <div className={`flex flex-col gap-3 mb-4 pb-4 border-b ${dividerBorder}`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-sm sm:text-base font-black">
                           Suas Contas e Despesas da Moto
                         </h3>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
                           {financialIntelligence.rawBikeExpenses.length} cadastradas
                         </span>
                       </div>
@@ -11067,7 +11121,7 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => setDeletingBikeId(null)}
-                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
+                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} ${isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'} cursor-pointer`}
                                       title="Cancelar"
                                     >
                                       ✕
@@ -11142,7 +11196,7 @@ export default function App() {
                             </div>
                             <span className="text-xl my-0.5">{item.icon || '🏍️'}</span>
                             <span className="text-xs font-black truncate">{item.name}</span>
-                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-400' : 'text-slate-300'}`}>
+                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : (isDark ? 'text-slate-300' : 'text-slate-800')}`}>
                               {isPaid ? `Pago: ${fmtCurrencyExact(totalPaid)}` : `${fmtCurrencyExact(displayMonthly)}/mês`}
                             </span>
                             <span className={`text-[10px] font-bold truncate ${
@@ -11321,13 +11375,13 @@ export default function App() {
 
                 {/* FILTRO POR CATEGORIA, MÊS, STATUS E LISTAGEM DAS CONTAS DA CASA */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-slate-800/50">
+                  <div className={`flex flex-col gap-3 mb-4 pb-4 border-b ${dividerBorder}`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-sm sm:text-base font-black">
                           Suas Contas e Despesas Domésticas
                         </h3>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
                           {financialIntelligence.rawHouseholdExpenses.length} cadastradas
                         </span>
                       </div>
@@ -11666,7 +11720,7 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => setDeletingHouseholdId(null)}
-                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
+                                      className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} ${isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'} cursor-pointer`}
                                       title="Cancelar"
                                     >
                                       ✕
@@ -11739,7 +11793,7 @@ export default function App() {
                             </div>
                             <span className="text-xl my-0.5">{item.icon || '🏠'}</span>
                             <span className="text-xs font-black truncate">{item.name}</span>
-                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-400' : 'text-slate-300'}`}>
+                            <span className={`text-xs font-bold tabular-nums ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : (isDark ? 'text-slate-300' : 'text-slate-800')}`}>
                               {isPaid ? `Pago: ${fmtCurrencyExact(totalPaid)}` : `${fmtCurrencyExact(item.monthlyAmount)}/mês`}
                             </span>
                             <span className={`text-[10px] font-bold truncate ${
@@ -12254,7 +12308,7 @@ export default function App() {
                               </div>
                               <div>
                                 <span className={`block text-[10px] font-bold ${mutedText}`}>Em 12 Meses</span>
-                                <span className="text-sm sm:text-base font-black tabular-nums text-slate-300">
+                                <span className={`text-sm sm:text-base font-black tabular-nums ${isDark ? 'text-slate-300' : 'text-slate-900'}`}>
                                   {fmtMoney(activeItem.monthly * 12)}
                                 </span>
                               </div>
@@ -14440,288 +14494,92 @@ export default function App() {
 
         {/* ================= ABA 6: CONFIGURAÇÕES ================= */}
         {activeTab === 'settings' && (
-          <div className="flex flex-col gap-4 sm:gap-6 max-w-4xl">
-            <h1 className="text-xl sm:text-2xl font-black">Configurações & Sincronização</h1>
-
-            {/* CONTA DO PILOTO CARD (Acesso à Tela de Login / Cadastro / Logout) */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${surfaceCard}`}>
-              <div className="flex items-center gap-3.5 min-w-0">
-                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center font-black text-base shrink-0">
-                  {currentUser.name.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm sm:text-base font-black truncate">{currentUser.name}</div>
-                  <div className={`text-xs truncate ${mutedText}`}>
-                    {`${currentUser.email}${currentUser.phone ? ` · ${currentUser.phone}` : ''}`}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthEmail(currentUser.email);
-                    setAuthPassword('');
-                    setAuthConfirmPassword('');
-                    setAuthError(null);
-                    setAuthSuccess(null);
-                    setAuthMode('recover');
-                    setShowAuthScreen(true);
-                  }}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-[#FF6A1A]" />
-                  <span>Redefinir Senha</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthEmail('');
-                    setAuthPassword('');
-                    setAuthConfirmPassword('');
-                    setAuthError(null);
-                    setAuthSuccess(null);
-                    setAuthMode('login');
-                    setShowAuthScreen(true);
-                  }}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
-                >
-                  Trocar Conta
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 min-h-[40px]"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sair</span>
-                </button>
+          <div className="flex flex-col gap-6 max-w-3xl pb-16">
+            {/* 1. TOPO: IDENTIFICAÇÃO DO PILOTO (Minimalista, Sem Cards) */}
+            <div className={`pb-3 border-b ${dividerBorder}`}>
+              <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Configurações</h1>
+              <div className="mt-2 flex items-baseline gap-2 flex-wrap">
+                <span className={`text-base font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>{currentUser.name}</span>
+                <span className={`text-xs ${mutedText}`}>•</span>
+                <span className={`text-xs font-medium ${mutedText}`}>
+                  {currentUser.email}{currentUser.phone ? ` · ${currentUser.phone}` : ''}
+                </span>
               </div>
             </div>
 
-            {/* CENTRAL DE SINCRONIZAÇÃO COM A NUVEM (ENVIAR PARA NUVEM & BAIXAR DA NUVEM) */}
-            <div
-              className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-4 ${surfaceCard}`}
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* 2. METAS FINANCEIRAS (Design Minimalista sem cards) */}
+            <div className="flex flex-col gap-3">
+              <div className="text-xs font-black uppercase tracking-wider text-[#FF6A1A]">
+                Metas de Faturamento
+              </div>
+
+              {/* Meta Diária */}
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-3 border-b ${dividerBorder}`}>
                 <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Database className="w-4 h-4 text-[#FF6A1A]" />
-                    <span className="text-sm sm:text-base font-black">
-                      Sincronização em Nuvem · Mochilinha Cloud
-                    </span>
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                      Multi-Dispositivo
-                    </span>
-                  </div>
-                  <p className={`text-xs mt-1 ${mutedText}`}>
-                    Use <strong>Enviar para a Nuvem</strong> no aparelho onde você cadastrou suas corridas, gastos e KM, e depois clique em <strong>Baixar da Nuvem</strong> ao acessar por outro celular ou navegador.
-                  </p>
+                  <div className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>Meta Diária</div>
+                  <div className={`text-xs ${mutedText}`}>Meta de faturamento do dia no Painel e Mochilinha</div>
                 </div>
-
-                <div className={`text-[11px] font-semibold shrink-0 px-3 py-2 rounded-xl ${surfaceSubtle}`}>
-                  <div className="font-bold text-[#FF6A1A]">
-                    {dbState.entries.length} corridas · {dbState.expenses.length} gastos ·{' '}
-                    {totals.totalKm.toLocaleString('pt-BR')} km
-                  </div>
-                  <div className={mutedText}>
-                    {workManagerStatus} ({lastSyncTime})
-                  </div>
+                <div className="flex items-center gap-1.5 self-start sm:self-center">
+                  <span className="text-xs font-bold text-[#FF6A1A]">R$</span>
+                  <FreeNumberInput
+                    value={dbState.dailyGoal}
+                    onValueChange={val =>
+                      persistAndEnqueueWorkManager({
+                        ...dbState,
+                        dailyGoal: Math.max(0, val),
+                      })
+                    }
+                    className={`w-28 px-3 py-1.5 rounded-lg text-right font-black tabular-nums outline-none ${inputSurface}`}
+                  />
                 </div>
               </div>
 
-              {/* DOIS BOTÕES DEDICADOS: ENVIAR PARA A NUVEM vs BAIXAR DA NUVEM */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleUploadToCloud(true)}
-                  disabled={isSyncing}
-                  className="w-full justify-center px-4 py-3.5 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 transition-all cursor-pointer min-h-[48px] bg-[#FF6A1A] text-black hover:bg-[#ff7b33] shadow-sm"
-                >
-                  <Upload className={`w-4 h-4 stroke-[2.5] ${isSyncing && syncActionType === 'upload' ? 'animate-bounce' : ''}`} />
-                  <span>
-                    {isSyncing && syncActionType === 'upload'
-                      ? 'Enviando para a Nuvem...'
-                      : 'Enviar Dados para a Nuvem'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDownloadFromCloud(true)}
-                  disabled={isSyncing}
-                  className={`w-full justify-center px-4 py-3.5 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 transition-all cursor-pointer min-h-[48px] border ${
-                    isDark
-                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
-                      : 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
-                  }`}
-                >
-                  <Download className={`w-4 h-4 stroke-[2.5] ${isSyncing && syncActionType === 'download' ? 'animate-bounce' : ''}`} />
-                  <span>
-                    {isSyncing && syncActionType === 'download'
-                      ? 'Baixando da Nuvem...'
-                      : 'Baixar / Sincronizar da Nuvem'}
-                  </span>
-                </button>
-              </div>
-
-              {syncFeedbackBanner && (
-                <div
-                  className={`rounded-xl px-3.5 py-2.5 text-xs font-bold flex items-center justify-between gap-2 ${
-                    syncFeedbackBanner.startsWith('✅')
-                      ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
-                      : 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
-                  }`}
-                >
-                  <span>{syncFeedbackBanner}</span>
-                  <button
-                    type="button"
-                    onClick={() => setSyncFeedbackBanner(null)}
-                    className="p-1 rounded-lg hover:bg-black/20 cursor-pointer shrink-0"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              {/* Código de Transferência Direta / Backup Rápido entre Aparelhos */}
-              <div className="pt-2 border-t border-slate-800/40">
-                <button
-                  type="button"
-                  onClick={() => setShowBackupCodePanel(prev => !prev)}
-                  className={`text-xs font-bold flex items-center gap-1.5 cursor-pointer ${mutedText} hover:text-[#FF6A1A]`}
-                >
-                  <Copy className="w-3.5 h-3.5 text-[#FF6A1A]" />
-                  <span>
-                    {showBackupCodePanel
-                      ? 'Ocultar transferência por código de backup'
-                      : 'Precisa transferir dados de uma versão antiga? Usar Código de Backup Direto'}
-                  </span>
-                </button>
-
-                {showBackupCodePanel && (
-                  <div className={`mt-3 p-3.5 rounded-2xl border ${surfaceSubtle} flex flex-col gap-3`}>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-black">
-                          1. Copiar todos os dados deste aparelho
-                        </div>
-                        <div className={`text-[11px] ${mutedText}`}>
-                          Gera um código com todas as corridas, gastos, KM da moto e manutenções.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const code = exportCloudBackupCode(dbState);
-                          navigator.clipboard?.writeText(code);
-                          setSyncFeedbackBanner(
-                            '✅ Código de backup copiado! Cole no campo abaixo no outro aparelho ou navegador.'
-                          );
-                        }}
-                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black cursor-pointer shrink-0 flex items-center gap-1.5"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copiar Código dos Meus Dados</span>
-                      </button>
-                    </div>
-
-                    <div className="pt-2.5 border-t border-slate-800/40 flex flex-col gap-2">
-                      <div className="text-xs font-black">
-                        2. Colar código de outro aparelho para restaurar e sincronizar
-                      </div>
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <input
-                          type="text"
-                          value={backupInputCode}
-                          onChange={e => setBackupInputCode(e.target.value)}
-                          placeholder="Cole aqui o código MOCHILINHA_BACKUP:..."
-                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!backupInputCode.trim()) return;
-                            const res = importCloudBackupCode(backupInputCode, dbState);
-                            if (!res.ok || !res.mergedState) {
-                              setSyncFeedbackBanner(`⚠️ ${res.error}`);
-                              return;
-                            }
-                            setBackupInputCode('');
-                            await persistAndEnqueueWorkManager(res.mergedState);
-                            await uploadLocalDataToCloud(res.mergedState, currentUser?.email);
-                            setSyncFeedbackBanner(
-                              `✅ Dados importados e sincronizados na nuvem com sucesso! (${res.mergedState.entries.length} corridas e ${res.mergedState.expenses.length} gastos)`
-                            );
-                          }}
-                          className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 text-black cursor-pointer shrink-0"
-                        >
-                          Restaurar Dados Agora
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 ${surfaceCard}`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-2 border-b border-slate-800/40">
+              {/* Meta Semanal / Mensal */}
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-3 border-b ${dividerBorder}`}>
                 <div>
-                  <div className="text-sm font-bold">Meta Diária de Faturamento (R$)</div>
-                  <div className={`text-xs ${mutedText}`}>Usada no cálculo de progresso diário e Mochilinha</div>
+                  <div className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>Meta Semanal / Mensal</div>
+                  <div className={`text-xs ${mutedText}`}>Faturamento acumulado exibido no início</div>
                 </div>
-                <FreeNumberInput
-                  value={dbState.dailyGoal}
-                  onValueChange={val =>
-                    persistAndEnqueueWorkManager({
-                      ...dbState,
-                      dailyGoal: Math.max(0, val),
-                    })
-                  }
-                  className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
-                />
+                <div className="flex items-center gap-1.5 self-start sm:self-center">
+                  <span className="text-xs font-bold text-[#FF6A1A]">R$</span>
+                  <FreeNumberInput
+                    step="50"
+                    value={dbState.weeklyGoal ?? 0}
+                    onValueChange={val =>
+                      persistAndEnqueueWorkManager({
+                        ...dbState,
+                        weeklyGoal: Math.max(0, val),
+                      })
+                    }
+                    className={`w-28 px-3 py-1.5 rounded-lg text-right font-black tabular-nums outline-none ${inputSurface}`}
+                  />
+                </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-2 border-b border-slate-800/40">
-                <div>
-                  <div className="text-sm font-bold">Meta de Faturamento Semanal (R$)</div>
-                  <div className={`text-xs ${mutedText}`}>Exibida na barra de progresso semanal no Painel de Início</div>
-                </div>
-                <FreeNumberInput
-                  step="50"
-                  value={dbState.weeklyGoal ?? 0}
-                  onValueChange={val =>
-                    persistAndEnqueueWorkManager({
-                      ...dbState,
-                      weeklyGoal: Math.max(0, val),
-                    })
-                  }
-                  className={`w-full sm:w-28 px-3 py-2 rounded-xl text-left sm:text-right font-black tabular-nums outline-none ${inputSurface}`}
-                />
-              </div>
-
-              <div className="flex flex-col gap-3 py-3 border-b border-slate-800/40">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              {/* Meta Personalizada de Ganhos */}
+              <div className={`flex flex-col gap-3 py-3 border-b ${dividerBorder}`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-bold flex items-center gap-2">
+                    <div className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>
                       <Target className="w-4 h-4 text-[#FF6A1A]" />
                       <span>Meta Personalizada de Ganhos</span>
                     </div>
                     <div className={`text-xs ${mutedText}`}>
-                      Defina sua meta de faturamento e a data término para contagem regressiva e meta diária
+                      Alvo total com contagem regressiva de dias
                     </div>
                   </div>
+                  <span className="text-xs font-black text-[#FF6A1A] self-start sm:self-center">
+                    ⏳ {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownBadgeText}
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
-                  <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                    <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                      Valor da Meta de Ganhos (R$)
+                  <div>
+                    <label className={`block text-[11px] font-semibold mb-1 ${mutedText}`}>
+                      Valor Alvo (R$)
                     </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black text-[#FF6A1A]">R$</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-[#FF6A1A]">R$</span>
                       <FreeNumberInput
                         step="50"
                         value={dbState.customGoalTarget ?? 0}
@@ -14732,20 +14590,15 @@ export default function App() {
                             customGoalMode: 'date',
                           })
                         }
-                        className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
+                        className={`w-full px-3 py-1.5 rounded-lg text-left font-black tabular-nums outline-none ${inputSurface}`}
                       />
                     </div>
                   </div>
 
-                  <div className={`rounded-xl p-3 ${surfaceSubtle}`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`text-[11px] font-bold ${mutedText}`}>
-                        Data Término da Meta (Data Personalizada)
-                      </label>
-                      <span className="text-[10px] font-black text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/20">
-                        ⏳ {getCustomGoalCountdown('date', dbState.customGoalDays, dbState.customGoalTargetDate).countdownBadgeText}
-                      </span>
-                    </div>
+                  <div>
+                    <label className={`block text-[11px] font-semibold mb-1 ${mutedText}`}>
+                      Data Limite
+                    </label>
                     <input
                       type="date"
                       min={todayStr()}
@@ -14757,326 +14610,254 @@ export default function App() {
                           customGoalMode: 'date',
                         })
                       }
-                      className={`w-full px-3 py-2 rounded-xl text-left font-black tabular-nums outline-none ${inputSurface}`}
+                      className={`w-full px-3 py-1.5 rounded-lg text-left font-bold tabular-nums outline-none ${inputSurface}`}
                     />
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* LOCAL PUSH NOTIFICATIONS COMPONENT FOR MAINTENANCE ALERTS */}
-              <div className="py-3 border-b border-slate-800/40 flex flex-col gap-3">
+            {/* 3. SISTEMA & PERMISSÕES (Sem fundos nos ícones nem nos botões) */}
+            <div className="flex flex-col gap-3 pt-2">
+              <div className="text-xs font-black uppercase tracking-wider text-[#FF6A1A]">
+                Sistema & Permissões
+              </div>
+
+              {/* Notificações do Sistema */}
+              <div className={`py-3 border-b ${dividerBorder} flex flex-col gap-2.5`}>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border transition-colors ${
-                        isMaintNotificationsEnabled
-                          ? 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]'
-                          : isDark
-                          ? 'bg-slate-800/70 border-slate-700 text-slate-400'
-                          : 'bg-slate-100 border-slate-200 text-slate-500'
-                      }`}
-                    >
-                      {isMaintNotificationsEnabled ? (
-                        <BellRing className="w-5 h-5" />
-                      ) : (
-                        <BellOff className="w-5 h-5" />
-                      )}
-                    </div>
+                  <div className="flex items-start gap-2.5">
+                    <BellRing className={`w-5 h-5 shrink-0 mt-0.5 ${isMaintNotificationsEnabled ? 'text-[#FF6A1A]' : 'text-slate-500'}`} />
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold">
-                          Notificações do Sistema (Manutenção e Investimentos)
+                        <span className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>
+                          Notificações do Sistema
                         </span>
                         <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                          className={`text-[10px] font-bold uppercase ${
                             isMaintNotificationsEnabled
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                              : isDark
-                              ? 'bg-slate-800 text-slate-400 border-slate-700'
-                              : 'bg-slate-200 text-slate-600 border-slate-300'
+                              ? 'text-emerald-500 dark:text-emerald-400'
+                              : 'text-slate-500'
                           }`}
                         >
-                          {isMaintNotificationsEnabled ? 'Habilitado' : 'Desabilitado'}
+                          {isMaintNotificationsEnabled ? 'Ativo' : 'Inativo'}
                         </span>
                       </div>
                       <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Avisos nativos do Android quando uma manutenção atingir o ponto de alerta (ex: 85% de uso) ou vencer, e quando um depósito de investimento for confirmado pelo Admin.
+                        Alertas de manutenção preventiva e confirmação de depósitos.
                       </p>
                     </div>
                   </div>
 
-                  {/* Interactive Toggle Switch */}
-                  <div className="flex items-center gap-2.5 self-start sm:self-center shrink-0">
+                  {/* Switch */}
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
                     <button
                       type="button"
                       role="switch"
                       aria-checked={isMaintNotificationsEnabled}
                       onClick={() => handleToggleMaintenanceNotifications(!isMaintNotificationsEnabled)}
-                      className={`relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        isMaintNotificationsEnabled
-                          ? 'bg-[#FF6A1A]'
-                          : isDark
-                          ? 'bg-slate-700'
-                          : 'bg-slate-300'
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        isMaintNotificationsEnabled ? 'bg-[#FF6A1A]' : isDark ? 'bg-slate-700' : 'bg-slate-300'
                       }`}
                       title={
                         isMaintNotificationsEnabled
-                          ? 'Desabilitar notificações locais de manutenção'
-                          : 'Habilitar notificações locais de manutenção'
+                          ? 'Desabilitar notificações'
+                          : 'Habilitar notificações'
                       }
                     >
                       <span
-                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
-                          isMaintNotificationsEnabled ? 'translate-x-6' : 'translate-x-0'
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                          isMaintNotificationsEnabled ? 'translate-x-5' : 'translate-x-0'
                         }`}
                       />
                     </button>
-                    <span className="text-xs font-extrabold min-w-[70px]">
-                      {isMaintNotificationsEnabled ? 'Ativado' : 'Desativado'}
-                    </span>
                   </div>
                 </div>
 
-                {/* Details & Test Push Action Bar */}
-                <div
-                  className={`rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${surfaceSubtle}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="font-bold flex items-center gap-1.5">
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          !isMaintNotificationsEnabled
-                            ? 'bg-slate-500'
-                            : maintAlertStats.overdueCount > 0
-                            ? 'bg-rose-500 animate-pulse'
-                            : maintAlertStats.alertCount > 0
-                            ? 'bg-amber-400 animate-pulse'
-                            : 'bg-emerald-400'
-                        }`}
-                      />
-                      Status de Monitoramento:
-                    </span>
-                    <span className={mutedText}>
+                {/* Sublinha de monitoramento e teste (suave, sem fundo pesado) */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
+                  <div className={`flex items-center gap-2 ${mutedText}`}>
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        !isMaintNotificationsEnabled
+                          ? 'bg-slate-500'
+                          : maintAlertStats.overdueCount > 0
+                          ? 'bg-rose-500 animate-pulse'
+                          : maintAlertStats.alertCount > 0
+                          ? 'bg-amber-400 animate-pulse'
+                          : 'bg-emerald-400'
+                      }`}
+                    />
+                    <span>
                       {!isMaintNotificationsEnabled
-                        ? 'Alertas silenciados pelo usuário'
+                        ? 'Alertas silenciados'
                         : `${maintAlertStats.overdueCount} vencida(s) · ${maintAlertStats.alertCount} no ponto de alerta`}
                     </span>
-                    {notifPermission === 'granted' && (
-                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                        Notificações nativas ativas
-                      </span>
-                    )}
-                    {notifPermission === 'denied' && (
-                      <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">
-                        Permissão negada no Android
-                      </span>
-                    )}
                   </div>
+
                   <button
                     type="button"
                     onClick={handleSendTestNotification}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer shrink-0 flex items-center gap-1.5 ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                    className={`self-start sm:self-auto text-xs font-semibold text-[#FF6A1A] hover:text-[#ff7b33] bg-transparent border border-transparent ${
+                      isDark ? 'hover:border-slate-800' : 'hover:border-slate-300'
+                    } px-2 py-1 rounded-md cursor-pointer flex items-center gap-1.5 transition-colors`}
                   >
                     <BellRing className="w-3.5 h-3.5" />
-                    <span>Enviar notificação de teste</span>
+                    <span>Enviar teste</span>
                   </button>
                 </div>
                 {notifTestFeedback && (
-                  <p className={`text-[11px] font-semibold ${mutedText}`}>{notifTestFeedback}</p>
+                  <p className={`text-[11px] font-medium ${mutedText}`}>{notifTestFeedback}</p>
                 )}
               </div>
 
-              {/* PERMISSÃO DE VOZ E MICROFONE NO DISPOSITIVO */}
-              <div className="py-3.5 border-b border-slate-800/40 flex flex-col gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+              {/* Permissão de Voz */}
+              <div className={`py-3 border-b ${dividerBorder} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
+                <div className="flex items-start gap-2.5">
+                  <Mic className={`w-5 h-5 shrink-0 mt-0.5 ${micPermissionStatus === 'granted' ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'}`} />
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>
+                        Comando de Voz
+                      </span>
+                      <span className={`text-[10px] font-bold uppercase ${
                         micPermissionStatus === 'granted'
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          ? 'text-emerald-500 dark:text-emerald-400'
                           : micPermissionStatus === 'denied'
-                          ? 'bg-rose-500/15 border-rose-500/40 text-rose-400'
-                          : 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]'
-                      }`}
-                    >
-                      {micPermissionStatus === 'denied' ? (
-                        <MicOff className="w-5 h-5" />
-                      ) : (
-                        <Mic className="w-5 h-5" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold">
-                          Permissão de Voz e Microfone no Dispositivo
-                        </span>
-                        <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
-                            micPermissionStatus === 'granted'
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                              : micPermissionStatus === 'denied'
-                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                          }`}
-                        >
-                          {micPermissionStatus === 'granted'
-                            ? 'Permitido no Aparelho'
-                            : micPermissionStatus === 'denied'
-                            ? 'Bloqueado'
-                            : 'Solicitar Permissão'}
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Necessário para ditar corridas e gastos por voz sem precisar digitar enquanto pilota.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (micPermissionStatus === 'granted') {
-                          handleTriggerVoiceDictation();
-                        } else {
-                          setMicPermissionError(null);
-                          setAutoRecordAfterPermission(false);
-                          setShowMicPermissionModal(true);
-                        }
-                      }}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition-colors cursor-pointer flex items-center gap-1.5 ${
-                        micPermissionStatus === 'granted'
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
-                          : 'bg-[#FF6A1A] text-black hover:bg-[#ff7b33]'
-                      }`}
-                    >
-                      <Mic className="w-3.5 h-3.5" />
-                      <span>
-                        {micPermissionStatus === 'granted'
-                          ? 'Testar Comando de Voz'
-                          : 'Permitir Microfone no Aparelho'}
+                          ? 'text-rose-500 dark:text-rose-400'
+                          : 'text-amber-500 dark:text-amber-400'
+                      }`}>
+                        {micPermissionStatus === 'granted' ? 'Ativo' : micPermissionStatus === 'denied' ? 'Bloqueado' : 'Pendente'}
                       </span>
-                    </button>
+                    </div>
+                    <p className={`text-xs mt-0.5 ${mutedText}`}>
+                      Ditar corridas e despesas falando.
+                    </p>
                   </div>
+                </div>
+
+                <div className="flex items-center self-start sm:self-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (micPermissionStatus === 'granted') {
+                        handleTriggerVoiceDictation();
+                      } else {
+                        setMicPermissionError(null);
+                        setAutoRecordAfterPermission(false);
+                        setShowMicPermissionModal(true);
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 bg-transparent border ${
+                      isDark
+                        ? 'text-slate-200 hover:text-white border-slate-700 hover:border-slate-500'
+                        : 'text-slate-700 hover:text-slate-900 border-slate-300 hover:border-slate-400'
+                    }`}
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    <span>
+                      {micPermissionStatus === 'granted' ? 'Testar Voz' : 'Permitir Microfone'}
+                    </span>
+                  </button>
                 </div>
               </div>
 
-              {/* PERMISSÃO DE LOCALIZAÇÃO GPS (ODÔMETRO AUTOMÁTICO EM 2º PLANO) */}
-              <div className="py-3.5 border-b border-slate-800/40 flex flex-col gap-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+              {/* Permissão de Localização GPS */}
+              <div className={`py-3 border-b ${dividerBorder} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
+                <div className="flex items-start gap-2.5">
+                  <Navigation className={`w-5 h-5 shrink-0 mt-0.5 ${gpsPermissionStatus === 'granted' ? 'text-emerald-500 dark:text-emerald-400' : 'text-sky-500 dark:text-sky-400'}`} />
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>
+                        Localização GPS (Odômetro)
+                      </span>
+                      <span className={`text-[10px] font-bold uppercase ${
                         gpsPermissionStatus === 'granted'
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          ? 'text-emerald-500 dark:text-emerald-400'
                           : gpsPermissionStatus === 'denied'
-                          ? 'bg-rose-500/15 border-rose-500/40 text-rose-400'
-                          : 'bg-sky-500/15 border-sky-500/40 text-sky-400'
-                      }`}
-                    >
-                      <Navigation className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold">
-                          Permissão de Localização GPS (Tempo Real & 2º Plano)
-                        </span>
-                        <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
-                            gpsPermissionStatus === 'granted'
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                              : gpsPermissionStatus === 'denied'
-                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                          }`}
-                        >
-                          {gpsPermissionStatus === 'granted'
-                            ? 'Ativo no Aparelho'
-                            : gpsPermissionStatus === 'denied'
-                            ? 'Bloqueado'
-                            : 'Solicitar Permissão'}
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Permite que o odômetro conte a distância percorrida automaticamente no Modo Turno, inclusive em segundo plano enquanto você usa iFood, Uber ou 99.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGpsPermissionError(null);
-                        setShowGpsPermissionModal(true);
-                      }}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition-colors cursor-pointer flex items-center gap-1.5 ${
-                        gpsPermissionStatus === 'granted'
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
-                          : 'bg-[#FF6A1A] text-black hover:bg-[#ff7b33]'
-                      }`}
-                    >
-                      <Navigation className="w-3.5 h-3.5" />
-                      <span>
-                        {gpsPermissionStatus === 'granted'
-                          ? 'Configurar / Testar GPS'
-                          : 'Permitir GPS (O Tempo Todo)'}
+                          ? 'text-rose-500 dark:text-rose-400'
+                          : 'text-amber-500 dark:text-amber-400'
+                      }`}>
+                        {gpsPermissionStatus === 'granted' ? 'Ativo' : gpsPermissionStatus === 'denied' ? 'Bloqueado' : 'Pendente'}
                       </span>
-                    </button>
+                    </div>
+                    <p className={`text-xs mt-0.5 ${mutedText}`}>
+                      Medição automática de KM no Modo Turno.
+                    </p>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex items-center justify-between gap-4 py-3 border-b border-slate-800/40">
-                <span className="text-sm font-bold">Tema da interface</span>
-                <button
-                  onClick={() => setIsDark(prev => !prev)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-2 ${surfaceSubtle}`}
-                >
-                  {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-slate-700" />}
-                  <span>{isDark ? 'Modo Escuro' : 'Modo Claro'}</span>
-                </button>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-2">
-                <div>
-                  <div className="text-sm font-bold text-rose-400">Resetar Banco de Dados Local</div>
-                  <div className={`text-xs ${mutedText}`}>Restaura os dados de fábrica no Room Database</div>
+                <div className="flex items-center self-start sm:self-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGpsPermissionError(null);
+                      setShowGpsPermissionModal(true);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 bg-transparent border ${
+                      isDark
+                        ? 'text-slate-200 hover:text-white border-slate-700 hover:border-slate-500'
+                        : 'text-slate-700 hover:text-slate-900 border-slate-300 hover:border-slate-400'
+                    }`}
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>
+                      {gpsPermissionStatus === 'granted' ? 'Testar GPS' : 'Ativar GPS'}
+                    </span>
+                  </button>
                 </div>
-                <button
-                  onClick={() => setShowResetConfirm(true)}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 cursor-pointer self-start sm:self-auto"
-                >
-                  Apagar Dados
-                </button>
               </div>
             </div>
 
-            {/* PRIVACIDADE, TERMOS E LGPD (Exigência Google Play Store) */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col gap-3.5 ${surfaceCard}`}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-400 flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-black">Privacidade & Termos Legais</h3>
-                  <p className={`text-xs ${mutedText}`}>Em conformidade com a LGPD e Google Play Store</p>
-                </div>
+            {/* 4. PREFERÊNCIAS E TEMA (Minimalista) */}
+            <div className={`flex items-center justify-between gap-4 py-3 border-b ${dividerBorder}`}>
+              <div>
+                <span className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>Tema da Interface</span>
+                <div className={`text-xs ${mutedText}`}>Alternar entre Modo Escuro e Modo Claro</div>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsDark(prev => !prev)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold bg-transparent border cursor-pointer transition-colors flex items-center gap-2 ${
+                  isDark
+                    ? 'text-slate-300 hover:text-white border-slate-700 hover:border-slate-500'
+                    : 'text-slate-700 hover:text-slate-900 border-slate-300 hover:border-slate-400'
+                }`}
+              >
+                {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-slate-700" />}
+                <span>{isDark ? 'Modo Escuro' : 'Modo Claro'}</span>
+              </button>
+            </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/40">
-                <div className="text-xs text-slate-400">
-                  O Mochilinha não vende seus dados operacionais. Seus registros são criptografados.
-                </div>
-                <a
-                  href="/privacidade.html"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 transition-colors text-center shrink-0"
-                >
-                  Ver Política de Privacidade →
-                </a>
+            {/* 5. DADOS LOCAIS */}
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-3 border-b ${dividerBorder}`}>
+              <div>
+                <div className="text-sm font-bold text-rose-500">Restaurar Banco de Dados</div>
+                <div className={`text-xs ${mutedText}`}>Restaura os dados originais no armazenamento local</div>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(true)}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-500 hover:text-rose-400 bg-transparent border border-rose-500/40 hover:border-rose-500/70 cursor-pointer self-start sm:self-auto transition-colors"
+              >
+                Apagar Dados Locais
+              </button>
+            </div>
+
+            {/* 6. PRIVACIDADE E TERMOS */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-3">
+              <div>
+                <div className={`text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>Privacidade & Termos Legais</div>
+                <div className={`text-xs ${mutedText}`}>Em conformidade com LGPD e Google Play Store</div>
+              </div>
+              <a
+                href="/privacidade.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300 hover:underline self-start sm:self-auto transition-colors"
+              >
+                Ver Política de Privacidade →
+              </a>
             </div>
           </div>
         )}
@@ -16802,16 +16583,11 @@ export default function App() {
             className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
-                  <Mic className="w-5 h-5" />
-                </div>
+                <Mic className="w-5 h-5 text-[#FF6A1A] shrink-0" />
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A]">
-                    Permissão do Dispositivo
-                  </span>
-                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                  <h3 className={`text-base sm:text-lg font-black leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
                     Ativar Comando de Voz
                   </h3>
                 </div>
@@ -16819,51 +16595,33 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowMicPermissionModal(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
+                className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                  isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-black/5'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="mt-4 flex flex-col gap-3.5">
+            <div className="mt-4 flex flex-col gap-4">
               <p className={`text-xs sm:text-sm leading-relaxed ${mutedText}`}>
-                Para registrar corridas e despesas falando (ex:{' '}
-                <strong className="text-current">"Ganho 25 reais no iFood 8 km"</strong> ou{' '}
-                <strong className="text-current">"Gasto 40 reais de gasolina"</strong>), o{' '}
-                <strong className="text-[#FF6A1A]">Mochilinha</strong> precisa de permissão para usar o microfone do seu aparelho.
+                Dite corridas e despesas falando enquanto você pilota. O microfone só é utilizado no momento em que você acionar o comando de voz.
               </p>
 
-              <div className={`rounded-2xl p-3.5 flex flex-col gap-2 text-xs ${surfaceSubtle}`}>
-                <div className="font-black text-[#FF6A1A] flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Como autorizar no celular ou computador:</span>
-                </div>
-                <ol className={`list-decimal list-inside space-y-1 font-medium ${mutedText}`}>
-                  <li>Toque no botão laranja abaixo para solicitar acesso ao microfone.</li>
-                  <li>
-                    Quando o aviso do seu aparelho aparecer na tela, toque em{' '}
-                    <strong className="text-current">"Permitir"</strong> ou{' '}
-                    <strong className="text-current">"Durante o uso do app"</strong>.
-                  </li>
-                  <li>Pronto! Fale sua corrida ou gasto e os campos serão preenchidos sozinhos.</li>
-                </ol>
-              </div>
-
               {micPermissionError && (
-                <div className="rounded-2xl p-3.5 bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 font-bold leading-relaxed flex items-start gap-2.5">
+                <div className="rounded-xl p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-400 font-semibold flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <div>
-                    <div className="font-black text-rose-400 mb-0.5">Acesso ao microfone bloqueado</div>
-                    <span>{micPermissionError}</span>
-                  </div>
+                  <span>{micPermissionError}</span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5 pt-2">
+              <div className="flex items-center gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowMicPermissionModal(false)}
-                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                    isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+                  }`}
                 >
                   Agora não
                 </button>
@@ -16871,13 +16629,13 @@ export default function App() {
                   type="button"
                   disabled={isRequestingMicPermission}
                   onClick={() => handleRequestDeviceMicPermission(autoRecordAfterPermission)}
-                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/25"
+                  className="flex-2 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                 >
                   <Mic className={`w-4 h-4 ${isRequestingMicPermission ? 'animate-bounce' : ''}`} />
                   <span>
                     {isRequestingMicPermission
-                      ? 'Solicitando no aparelho...'
-                      : 'Permitir Microfone e Falar'}
+                      ? 'Solicitando...'
+                      : 'Permitir Microfone'}
                   </span>
                 </button>
               </div>
@@ -16896,71 +16654,45 @@ export default function App() {
             className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-                  <Navigation className="w-5 h-5" />
-                </div>
+                <Navigation className="w-5 h-5 text-emerald-500 dark:text-emerald-400 shrink-0" />
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
-                    Odômetro Automático em 2º Plano
-                  </span>
-                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
-                    Permitir Localização Sempre
+                  <h3 className={`text-base sm:text-lg font-black leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    Permissão de Localização GPS
                   </h3>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowGpsPermissionModal(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
+                className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                  isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-black/5'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="mt-4 flex flex-col gap-3.5">
+            <div className="mt-4 flex flex-col gap-4">
               <p className={`text-xs sm:text-sm leading-relaxed ${mutedText}`}>
-                Para que o <strong className="text-[#FF6A1A]">Mochilinha</strong> marque a quilometragem percorrida{' '}
-                <strong className="text-current">automaticamente no Odômetro</strong> durante o Modo Turno — sem que você precise anotar manualmente — autorize o acesso ao GPS do seu aparelho.
+                Permite que o odômetro registre a quilometragem percorrida durante os turnos de entrega automaticamente, inclusive em segundo plano.
               </p>
 
-              <div className={`rounded-2xl p-3.5 flex flex-col gap-2 text-xs ${surfaceSubtle}`}>
-                <div className="font-black text-emerald-400 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 shrink-0" />
-                  <span>Como ativar em Tempo Real e Segundo Plano:</span>
-                </div>
-                <ol className={`list-decimal list-inside space-y-1.5 font-medium ${mutedText}`}>
-                  <li>
-                    Toque em <strong className="text-current">"Ativar Localização GPS Agora"</strong> abaixo.
-                  </li>
-                  <li>
-                    No aviso do celular, escolha{' '}
-                    <strong className="text-emerald-400">"Permitir o tempo todo"</strong> (ou{' '}
-                    <strong className="text-current">"Permitir durante o uso do app"</strong>).
-                  </li>
-                  <li>
-                    Nas configurações de localização do aparelho, mantenha a{' '}
-                    <strong className="text-current">Localização Precisa (Alta Precisão)</strong> ligada para contar cada rua rodada enquanto você usa o iFood, Uber ou 99.
-                  </li>
-                </ol>
-              </div>
-
               {gpsPermissionError && (
-                <div className="rounded-2xl p-3.5 bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 font-bold leading-relaxed flex items-start gap-2.5">
+                <div className="rounded-xl p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-400 font-semibold flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <div>
-                    <div className="font-black text-rose-400 mb-0.5">Atenção na Permissão de GPS</div>
-                    <span>{gpsPermissionError}</span>
-                  </div>
+                  <span>{gpsPermissionError}</span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5 pt-2">
+              <div className="flex items-center gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowGpsPermissionModal(false)}
-                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                    isDark ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+                  }`}
                 >
                   Voltar
                 </button>
@@ -16968,13 +16700,13 @@ export default function App() {
                   type="button"
                   disabled={isRequestingGpsPermission}
                   onClick={handleRequestDeviceGpsPermission}
-                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
+                  className="flex-2 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold bg-emerald-500 text-black hover:bg-emerald-400 transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                 >
                   <Navigation className={`w-4 h-4 ${isRequestingGpsPermission ? 'animate-spin' : ''}`} />
                   <span>
                     {isRequestingGpsPermission
-                      ? 'Conectando ao GPS...'
-                      : 'Ativar Localização GPS Agora'}
+                      ? 'Conectando...'
+                      : 'Ativar Localização'}
                   </span>
                 </button>
               </div>
@@ -17448,9 +17180,11 @@ export default function App() {
                   </div>
 
                   {/* Resumo Automático do Rateio */}
-                  <div className="p-2.5 rounded-xl bg-[#FF6A1A]/10 border border-[#FF6A1A]/30 flex items-center justify-between text-xs">
+                  <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                    isDark ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30' : 'bg-orange-50 border-orange-200'
+                  }`}>
                     <div>
-                      <span className="text-[10px] font-bold block text-slate-300">
+                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                         Reserva Mensal Equivalente (a cada {bikeDraft.intervalDays || 30} dias):
                       </span>
                       <span className="font-black text-[#FF6A1A] text-sm tabular-nums">
@@ -17458,8 +17192,8 @@ export default function App() {
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] font-bold block text-slate-300">Separar por dia:</span>
-                      <span className="font-black text-amber-400 text-sm tabular-nums">
+                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Separar por dia:</span>
+                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
                         {fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
                       </span>
                     </div>
@@ -18045,18 +17779,20 @@ export default function App() {
                   </div>
 
                   {/* Resumo Automático do Rateio */}
-                  <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between text-xs">
+                  <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                    isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
+                  }`}>
                     <div>
-                      <span className="text-[10px] font-bold block text-slate-300">
+                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                         Reserva Mensal Equivalente (a cada {householdDraft.intervalDays || 30} dias):
                       </span>
-                      <span className="font-black text-blue-400 text-sm tabular-nums">
+                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                         {fmtCurrencyExact(householdDraft.monthlyAmount)}/mês
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] font-bold block text-slate-300">Separar por dia:</span>
-                      <span className="font-black text-sky-400 text-sm tabular-nums">
+                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Separar por dia:</span>
+                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                         {fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
                       </span>
                     </div>
@@ -18381,7 +18117,9 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowProjectedModal(false)}
-                className={`p-2 rounded-xl shrink-0 cursor-pointer ${surfaceSubtle} hover:text-white`}
+                className={`p-2 rounded-xl shrink-0 cursor-pointer ${surfaceSubtle} ${
+                  isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -18401,74 +18139,68 @@ export default function App() {
                 />
                 {/* Atalhos Rápidos de Data */}
                 <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setProjectedDate(todayStr())}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    Hoje
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() + 1);
-                      setProjectedDate(d.toISOString().slice(0, 10));
-                    }}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    Amanhã
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      const day = d.getDay();
-                      const diff = (5 - day + 7) % 7 || 7; // Próxima Sexta
-                      d.setDate(d.getDate() + diff);
-                      setProjectedDate(d.toISOString().slice(0, 10));
-                    }}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    Sexta
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      const day = d.getDay();
-                      const diff = (6 - day + 7) % 7 || 7; // Próximo Sábado
-                      d.setDate(d.getDate() + diff);
-                      setProjectedDate(d.toISOString().slice(0, 10));
-                    }}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    Sábado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      const day = d.getDay();
-                      const diff = (0 - day + 7) % 7 || 7; // Próximo Domingo
-                      d.setDate(d.getDate() + diff);
-                      setProjectedDate(d.toISOString().slice(0, 10));
-                    }}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    Domingo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() + 7);
-                      setProjectedDate(d.toISOString().slice(0, 10));
-                    }}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                  >
-                    +7 dias
-                  </button>
+                  {[
+                    { label: 'Hoje', getDate: () => todayStr() },
+                    {
+                      label: 'Amanhã',
+                      getDate: () => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 1);
+                        return d.toISOString().slice(0, 10);
+                      },
+                    },
+                    {
+                      label: 'Sexta',
+                      getDate: () => {
+                        const d = new Date();
+                        const day = d.getDay();
+                        const diff = (5 - day + 7) % 7 || 7;
+                        d.setDate(d.getDate() + diff);
+                        return d.toISOString().slice(0, 10);
+                      },
+                    },
+                    {
+                      label: 'Sábado',
+                      getDate: () => {
+                        const d = new Date();
+                        const day = d.getDay();
+                        const diff = (6 - day + 7) % 7 || 7;
+                        d.setDate(d.getDate() + diff);
+                        return d.toISOString().slice(0, 10);
+                      },
+                    },
+                    {
+                      label: 'Domingo',
+                      getDate: () => {
+                        const d = new Date();
+                        const day = d.getDay();
+                        const diff = (0 - day + 7) % 7 || 7;
+                        d.setDate(d.getDate() + diff);
+                        return d.toISOString().slice(0, 10);
+                      },
+                    },
+                    {
+                      label: '+7 dias',
+                      getDate: () => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 7);
+                        return d.toISOString().slice(0, 10);
+                      },
+                    },
+                  ].map(item => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => setProjectedDate(item.getDate())}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                        isDark
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -18526,7 +18258,11 @@ export default function App() {
                       key={sug}
                       type="button"
                       onClick={() => setProjectedDescription(sug)}
-                      className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border cursor-pointer transition-colors ${
+                        isDark
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                      }`}
                     >
                       {sug}
                     </button>
@@ -18556,7 +18292,9 @@ export default function App() {
                       onClick={() => setProjectedApp(app.id)}
                       className={`p-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer border transition-all ${
                         projectedApp === app.id
-                          ? 'bg-sky-500/20 border-sky-400 text-sky-300 scale-102'
+                          ? isDark
+                            ? 'bg-sky-500/20 border-sky-400 text-sky-300 scale-102'
+                            : 'bg-sky-100 border-sky-500 text-sky-800 font-black scale-102'
                           : `${surfaceSubtle} border-transparent hover:border-slate-700`
                       }`}
                     >

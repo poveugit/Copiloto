@@ -208,3 +208,61 @@
     - Ao lançar um novo pagamento pelo modal para essa despesa, a competência é automaticamente removida de `unpaidMonths`, retornando ao fluxo natural.
     - Solução aplicada e testada para **todos** os cards de despesas da Casa e da Moto.
   - **APK Release (11/11/2026 21:24)**: `android/app/build/outputs/apk/release/app-release.apk` (4.57 MB), assinado (`release-key.jks`, apksigner v2 OK). Contém todas as correções de quitação/duplicação das despesas da casa e moto, projeção de faturamento futuro e desbloqueio do toggle manual para "A Pagar".
+
+## Reformulação Minimalista: Barra Superior e Tela de Configurações (11/11/2026)
+- **1. Barra Superior Minimalista**:
+  - Removidos fundos e bordas pesadas dos botões de ação:
+    - **Extrato MEI**: estilo ghost transparente (`bg-transparent text-purple-400 hover:text-purple-300`).
+    - **Meta Reversa**: estilo ghost transparente (`bg-transparent text-[#FF6A1A] hover:text-[#ff7b33]`).
+    - **Menu Cockpit Hub**: fundo transparente minimalista, mantendo pulso sutil apenas durante turno ativo.
+    - **Botão de Conta / Login Rápido**: fundo transparente com hover sutil, eliminando peso visual.
+- **2. Tela de Configuração - Topo Sem Cards**:
+  - Removido o card fechado do topo e os botões de `Redefinir Senha`, `Trocar Conta` e `Sair`.
+  - Nome e e-mail do motoboy posicionados no topo em tipografia elegante e minimalista integrada ao cabeçalho.
+- **3. Remoção do Card de Sincronização em Nuvem**:
+  - Removido o card com botões de upload/download e código de backup da tela de configurações, mantendo o app leve, visto que a sincronização com o Supabase já roda automaticamente em segundo plano.
+- **4. Redesign Minimalista de Metas Financeiras**:
+  - `Meta Diária`, `Meta Semanal / Mensal` e `Meta Personalizada de Ganhos` reestruturadas sem o container de card envolvente.
+  - Linhas divisórias sutis e inputs alinhados e limpos.
+- **5. Seção e Modais de Sistema & Permissões Suavizados**:
+  - Notificações do Sistema, Permissão de Voz e Localização GPS limpos:
+    - Removidos fundos e bordas de caixas atrás dos ícones (ícones exibidos de forma pura e direta).
+    - Removidos excessos de textos e tutoriais redundantes de 3 passos, mantendo explicações diretas e objetivas.
+    - Botões suavizados (sem blocos sólidos pesados, adotando estilo refinado com borda e hover suaves).
+  - Modais nativos de Voz e GPS também atualizados com design minimalista, ícones limpos e botões suavizados.
+- **Validação e Build**:
+  - `npx tsc --noEmit`: 100% sem erros.
+  - `npm run build`: compilado com sucesso (dist gerada em 6.48s).
+  - `npx cap sync android`: sincronizado perfeitamente com os assets nativos do Android.
+
+## Correção Global de Contraste e Legibilidade no Modo Claro (12/11/2026)
+- **1. Sincronização e Suporte do Tema**:
+  - `isDark` sincroniza dinamicamente a classe `.dark` em `document.documentElement` tanto no estado inicial quanto no `useEffect`.
+  - Fortalecimento das variáveis globais: `mutedText` (`text-slate-600` no modo claro), `primaryText` (`text-slate-900`), `secondaryText` (`text-slate-800`), `dividerBorder` (`border-slate-200`) e `inputSurface` (`bg-slate-50 border-slate-300 text-slate-900`).
+- **2. Tela de Configurações**:
+  - Títulos, identificação do motoboy, metas e rótulos adaptados para textos escuros no modo claro, eliminando textos claros/apagados.
+  - Botões de teste e permissão com bordas e textos escuros de alto contraste (`text-slate-700 hover:text-slate-900`).
+- **3. Badges de Vencimento de Despesas (`getExpenseDueInfo`)**:
+  - Migradas todas as badges de status (`paid`, `partial`, `future`, `overdue`, `today`, `near`) para usar variantes de alto contraste no modo claro com fallbacks escuros no `dark:`:
+    - Quitado: `bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-400`.
+    - Parcial: `bg-sky-50 text-sky-700 border-sky-300 dark:bg-sky-500/20 dark:text-sky-300`.
+    - Vencido/Hoje: `bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-500/20 dark:text-rose-300`.
+    - Próximo: `bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300`.
+    - Futuro: `bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800/80 dark:text-slate-300`.
+- **4. Despesas da Moto e da Casa**:
+  - Badges de total cadastrado atualizadas para `bg-slate-100 text-slate-700 border-slate-200`.
+  - Botões de cancelar exclusão (`✕`) e caixas de rateio ("Reserva Mensal Equivalente" e "Separar por dia") com textos escuros e fundos suaves no modo claro.
+- **5. Faturamento Previsto & Painel**:
+  - Modal de faturamento futuro: botões de atalho de data (`Hoje`, `Amanhã`, `Sexta`, etc.) e sugestões rápidas adaptados com `bg-slate-100 text-slate-700 border-slate-300`.
+  - Banner de Turno Ativo no Painel: textos de odômetro e velocidade com alto contraste (`text-emerald-700`, `text-emerald-800`, `text-sky-800` no modo claro).
+- **6. Componentes e Modais Externos**:
+  - `AdjustBalanceModal`: textos explicativos, botão Zerar e caixas de excedente/faltante com contraste total.
+  - `ControleTurnoModal`: caixas de métricas do odômetro GPS com fundo claro e textos escuros (`text-slate-900`, `text-emerald-700`, `text-sky-700`).
+  - `InvestimentosScreen`: carência, resumo do plano, cotas e pop-ups de confirmação/resgate adaptados para `primaryText` e `secondaryText`.
+  - `RadarCorridaModal`: ganhos brutos, custos e sobras livres com tipografia escura de alta legibilidade.
+  - `RelatorioMeiModal` & `MetaReversaModal`: cabeçalhos, divisões diárias e badges fiscais revisados.
+  - `QuickCalculatorModal`: display, atalhos rápidos e botão cancelar adaptados ao modo claro.
+- **Validação Rigorosa**:
+  - `npx tsc --noEmit`: 100% aprovado sem erros.
+  - `npm run build`: compilado com sucesso em 4.94s.
+  - `npx cap sync android`: sincronizado com o projeto nativo do Android.
