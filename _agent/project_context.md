@@ -266,3 +266,4 @@
   - `npx tsc --noEmit`: 100% aprovado sem erros.
   - `npm run build`: compilado com sucesso em 4.94s.
   - `npx cap sync android`: sincronizado com o projeto nativo do Android.
+  - **APK Release (12/11/2026 01:13)**: `android/app/build/outputs/apk/release/app-release.apk` (4.57 MB / 4.570.653 bytes), assinado (`release-key.jks`, verificado com `apksigner` Scheme v2 OK), commit `889f7ef` enviado ao GitHub `main`. Contém redesign minimalista da barra superior e tela de configurações, modais de sistema e permissões suavizados e correção global de contraste em todos os textos no modo claro.
