@@ -267,3 +267,142 @@
   - `npm run build`: compilado com sucesso em 4.94s.
   - `npx cap sync android`: sincronizado com o projeto nativo do Android.
   - **APK Release (12/11/2026 01:13)**: `android/app/build/outputs/apk/release/app-release.apk` (4.57 MB / 4.570.653 bytes), assinado (`release-key.jks`, verificado com `apksigner` Scheme v2 OK), commit `889f7ef` enviado ao GitHub `main`. Contém redesign minimalista da barra superior e tela de configurações, modais de sistema e permissões suavizados e correção global de contraste em todos os textos no modo claro.
+
+## Redesign Minimalista Completo da Tela Principal (Painel) & Efeitos Animados (12/11/2026)
+- **1. Correção Definitiva de Legibilidade no Modo Escuro (`Custo Operacional & Autonomia da Moto` e `dark:` no Tailwind v4)**:
+  - **Causa Raiz**: No Tailwind CSS v4 (`@import "tailwindcss";`), a variante `dark:` padrão utilizava `@media (prefers-color-scheme: dark)` em vez da classe `.dark` no `<html>`. Quando o sistema operacional estava em modo claro e o app em modo escuro, `text-slate-900 dark:text-white` aplicava `text-slate-900` sobre fundo escuro, tornando o texto `"Custo Operacional & Autonomia da Moto"` ilegível.
+  - **Solução Dupla**:
+    - Adicionado `@custom-variant dark (&:where(.dark, .dark *));` no topo de `src/index.css` para que todas as classes `dark:*` respeitem a classe `.dark` do app.
+    - Aplicado explicitamente `${primaryText}` (`isDark ? 'text-slate-100' : 'text-slate-900'`) em `"Custo Operacional & Autonomia da Moto"` e em todos os títulos da tela principal.
+- **2. Remoção dos Cards Principais e Sub-Cards com Fundo no Painel (`activeTab === 'dashboard'`)**:
+  - Removidos todos os containers de cards pesados (`${surfaceCard}`, sombras e bordas duplas) que separavam os blocos principais (Turno Ativo, Odômetro Total, Saldo Atual do Motoboy, Reservas Obrigatórias, Ganhos por Período & Produtividade, Desempenho nos Últimos 7 Dias, Análise de Turno Mochilinha, Saúde da Moto e Faturamento por Aplicativo).
+  - Seções principais agora são separadas por linhas divisórias sutis (`border-b ${dividerBorder}` e `lg:border-r ${dividerBorder}`).
+  - Todos os sub-cards internos (Custo Real/KM, Autonomia, Lucro Limpo/KM, Telemetria do Combustível, + Faturamento / - Gastos Totais, 6 Reservas Individuais, 4 Caixinhas de Resumo, Sub-itens da Meta Personalizada, 4 Indicadores de Produtividade e 3 Itens de Saúde da Moto) tiveram seus fundos sólidos removidos (`bg-transparent`), mantendo apenas borda fina e suave (`border ${dividerBorder}`).
+  - Todos os botões da tela principal (`+ Abastecer`, `Ver Detalhes do KM`, `Este Mês / Geral / Personalizado`, `Ajustar Saldo`, `Registrar Pagamento`, `+ Corrida / Gasto`, `Extrato`, `Ajustar` das reservas e metas, `Perguntar à Mochilinha` e `Histórico`) agora são **sem fundo (`bg-transparent`)**, com bordas finas e suaves.
+- **3. Efeitos Animados em Gráficos, Barras de Progresso e Números**:
+  - **Números (`AnimatedNumber` + `.dashboard-number-anim`)**: Contagem progressiva suave (`requestAnimationFrame` com curva `easeOutQuart` de 650ms) e reveal animado em todos os indicadores numéricos principais do Painel (Odômetro Total, Saldo Atual, Faturamento, Gastos, Custo/KM, Autonomia, Lucro/KM, Reservas Diárias, Metas, Produtividade/Hora, Total 7 Dias e Ranking de Apps).
+  - **Barras de Progresso (`.dashboard-progress-fill`)**: Animação fluida de preenchimento horizontal (`dashboardProgressGrow`) combinada com efeito de brilho contínuo (`dashboardProgressShimmer`) no Nível do Odômetro, Cobertura das Reservas, Meta Diária, Meta Semanal, Meta Personalizada, Desgaste da Moto e Participação por App.
+  - **Gráficos (`.dashboard-chart-bar`)**: Animação de crescimento vertical escalonado (`animationDelay: idx * 75ms`) nas barras dos Últimos 7 Dias, com destaque visual no dia de pico e micro-interação no hover.
+
+## Modo AllBlack Puro & Design Minimalista Global (Todas as Telas e Modais - 12/11/2026)
+- **1. Modo AllBlack Puro Global (`#000000` / `bg-black` / `bg-transparent`)**:
+  - Eliminados todos os fundos escuros azulados/cinzas antigos (`#12141C`, `#181B26`, `#090A0F`, `#0B0F19`, `bg-slate-900`, `bg-slate-950`, `bg-slate-800`) em todo o app:
+    - `<meta name="theme-color" content="#000000" />` em `index.html`.
+    - Barra de navegação inferior flutuante em `bg-black/95 border-neutral-800`.
+    - `bgCanvas` (`bg-black`), `modalSurface` (`bg-black border-neutral-800`), `inputSurface` (`bg-black border-neutral-800`), `surfaceCard` e `surfaceSubtle` em `bg-transparent`.
+    - Tooltips de gráficos (Recharts) atualizados para `bg-black border-neutral-800`.
+    - Trilhas de barras de progresso e indicadores de neutralidade em `bg-neutral-800` (sem reflexo azulado de `slate-800`).
+- **2. Refatoração Minimalista de `InvestimentosScreen.tsx`**:
+  - Aplicado design minimalista AllBlack (`surfaceCard`/`surfaceSubtle` em `bg-transparent`, modais em `bg-black border-neutral-800`, botões sem fundo com bordas finas e números animados com `.dashboard-number-anim tabular-nums`).
+  - Removido bloco JSX duplicado em `showInvestModal` que causava erro de compilação TypeScript, e ajustado contraste dos controles no modo claro.
+- **3. Modais Secundários & Outras Abas (`Finanças`, `Moto`, `Histórico`, `Progresso`)**:
+  - Todos os componentes modais (`AdjustBalanceModal.tsx`, `QuickCalculatorModal.tsx`, `ControleTurnoModal.tsx`, `MetaReversaModal.tsx`, `RadarCorridaModal.tsx`, `RelatorioMeiModal.tsx`) migrados para o tema AllBlack puro com sub-caixas transparentes, botões sem fundo e números animados.
+  - Abas de **Finanças** (Despesas da Moto, Casa, Planejamento & IA, Sazonalidade, Ganhos, Gastos), **Histórico** e **Progresso** atualizadas com sub-cards transparentes (`bg-transparent border ${dividerBorder}`), animações `.dashboard-progress-fill` nas barras de progresso e `.dashboard-number-anim` nos valores principais.
+- **4. Validação & APK Release**:
+  - `npx tsc --noEmit`: 0 erros.
+  - `npm run build`: build de produção Vite concluído com sucesso em 3.62s.
+  - `npx cap sync android`: assets sincronizados com sucesso em 0.369s.
+  - `.\gradlew.bat assembleRelease` (JDK 21): `BUILD SUCCESSFUL in 1m 16s`.
+  - **APK Release (12/11/2026 18:35)**: `android/app/build/outputs/apk/release/app-release.apk` (4.567.081 bytes), verificado com `apksigner` (`Verified using v2 scheme: true`, 1 assinante).
+
+## Melhorias na Tela de Moto (Manutenção Preventiva - 12/11/2026)
+- **1. Duplicação de Cards de Manutenção**:
+  - Criada função `duplicateMaintenanceCard(item)` em `src/App.tsx`.
+  - Adicionado botão **Duplicar** (ícone `Copy`, estilo minimalista sem fundo) ao editar qualquer card de manutenção, gerando uma cópia independente com sufixo `(Cópia)` e abrindo-a diretamente para ajustes.
+- **2. Modal Sobreposto de "Nova Manutenção" & Remoção do Card no Meio da Tela**:
+  - Removido o bloco inline de criação de manutenção e o card tracejado `+ Adicionar Outra Manutenção` do meio da tela de Moto.
+  - Clicar em **Nova Manutenção** no cabeçalho agora abre um modal centralizado sobre a tela (`isAddingNewMaint && maintDraft`), seguindo o mesmo padrão visual e comportamento do modal **Dados da Moto** (`modalSurface` em `bg-black` no AllBlack / `bg-white` no modo claro).
+- **3. Bordas Minimalistas nos Cards de Alerta Preventivo**:
+  - Removidas as bordas grossas (`border-l-[4px]`, `border-l-4`) e as animações/sombras pesadas (`maint-card-warn-glow`, `maint-card-danger-glow`) dos cards e banners de **Alerta Preventivo** e **Troca Obrigatória**, substituídas por bordas finas e suaves (`border-amber-500/30` e `border-rose-500/35` / `border-rose-500/45`).
+- **4. Validação**:
+  - `npx tsc --noEmit` (0 erros) e `npm run build` (3.90s) validados com sucesso (sem geração de APK conforme solicitado).
+
+## Correção de Exclusão Permanente das Despesas da Moto e da Casa (12/11/2026)
+- **Causa Raiz Identificada**:
+  1. Diversos pontos em `src/App.tsx` (`loadDatabaseForUser`, `deleteBikeExpense`, `toggleBikeExpense`, `duplicateBikeExpense`, `saveBikeExpense`, `openEditBikeExpenseModal`, `toggleBikeExpensePaidStatus`, `financialIntelligence` e `toggleHouseholdExpensePaidStatus`/`duplicateHouseholdExpense`) verificavam `Array.isArray(list) && list.length > 0`, restaurando automaticamente `DEFAULT_BIKE_EXPENSES` / `DEFAULT_HOUSEHOLD_EXPENSES` sempre que o usuário excluía todas as despesas e a lista ficava vazia (`[]`).
+  2. `LocalRoomDatabaseState` e `src/services/supabaseSync.ts` não registravam IDs excluídos dessas listas (`deletedBikeExpenseIds` / `deletedHouseholdExpenseIds`). Na sincronização (`downloadCloudDataToLocal`, `uploadLocalDataToCloud`, `combineSnapshotsList` e `runWorkManagerCloudSync`), itens padrão salvos anteriormente na nuvem eram re-mesclados ou sobrescreviam listas esvaziadas (`!isHouseholdListCustomized` / `!isBikeListCustomized`).
+- **Solução Implementada**:
+  1. **Rastreamento de Exclusões (`deletedBikeExpenseIds` & `deletedHouseholdExpenseIds`)**:
+     - Adicionados os campos em `LocalRoomDatabaseState` (`src/services/supabaseSync.ts`), `createCleanDatabaseState` e `loadDatabaseForUser` (`src/App.tsx`).
+     - `deleteBikeExpense` e `deleteHouseholdExpense` agora gravam o `id` removido em `deletedBikeExpenseIds` / `deletedHouseholdExpenseIds`; `saveBikeExpense` / `saveHouseholdExpense` e `resetDefaultBikeExpenses` / `resetDefaultHouseholdExpenses` limpam os IDs restaurados.
+  2. **Remoção de Fallback por `length > 0` (`src/App.tsx`)**:
+     - Substituído `Array.isArray(x) && x.length > 0` por `Array.isArray(x)` nos fluxos de leitura/edição/exclusão/cálculo, garantindo que listas esvaziadas (`[]`) permaneçam vazias em `localStorage` e na UI.
+  3. **Merge e Proteção Anti-Sobrescrita na Nuvem (`src/services/supabaseSync.ts`)**:
+     - `isExpenseConfigCustomized` (`isHouseholdListCustomized` / `isBikeListCustomized`) agora considera listas com `deletedIds.length > 0` como intencionalmente personalizadas mesmo quando vazias (`[]`).
+     - `fetchCloudExpenseConfigLists`, `runWorkManagerCloudSync`, `fetchFromSupabase`, `combineSnapshotsList`, `uploadLocalDataToCloud` e `downloadCloudDataToLocal` propagam e filtram `deletedBikeExpenseIds` e `deletedHouseholdExpenseIds`, impedindo que despesas excluídas retornem após sincronização ou recarregamento.
+- **Validação**:
+  - `npx tsc --noEmit`: aprovado com 0 erros.
+  - `npm run build`: build de produção Vite concluído (`dist/` gerado em 5.17s).
+  - Teste automatizado (`verify_expense_deletion.ts` via `npx tsx` com mock de armazenamento e endpoints de nuvem): 6 de 6 cenários aprovados (exclusão parcial, exclusão total `[]`, persistência em `downloadCloudDataToLocal` / `uploadLocalDataToCloud` e sincronização para dispositivo novo). Sem geração de APK conforme solicitado.
+
+## Sincronização de Faturamento Previsto & Débito Diário Automático por Diárias (12/11/2026)
+- **1. Por que o Faturamento Previsto aparecia zerado apesar de existir no APK**:
+  - **Causa Raiz Principal (`downloadCloudDataToLocal`)**: Em `src/services/supabaseSync.ts`, `downloadCloudDataToLocal` construía `mergedState` a partir de `...localState` sem mesclar nem copiar `remote.projectedRevenues`. Ao abrir o app no navegador/outro dispositivo, o `localState.projectedRevenues` (`[]`) prevalecia sobre os lançamentos salvos pelo APK na nuvem.
+  - Além disso: `combineSnapshotsList` não mesclava `projectedRevenues` entre múltiplos snapshots; `uploadLocalDataToCloud` não mesclava com os itens da nuvem antes de enviar; `hasPopulatedData` não contabilizava `projectedRevenues`; `runWorkManagerCloudSync` não tinha proteção anti-sobrescrita quando um aparelho local ainda estava com `projectedRevenues` vazio sem exclusões explícitas (`deletedProjectedRevenueIds`); e `selectedMonthFinancials` / `availableFinanceMonths` em `src/App.tsx` filtravam exclusivamente por `p.date.startsWith(selectedFinanceMonth)` sem considerar intervalos (`startDate` -> `date`) nem exibir saldo pendente de outros meses.
+- **2. Lançamentos Futuros por Dias Trabalhados + Diária Prevista e Débito Diário Automático**:
+  - **Modelo (`ProjectedRevenueItem` & `computeProjectedRevenueBalance` em `src/services/supabaseSync.ts`)**:
+    - Adicionados `startDate`, `workDays` e `dailyRate` ao item de faturamento previsto, além de `deletedProjectedRevenueIds` em `LocalRoomDatabaseState`.
+    - Criada função pura `computeProjectedRevenueBalance(item, todayStr)`: quando o lançamento possui programação de diárias (`workDays` e `dailyRate`), cada dia que passa a partir de `startDate` rumo à `date` debita automaticamente 1 diária (`elapsedDays * dailyRate`) do total criado, atualizando o saldo futuro restante (`remainingAmount`) até zerar na data prevista final. Lançamentos avulsos legados sem programação diária mantêm o valor integral enquanto `pending`.
+  - **Criação/Edição e Visualização (`src/App.tsx`)**:
+    - Modal **Lançar / Editar Faturamento Futuro**: campos integrados para **Dias que irá trabalhar** (`1d` a `30d`), **Diária Prevista (R$/dia)** (com atalho **Média atual** calculada do histórico de corridas e botões rápidos), **Valor Total Previsto** (calculado automaticamente como `dias × diária`) e **Início da Contagem / Data Prevista Final**.
+    - Aba **Faturamento Previsto** e **Resumo Mensal**: exibem o saldo futuro restante atualizado dia a dia, o valor total criado inicialmente, o total já debitado pelos dias decorridos, barra de progresso dos dias restantes, contagem em outros meses quando aplicável e conversão para ganho real usando o saldo restante (`bal.remainingAmount`).
+- **3. Validação**:
+  - `npx tsc --noEmit`: aprovado com 0 erros.
+  - `npm run build`: build de produção Vite concluído (`dist/` gerado em 3.93s), sem geração de APK conforme solicitado.
+  - Testes automatizados (`npx tsx`): `verify_projected_revenues.ts` (**5/5** cenários aprovados: progressão diária do débito de 5×R$ 200 até zerar, lançamento legado, download APK→Web, exclusão persistente com `deletedProjectedRevenueIds` e proteção anti-sobrescrita) e `verify_expense_deletion.ts` (**6/6** cenários aprovados).
+
+## Seleção Livre de Dias no Calendário Minimalista para Faturamento Futuro (12/11/2026)
+- **Objetivo**: Substituir os seletores antigos de dias/datas ("Dias que irá trabalhar", pílulas `1d..30d`, "Início da Contagem" e "Data Prevista Final") no lançamento de **Faturamento Futuro** por um **modal de calendário minimalista** no estilo do app, permitindo marcar/desmarcar livremente qualquer dia do mês (inclusive todos os dias do mês).
+- **1. Persistência e Débito por Datas Selecionadas (`src/services/supabaseSync.ts`)**:
+  - `ProjectedRevenueItem` e `ProjectedRevenueBalanceInfo` ganharam o campo opcional `selectedDates?: string[]` (`YYYY-MM-DD`).
+  - `computeProjectedRevenueBalance(item, todayDateStr)` passou a reconhecer `selectedDates` ordenados, contabilizando `workDays = selectedDates.length` e debitando 1 diária (`dailyRate`) para cada dia selecionado que já passou (`d < today`). Lançamentos legados sem `selectedDates` continuam compatíveis.
+- **2. Modal de Calendário Minimalista (`src/App.tsx`)**:
+  - Removidos os estados e campos antigos (`projectedStartDate`, `projectedWorkDays`, `projectedDate` e pílulas `1d..30d`), substituídos por `showProjectedCalendarModal`, `projectedCalendarMonth` e `projectedSelectedDates`.
+  - Dentro do modal de **Faturamento Futuro**, o motoboy clica em **Dias que irá rodar no mês** para abrir o modal minimalista de calendário (`showProjectedCalendarModal`), com navegação entre meses (`<` / `>`), atalho **Marcar Todos os Dias do Mês** / **Limpar**, grade de 7 colunas clicável dia a dia (incluindo destaque para o dia atual) e botão **Confirmar Dias**.
+  - A filtragem por mês (`availableFinanceMonths`, `selectedMonthFinancials` e aba `projecao`) e o resumo dos cards passaram a refletir os `selectedDates` escolhidos, somando automaticamente `selectedDates.length × projectedDailyRate` no **Valor Total Previsto (R$)**.
+- **3. Validação**:
+  - `npx tsc --noEmit`: aprovado com 0 erros.
+  - `npm run build`: build de produção Vite concluído (`dist/` gerado em 3.38s), sem geração de APK conforme solicitado.
+  - Testes automatizados (`npx tsx`): `verify_projected_revenues.ts` (**5/5** cenários + subcenário `Test 1b` de datas não consecutivas via `selectedDates`) e `verify_expense_deletion.ts` (**6/6** cenários) aprovados (`Command exited with code 0`).
+
+## Menu Cockpit no Botão Principal "Novo Registro" (12/11/2026)
+- **Objetivo**: Substituir a abertura direta do modal único com duas abas no botão flutuante **Novo Registro** por um **Menu Cockpit** com animação suave de entrada/saída e 5 atalhos dedicados, onde cada botão abre seu respectivo modal específico.
+- **1. Animações Suaves (`src/index.css`)**:
+  - Adicionados os keyframes `cockpitBackdropIn`, `cockpitBackdropOut`, `cockpitPanelIn`, `cockpitPanelOut` e `cockpitItemStaggerIn`, com curvas `cubic-bezier(0.22, 1, 0.36, 1)` e entrada escalonada para cada botão do cockpit.
+- **2. Menu Cockpit e Modais Dedicados (`src/App.tsx`)**:
+  - Criado o estado `showQuickRegisterCockpit` (sem colidir com `showCockpitMenu` já usado no cabeçalho) junto de `isQuickRegisterClosing`, `openQuickRegisterCockpit` e `closeQuickRegisterCockpit`, com suporte à tecla `Escape`, clique no backdrop e transformação suave do botão **Novo Registro** (`+` rotacionando 45° para **Fechar**).
+  - Atualizado `?action=novo_registro` para abrir o cockpit diretamente.
+  - Os 5 botões do cockpit abrem cada um o seu modal dedicado:
+    1. **Registrar Ganho** → `openNewEntryModal('ganho', true)` (modal focado em **Registrar Corrida**, sem as abas antigas).
+    2. **Registrar Despesa** → `openNewEntryModal('gasto', true)` (modal focado em **Registrar Gasto**, sem as abas antigas).
+    3. **Despesa da Moto** → `openNewBikeExpenseModal()` (modal **Nova Despesa da Moto**).
+    4. **Despesa da Casa** → `openNewHouseholdExpenseModal()` (modal **Nova Despesa da Casa**).
+    5. **Faturamento Previsto** → `openNewProjectedRevenueModal()` (modal **Lançar Faturamento Futuro** com o calendário minimalista).
+  - Adicionado `isEntryModeDedicated` no modal de entrada para ocultar o seletor antigo `Ganho / Corrida | Gasto / Despesa` quando aberto diretamente para ganho ou despesa (e durante edições), aplicando `modalSurface` sólido e clique fora para fechar.
+- **3. Validação**:
+  - `npx tsc --noEmit`: aprovado com 0 erros.
+  - `npm run build`: build de produção Vite concluído (`dist/` gerado em 2.99s), sem geração de APK conforme solicitado.
+  - Testes automatizados (`npx tsx`): `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**) aprovados (`Command exited with code 0`).
+
+## Remoção do Cabeçalho/Card de Lançamento na Aba Faturamento Previsto (12/11/2026)
+- **Alteração (`src/App.tsx`)**: Removido o bloco superior da sub-aba `billingSubTab === 'projecao'` que exibia o título `Faturamento Futuro Previsto & Projeção`, a tag `Corridas Agendadas, Metas & Fixos`, a descrição e o botão `+ Lançar Faturamento Previsto`, mantendo o restante da aba e os fluxos via Cockpit.
+- **Validação**: `npx tsc --noEmit`, `npm run build` (`dist/` em 3.63s), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**) aprovados.
+
+## Melhoria de Precisão e Latência do Motor GPS no Odômetro Automático (12/11/2026)
+- **Problemas corrigidos**:
+  - `src/App.tsx` arredondava `gpsDistanceKm` a `0.01 km` (10 m) a cada atualização do GPS, descartando deslocamentos curtos (< 5 m por tick) mesmo com a âncora avançando.
+  - `src/services/gpsOdometerService.ts` usava cache de `2000ms`/`3000ms` e polling fixo lento (`8000ms`), aceitava leituras muito imprecisas (até `120 m`) capazes de envenenar a âncora inicial, e acumulava zigue-zague lateral / deriva parado sem filtragem preditiva.
+  - Projeto Android não possuía serviço nativo em primeiro plano para manter leituras GNSS em 2º plano.
+- **1. Motor Kalman 2D Preditivo + Porta Doppler (`src/services/gpsOdometerService.ts`)**:
+  - Criada a classe pura `GpsOdometerEngine` em coordenadas planas ENU locais com filtro Kalman preditivo de velocidade constante (`kx, ky, vx, vy`), rejeitando picos (> 45 m), impedindo envenenamento por torre celular, recuperando após saída de túnel (3 confirmações seguidas sem somar salto fantasma) e zerando a velocidade após `4000ms` parado.
+  - `watchPosition` configurado com `maximumAge: 0` (tempo real sem cache), fallback adaptativo apenas se o stream pausar `>= 2200ms`, além de catch-up imediato em `focus` e `visibilitychange`.
+- **2. Precisão em Centímetros no Turno (`src/App.tsx`)**:
+  - Acumulação em `activeShiftSession.gpsDistanceKm` alterada para precisão de `0.00001 km` (`Math.round(... * 100000) / 100000`), evitando perda de metros entre ticks.
+- **3. Bridge Nativa Android em Primeiro Plano (`android/`)**:
+  - Criados `GpsOdometerForegroundService.java` (GNSS `LocationManager.GPS_PROVIDER` a `500ms` / `0.5m` com o mesmo filtro Kalman 2D preditivo + notificação persistente e wake lock) e `NativeGpsOdometerPlugin.java` (sincronização monotônica sem dupla contagem), registrados em `MainActivity.java` com permissões `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` e `WAKE_LOCK` em `AndroidManifest.xml`.
+- **4. Validação**:
+  - `npx tsc --noEmit`: 0 erros.
+  - `npm run build`: `vite build` concluído em `4.25s` (sem gerar APK).
+  - Testes automatizados (`npx tsx`): `verify_gps_odometer.ts` (**5/5** cenários: deriva parado, torre celular inicial, rota em L 1 km a 1 Hz, passos curtos de 4,5 m sem perda e recuperação pós-túnel/idle decay), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**).
+  - Compilação Java Android (`.\gradlew.bat compileReleaseJavaWithJavac` com Adoptium JDK 21): `BUILD SUCCESSFUL in 1m 15s`.
+  - **APK Release (12/11/2026 20:29)**: `npm run build` (`3.11s`), `npx cap sync android` (`2.1s`) e `.\gradlew.bat assembleRelease` (`BUILD SUCCESSFUL in 3m 1s`) -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.901` bytes / `4,37 MB`), assinado com `release-key.jks`.

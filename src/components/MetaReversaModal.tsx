@@ -121,9 +121,10 @@ export function MetaReversaModal({
 
   if (!isOpen) return null;
 
-  const surfaceCard = isDark ? 'bg-[#12141C] border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900';
-  const surfaceSubtle = isDark ? 'bg-slate-900/70 border border-slate-800' : 'bg-slate-100 border border-slate-200';
-  const inputSurface = isDark ? 'bg-slate-800/80 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900';
+  const surfaceCard = isDark ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl' : 'bg-white border border-slate-200 text-slate-900 shadow-2xl';
+  const surfaceSubtle = isDark ? 'bg-transparent border border-neutral-800' : 'bg-transparent border border-slate-200';
+  const inputSurface = isDark ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]' : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
 
   return (
@@ -132,18 +133,16 @@ export function MetaReversaModal({
         className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[90vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
       >
         {/* Header */}
-        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b ${
-          isDark ? 'border-slate-800/50' : 'border-slate-200'
-        }`}>
+        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b ${dividerBorder}`}>
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500 text-black flex items-center justify-center font-black">
+            <div className="w-9 h-9 rounded-xl bg-transparent border border-emerald-500/50 text-emerald-400 flex items-center justify-center font-black">
               <Calculator className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <h3 className="text-sm sm:text-base font-black">Simulador de Meta Reversa</h3>
-                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
-                  isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border bg-transparent ${
+                  isDark ? 'text-emerald-400 border-emerald-500/40' : 'text-emerald-800 border-emerald-300'
                 }`}>
                   Lucro Limpo
                 </span>
@@ -155,7 +154,7 @@ export function MetaReversaModal({
           </div>
           <button
             onClick={onClose}
-            className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+            className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer text-slate-400 hover:text-white hover:border-slate-500 transition-colors`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -182,8 +181,10 @@ export function MetaReversaModal({
                   key={val}
                   type="button"
                   onClick={() => setDesejadoMensal(val)}
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
-                    desejadoMensal === val ? 'bg-emerald-500 text-black' : surfaceCard
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                    desejadoMensal === val
+                      ? 'bg-transparent border border-emerald-500 text-emerald-400'
+                      : `bg-transparent border ${dividerBorder} ${mutedText} hover:border-slate-500`
                   }`}
                 >
                   {val / 1000}k
@@ -226,19 +227,19 @@ export function MetaReversaModal({
         </div>
 
         {/* Highlight Result Card */}
-        <div className="mt-3.5 p-4 rounded-2xl bg-gradient-to-r from-orange-500/15 via-[#FF6A1A]/10 to-amber-500/15 border-2 border-[#FF6A1A]/50 flex flex-col gap-2">
+        <div className="mt-3.5 p-4 rounded-2xl bg-transparent border border-[#FF6A1A]/40 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-black uppercase text-[#FF6A1A] tracking-wider">
               Sua Meta Diária Necessária
             </span>
-            <span className="text-xs font-black text-[#FF6A1A] tabular-nums">
+            <span className="text-xs font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">
               R$ {results.neededPerHour.toFixed(2)} / hora
             </span>
           </div>
 
           <div className="flex items-baseline justify-between gap-2">
             <div>
-              <div className="text-2xl sm:text-3xl font-black tabular-nums text-[#FF6A1A]">
+              <div className="text-2xl sm:text-3xl font-black tabular-nums dashboard-number-anim text-[#FF6A1A]">
                 R$ {results.neededDailyGross.toLocaleString('pt-BR')} <span className="text-xs font-bold text-slate-400">/ dia</span>
               </div>
               <span className={`text-[11px] ${mutedText}`}>
@@ -247,7 +248,7 @@ export function MetaReversaModal({
             </div>
             <div className="text-right">
               <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>Sobra Limpo</span>
-              <span className={`text-lg sm:text-xl font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+              <span className={`text-lg sm:text-xl font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                 R$ {results.netTargetDaily.toFixed(2)}/dia
               </span>
             </div>
@@ -264,14 +265,14 @@ export function MetaReversaModal({
               <button
                 type="button"
                 onClick={() => setIncludeHousehold(!includeHousehold)}
-                className={`text-[10px] font-black px-2 py-0.5 rounded-lg border transition-colors cursor-pointer ${
+                className={`text-[10px] font-black px-2 py-0.5 rounded-lg border transition-colors cursor-pointer bg-transparent ${
                   includeHousehold
                     ? isDark
-                      ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                      : 'bg-blue-50 text-blue-700 border-blue-300'
+                      ? 'text-blue-400 border-blue-500/40'
+                      : 'text-blue-700 border-blue-300'
                     : isDark
-                    ? 'bg-slate-800 text-slate-400 border-slate-700'
-                    : 'bg-slate-100 text-slate-700 border-slate-300'
+                    ? 'text-slate-400 border-neutral-800'
+                    : 'text-slate-700 border-slate-300'
                 }`}
               >
                 {includeHousehold ? '✓ Contas Casa Inclusas' : '+ Incluir Contas Casa'}
@@ -279,76 +280,76 @@ export function MetaReversaModal({
             )}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+            <div className={`p-2.5 rounded-xl border ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold text-amber-500 dark:text-amber-400">
                 <Fuel className="w-3.5 h-3.5" />
                 <span>Gasolina</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.dailyFuelCost.toFixed(2)}
               </span>
             </div>
 
-            <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+            <div className={`p-2.5 rounded-xl border ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold text-rose-500 dark:text-rose-400">
                 <Wrench className="w-3.5 h-3.5" />
                 <span>Manutenção</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.dailyMaintCost.toFixed(2)}
               </span>
             </div>
 
-            <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+            <div className={`p-2.5 rounded-xl border ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold text-sky-500 dark:text-sky-400">
                 <Utensils className="w-3.5 h-3.5" />
                 <span>Almoço/Lanche</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.dailyFood.toFixed(2)}
               </span>
             </div>
 
-            <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+            <div className={`p-2.5 rounded-xl border ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold text-purple-500 dark:text-purple-400">
                 <FileText className="w-3.5 h-3.5" />
                 <span>IPVA/MEI/Docs</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.dailyDocsCost.toFixed(2)}
               </span>
             </div>
 
             {includeHousehold && results.dailyHouseholdCost > 0 && (
-              <div className={`p-2.5 rounded-xl border border-blue-500/30 ${isDark ? 'bg-blue-500/10' : 'bg-blue-50'}`}>
-                <div className={`flex items-center gap-1.5 text-xs font-bold ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+              <div className={`p-2.5 rounded-xl border bg-transparent ${isDark ? 'border-blue-500/40 text-blue-400' : 'border-blue-300 text-blue-700'}`}>
+                <div className="flex items-center gap-1.5 text-xs font-bold">
                   <span>🏠</span>
                   <span>Contas da Casa</span>
                 </div>
-                <span className={`text-xs sm:text-sm font-black tabular-nums block mt-1 ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+                <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                   R$ {results.dailyHouseholdCost.toFixed(2)}
                 </span>
               </div>
             )}
 
-            <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+            <div className={`p-2.5 rounded-xl border ${surfaceSubtle}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold text-teal-600 dark:text-teal-400">
                 <Shield className="w-3.5 h-3.5" />
                 <span>Emergência (10%)</span>
               </div>
-              <span className="text-xs sm:text-sm font-black tabular-nums block mt-1">
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.dailyEmergencyCost.toFixed(2)}
               </span>
             </div>
 
-            <div className={`p-2.5 rounded-xl border ${
-              isDark ? 'bg-emerald-500/15 border-emerald-500/30' : 'bg-emerald-50 border-emerald-300'
+            <div className={`p-2.5 rounded-xl border bg-transparent ${
+              isDark ? 'border-emerald-500/40 text-emerald-400' : 'border-emerald-300 text-emerald-700'
             }`}>
-              <div className={`flex items-center gap-1.5 text-xs font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+              <div className="flex items-center gap-1.5 text-xs font-black">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>LUCRO LIMPO</span>
               </div>
-              <span className={`text-xs sm:text-sm font-black tabular-nums block mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+              <span className="text-xs sm:text-sm font-black tabular-nums dashboard-number-anim block mt-1">
                 R$ {results.netTargetDaily.toFixed(2)}
               </span>
             </div>
@@ -356,11 +357,11 @@ export function MetaReversaModal({
         </div>
 
         {/* Action Button: Apply as current daily goal */}
-        <div className="mt-4 flex gap-2">
+        <div className={`mt-4 flex gap-2 pt-2 border-t ${dividerBorder}`}>
           <button
             type="button"
             onClick={onClose}
-            className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+            className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-white hover:border-slate-500 transition-colors`}
           >
             Fechar
           </button>
@@ -370,7 +371,7 @@ export function MetaReversaModal({
               onApplyDailyGoal(results.neededDailyGross);
               onClose();
             }}
-            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-[#FF6A1A]/20"
+            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <Check className="w-4 h-4 stroke-[2.5]" />
             <span>Aplicar R$ {results.neededDailyGross}/dia como Minha Meta</span>

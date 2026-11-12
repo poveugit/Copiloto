@@ -688,21 +688,24 @@ export function InvestimentosScreen({
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const surfaceCard = isDark
-    ? 'bg-[#12141C] border border-slate-800/80 text-slate-100'
-    : 'bg-white border border-slate-200/90 text-slate-900 shadow-xs';
+    ? 'bg-transparent border border-neutral-800/80 text-slate-100'
+    : 'bg-transparent border border-slate-200/90 text-slate-900';
   const surfaceSubtle = isDark
-    ? 'bg-[#181B26] border border-slate-800/60'
-    : 'bg-slate-100/80 border border-slate-200/70';
+    ? 'bg-transparent border border-neutral-800/60'
+    : 'bg-transparent border border-slate-200/80';
+  const modalSurface = isDark
+    ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl'
+    : 'bg-white border border-slate-200 text-slate-900 shadow-xl';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-600';
   const primaryText = isDark ? 'text-slate-100' : 'text-slate-900';
   const secondaryText = isDark ? 'text-slate-200' : 'text-slate-800';
   const subText = isDark ? 'text-slate-300' : 'text-slate-700';
-  const cardBorder = isDark ? 'border-slate-800/80' : 'border-slate-200';
-  const borderSubtle = isDark ? 'border-slate-800/60' : 'border-slate-200';
-  const dividerBorder = isDark ? 'border-slate-800' : 'border-slate-200';
+  const cardBorder = isDark ? 'border-neutral-800/80' : 'border-slate-200';
+  const borderSubtle = isDark ? 'border-neutral-800/60' : 'border-slate-200';
+  const dividerBorder = isDark ? 'border-neutral-800/70' : 'border-slate-200';
   const inputSurface = isDark
-    ? 'bg-[#090A0F] border border-slate-700/80 text-white focus:border-[#FF6A1A]'
-    : 'bg-slate-50 border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+    ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]'
+    : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
 
   // Selected simulator plan
   const activeSimPlan = useMemo(
@@ -1239,14 +1242,10 @@ export function InvestimentosScreen({
       {/* BARRA EXCLUSIVA DO ADMIN (Visível SOMENTE para o Administrador) */}
       {isAdmin && (
         <div
-          className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-            isDark
-              ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/40 text-slate-100'
-              : 'bg-orange-50 border-orange-300 text-slate-900'
-          }`}
+          className={`rounded-2xl p-3.5 sm:p-4 border ${dividerBorder} bg-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-3`}
         >
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#FF6A1A] text-black flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] flex items-center justify-center shrink-0">
               <Settings2 className="w-5 h-5 stroke-[2.5]" />
             </div>
             <div>
@@ -1254,7 +1253,7 @@ export function InvestimentosScreen({
                 <span className="text-xs sm:text-sm font-black text-[#FF6A1A]">
                   Painel Gestor do Fundo (Exclusivo Admin)
                 </span>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-[#FF6A1A] text-black">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A]">
                   Admin Verificado
                 </span>
               </div>
@@ -1268,7 +1267,7 @@ export function InvestimentosScreen({
             <button
               type="button"
               onClick={handleOpenAdminCreatePlan}
-              className="px-3 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] cursor-pointer flex items-center gap-1.5 transition-colors"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" />
               <span>Novo Card / Cota</span>
@@ -1282,12 +1281,12 @@ export function InvestimentosScreen({
                 const el = document.getElementById('admin-pending-pix-section');
                 el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }}
-              className="relative px-3 py-2 rounded-xl text-xs font-black bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 cursor-pointer flex items-center gap-1.5 transition-all"
+              className="relative px-3 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-amber-500/10 text-amber-400 border border-amber-500/50 cursor-pointer flex items-center gap-1.5 transition-colors"
             >
               <Lock className="w-4 h-4 text-amber-400" />
               <span>Confirmar PIX Pendentes</span>
               {pendingForAdmin.length > 0 && (
-                <span className="w-5 h-5 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center ml-0.5">
+                <span className="w-5 h-5 rounded-full bg-transparent border border-amber-500 text-amber-400 font-black text-[10px] flex items-center justify-center ml-0.5">
                   {pendingForAdmin.length}
                 </span>
               )}
@@ -1299,7 +1298,7 @@ export function InvestimentosScreen({
                 setDraftQrConfig(qrConfig);
                 setShowQrAdminModal(true);
               }}
-              className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+              className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] transition-colors`}
             >
               <QrCode className="w-4 h-4 text-[#FF6A1A]" />
               <span>Editar QR Code PIX</span>
@@ -1312,7 +1311,7 @@ export function InvestimentosScreen({
                 setInvestSuccessBanner('✅ Planos de investimento restaurados para os valores padrão.');
               }}
               title="Restaurar valores originais dos 3 planos"
-              className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1 ${surfaceSubtle} hover:border-rose-500/50`}
+              className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-rose-500/50 transition-colors`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Padrão</span>
@@ -1326,16 +1325,12 @@ export function InvestimentosScreen({
         <div
           id="admin-pending-pix-section"
           className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border ${
-            pendingForAdmin.length > 0
-              ? isDark
-                ? 'bg-amber-950/25 border-amber-500/50 text-slate-100'
-                : 'bg-amber-50/90 border-amber-300 text-slate-900'
-              : surfaceCard
-          }`}
+            pendingForAdmin.length > 0 ? 'border-amber-500/50' : dividerBorder
+          } bg-transparent`}
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/50">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-800/60 dark:border-neutral-800/60">
             <div className="flex items-start gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-500 text-black flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-transparent border border-amber-500/60 text-amber-400 flex items-center justify-center shrink-0">
                 <Lock className="w-5 h-5 stroke-[2.5]" />
               </div>
               <div>
@@ -1343,7 +1338,7 @@ export function InvestimentosScreen({
                   <h2 className="text-sm sm:text-base font-black">
                     Modo de Segurança · Depósitos PIX Aguardando Confirmação do Admin
                   </h2>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-transparent text-amber-400 border border-amber-500/40">
                     {pendingForAdmin.length}{' '}
                     {pendingForAdmin.length === 1 ? 'Pendente' : 'Pendentes'}
                   </span>
@@ -1356,14 +1351,14 @@ export function InvestimentosScreen({
             <button
               type="button"
               onClick={() => void refreshPendingForAdmin()}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer self-start sm:self-center shrink-0 ${surfaceSubtle} hover:border-amber-500/50`}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer self-start sm:self-center shrink-0 bg-transparent border ${dividerBorder} hover:border-amber-500/50 transition-colors`}
             >
               🔄 Atualizar Lista
             </button>
           </div>
 
           {pendingForAdmin.length === 0 ? (
-            <div className={`mt-3 p-4 rounded-xl text-xs font-semibold flex items-center gap-2 ${surfaceSubtle} ${mutedText}`}>
+            <div className={`mt-3 p-4 rounded-xl text-xs font-semibold flex items-center gap-2 bg-transparent border ${dividerBorder} ${mutedText}`}>
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>Nenhum depósito PIX pendente de confirmação no momento.</span>
             </div>
@@ -1372,10 +1367,10 @@ export function InvestimentosScreen({
               {pendingForAdmin.map(dep => (
                 <div
                   key={dep.id}
-                  className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${surfaceSubtle} border-amber-500/40`}
+                  className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 bg-transparent border-amber-500/40`}
                 >
                   <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-2xl bg-amber-500/15 text-xl flex items-center justify-center shrink-0">
+                    <div className="w-10 h-10 rounded-2xl bg-transparent border border-amber-500/40 text-xl flex items-center justify-center shrink-0">
                       {dep.planIcon}
                     </div>
                     <div className="min-w-0">
@@ -1383,10 +1378,10 @@ export function InvestimentosScreen({
                         <span className="text-xs sm:text-sm font-black">
                           {dep.pilotName || dep.pilotEmail || 'Motoboy Parceiro'}
                         </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-transparent border border-neutral-800 text-slate-300">
                           {dep.pilotEmail}
                         </span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded bg-transparent text-amber-300 border border-amber-500/40">
                           ⏳ Aguardando Confirmação PIX
                         </span>
                       </div>
@@ -1403,12 +1398,12 @@ export function InvestimentosScreen({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/50">
+                  <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-neutral-800/50">
                     <button
                       type="button"
                       disabled={isReviewing}
                       onClick={() => handleRequestReview(dep, 'rejected')}
-                      className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 cursor-pointer transition-colors"
+                      className="px-3 py-2 rounded-xl text-xs font-bold bg-transparent hover:bg-rose-500/10 text-rose-400 border border-rose-500/40 cursor-pointer transition-colors"
                     >
                       Rejeitar
                     </button>
@@ -1416,7 +1411,7 @@ export function InvestimentosScreen({
                       type="button"
                       disabled={isReviewing}
                       onClick={() => handleRequestReview(dep, 'confirmed')}
-                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
+                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 cursor-pointer transition-colors flex items-center gap-1.5"
                     >
                       <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
                       <span>Confirmar PIX e Liberar Cotas</span>
@@ -1430,16 +1425,10 @@ export function InvestimentosScreen({
       )}
 
       {/* 1. HERO HEADER & RESUMO DA CARTEIRA DE COTAS DO MOTOBOY */}
-      <div
-        className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border relative overflow-hidden ${
-          isDark
-            ? 'bg-gradient-to-br from-[#151925] via-[#12141C] to-[#1A1410] border-[#FF6A1A]/40'
-            : 'bg-gradient-to-br from-white via-orange-50/40 to-amber-50/60 border-orange-300 shadow-sm'
-        }`}
-      >
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/50">
+      <div className={`pb-6 border-b ${dividerBorder} relative`}>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-800/60 dark:border-neutral-800/60">
           <div className="flex items-start gap-3">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center shrink-0 shadow-lg shadow-[#FF6A1A]/25">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] flex items-center justify-center shrink-0">
               <TrendingUp className="w-6 h-6 stroke-[2.5]" />
             </div>
             <div>
@@ -1447,7 +1436,7 @@ export function InvestimentosScreen({
                 <h1 className="text-lg sm:text-2xl font-black tracking-tight">
                   Fundo de Investimentos para Motoboys
                 </h1>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent text-emerald-400 border border-emerald-500/40">
                   Cotas a partir de {fmtBRL(minSharePriceAcrossPlans)}
                 </span>
               </div>
@@ -1465,22 +1454,20 @@ export function InvestimentosScreen({
             type="button"
             onClick={() => setShowActiveInvestmentsModal(true)}
             title="Clique para ver seus investimentos ativos e o detalhamento por fundo"
-            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-[#FF6A1A]/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-[#FF6A1A]/40 ${surfaceSubtle}`}
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:border-[#FF6A1A]/70 relative overflow-hidden bg-transparent border ${dividerBorder}`}
           >
             <div className="flex items-center justify-between text-[11px] font-bold">
               <span className={`flex items-center gap-1 ${primaryText}`}>
                 <span>Patrimônio em Cotas</span>
               </span>
               <div className="flex items-center gap-1">
-                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
-                  isDark ? 'bg-[#FF6A1A]/20 text-[#FF6A1A]' : 'bg-orange-100 text-orange-900 border border-orange-200'
-                }`}>
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A]`}>
                   Ver Cotas ↗
                 </span>
                 <Wallet className="w-4 h-4 text-[#FF6A1A] group-hover:scale-110 transition-transform" />
               </div>
             </div>
-            <div className="text-lg sm:text-2xl font-black tabular-nums mt-1 text-[#FF6A1A]">
+            <div className="text-lg sm:text-2xl font-black tabular-nums dashboard-number-anim mt-1 text-[#FF6A1A]">
               {fmtBRL(portfolioStats.totalPatrimony)}
             </div>
             <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
@@ -1497,20 +1484,20 @@ export function InvestimentosScreen({
             type="button"
             onClick={() => setShowYieldBreakdownModal(true)}
             title="Clique para ver o extrato de rendimento diário e projeção de vencimento"
-            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-emerald-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-emerald-500/40 ${surfaceSubtle}`}
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:border-emerald-500/70 relative overflow-hidden bg-transparent border ${dividerBorder}`}
           >
             <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
               <span className={primaryText}>Rendimento Projetado</span>
               <div className="flex items-center gap-1">
-                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
-                  isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all bg-transparent border border-emerald-500/40 ${
+                  isDark ? 'text-emerald-300' : 'text-emerald-700'
                 }`}>
                   Extrato ↗
                 </span>
                 <TrendingUp className={`w-4 h-4 ${isDark ? 'text-emerald-400' : 'text-emerald-700'} group-hover:scale-110 transition-transform`} />
               </div>
             </div>
-            <div className={`text-lg sm:text-2xl font-black tabular-nums mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+            <div className={`text-lg sm:text-2xl font-black tabular-nums dashboard-number-anim mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
               + {fmtBRL(portfolioStats.projectedMaturityYield)}
             </div>
             <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
@@ -1528,20 +1515,20 @@ export function InvestimentosScreen({
               setShowWithdrawalModal(true);
             }}
             title="Clique para solicitar resgate / saque imediato via PIX"
-            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-sky-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-sky-500/40 ${surfaceSubtle}`}
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:border-sky-500/70 relative overflow-hidden bg-transparent border ${dividerBorder}`}
           >
             <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
               <span className={primaryText}>Liberado p/ Saque</span>
               <div className="flex items-center gap-1">
-                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
-                  isDark ? 'bg-sky-500/20 text-sky-300' : 'bg-sky-100 text-sky-900 border border-sky-200'
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all bg-transparent border border-sky-500/40 ${
+                  isDark ? 'text-sky-300' : 'text-sky-700'
                 }`}>
                   Sacar ↗
                 </span>
                 <Unlock className={`w-4 h-4 ${isDark ? 'text-sky-400' : 'text-sky-700'} group-hover:scale-110 transition-transform`} />
               </div>
             </div>
-            <div className={`text-lg sm:text-2xl font-black tabular-nums mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+            <div className={`text-lg sm:text-2xl font-black tabular-nums dashboard-number-anim mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
               {fmtBRL(portfolioStats.availableToWithdraw)}
             </div>
             <div className={`text-[10px] font-semibold mt-0.5 flex items-center justify-between ${mutedText}`}>
@@ -1557,13 +1544,13 @@ export function InvestimentosScreen({
             type="button"
             onClick={() => setShowFundRulesModal(true)}
             title="Clique para ver todas as regras de saque, liquidez e regulamento do fundo"
-            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:border-amber-500/70 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-amber-500/40 ${surfaceSubtle}`}
+            className={`w-full text-left rounded-2xl p-3 sm:p-4 transition-all duration-200 cursor-pointer group hover:border-amber-500/70 relative overflow-hidden bg-transparent border ${dividerBorder}`}
           >
             <div className={`flex items-center justify-between text-[11px] font-bold ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
               <span className={primaryText}>Regra de Saque & Liquidez</span>
               <div className="flex items-center gap-1">
-                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all ${
-                  isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-900 border border-amber-200'
+                <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded transition-all bg-transparent border border-amber-500/40 ${
+                  isDark ? 'text-amber-300' : 'text-amber-700'
                 }`}>
                   Regras ↗
                 </span>
@@ -1584,7 +1571,7 @@ export function InvestimentosScreen({
       </div>
 
       {/* 2. ESCOLHA SUA COTA DO FUNDO DE INVESTIMENTOS (CARDS DETALHADOS COM BOTÃO EDITAR PARA ADMIN) */}
-      <div>
+      <div className={`pb-6 border-b ${dividerBorder}`}>
         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
           <div>
             <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
@@ -1621,20 +1608,20 @@ export function InvestimentosScreen({
             return (
               <div
                 key={plan.id}
-                className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between border transition-all ${surfaceCard} ${plan.borderColor}`}
+                className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between border bg-transparent transition-all ${plan.borderColor}`}
               >
                 <div>
                   {/* Topo do Card com Botão Editar (Exclusivo Admin) */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
-                        className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl shrink-0 ${plan.bgSoft}`}
+                        className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl shrink-0 bg-transparent border ${plan.borderColor}`}
                       >
                         {plan.icon}
                       </span>
                       <div className="min-w-0">
                         <span
-                          className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${plan.bgSoft} ${plan.accentColor}`}
+                          className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent border ${plan.borderColor} ${plan.accentColor}`}
                         >
                           {plan.badge}
                         </span>
@@ -1650,7 +1637,7 @@ export function InvestimentosScreen({
                         type="button"
                         onClick={() => handleOpenAdminEditPlan(plan)}
                         title="Editar todos os detalhes deste investimento (Exclusivo Admin)"
-                        className="px-2.5 py-1.5 rounded-xl text-[11px] font-black bg-[#FF6A1A]/15 hover:bg-[#FF6A1A] text-[#FF6A1A] hover:text-black border border-[#FF6A1A]/40 transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                        className="px-2.5 py-1.5 rounded-xl text-[11px] font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A]/50 transition-all cursor-pointer flex items-center gap-1 shrink-0"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                         <span>Editar</span>
@@ -1669,12 +1656,12 @@ export function InvestimentosScreen({
                   )}
 
                   {/* Preço da Cota & Rentabilidade */}
-                  <div className={`mt-3.5 p-3 rounded-2xl ${surfaceSubtle} grid grid-cols-2 gap-2`}>
+                  <div className={`mt-3.5 p-3 rounded-2xl bg-transparent border ${dividerBorder} grid grid-cols-2 gap-2`}>
                     <div>
                       <span className={`block text-[10px] font-bold uppercase ${mutedText}`}>
                         Valor de 1 Cota
                       </span>
-                      <span className="text-lg sm:text-xl font-black tabular-nums">
+                      <span className="text-lg sm:text-xl font-black tabular-nums dashboard-number-anim">
                         {fmtBRL(plan.sharePrice)}
                       </span>
                       <span className={`block text-[10px] font-semibold ${mutedText}`}>
@@ -1697,7 +1684,7 @@ export function InvestimentosScreen({
 
                   {/* Prazos: Vencimento e Carência Mínima para Saque */}
                   <div className="mt-3 space-y-1.5 text-xs">
-                    <div className="flex items-center justify-between py-1 border-b border-slate-800/50">
+                    <div className={`flex items-center justify-between py-1 border-b ${dividerBorder}`}>
                       <span className={`flex items-center gap-1.5 font-semibold ${mutedText}`}>
                         <Clock className="w-3.5 h-3.5 text-amber-400" />
                         <span>Prazo p/ Sacar após Investir:</span>
@@ -1707,7 +1694,7 @@ export function InvestimentosScreen({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1 border-b border-slate-800/50">
+                    <div className={`flex items-center justify-between py-1 border-b ${dividerBorder}`}>
                       <span className={`flex items-center gap-1.5 font-semibold ${mutedText}`}>
                         <Calendar className="w-3.5 h-3.5 text-sky-400" />
                         <span>Prazo de Vencimento:</span>
@@ -1729,20 +1716,16 @@ export function InvestimentosScreen({
                   </div>
 
                   {/* Rendimento Médio por Tempo (Por 1 Cota) */}
-                  <div
-                    className={`mt-3 p-2.5 rounded-xl border border-slate-800/60 ${
-                      isDark ? 'bg-slate-950/60' : 'bg-slate-50'
-                    }`}
-                  >
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                  <div className={`mt-3 p-2.5 rounded-xl border ${dividerBorder} bg-transparent`}>
+                    <div className={`text-[10px] font-black uppercase tracking-wider mb-1.5 ${mutedText}`}>
                       Rendimento médio de 1 cota ({fmtBRL(plan.sharePrice)}) por tempo:
                     </div>
                     <div className="grid grid-cols-3 gap-1.5 text-center">
-                      <div className={`p-1.5 rounded-lg ${surfaceSubtle}`}>
+                      <div className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder}`}>
                         <div className="text-[9px] font-bold text-amber-400">
                           Em {Math.max(1, minW)} Dias
                         </div>
-                        <div className="text-[11px] font-black text-emerald-400 tabular-nums">
+                        <div className="text-[11px] font-black text-emerald-400 tabular-nums dashboard-number-anim">
                           +{fmtBRL(oneShareMinDays.yieldAmount)}
                         </div>
                         <div className={`text-[9px] tabular-nums ${mutedText}`}>
@@ -1750,9 +1733,9 @@ export function InvestimentosScreen({
                         </div>
                       </div>
 
-                      <div className={`p-1.5 rounded-lg ${surfaceSubtle}`}>
+                      <div className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder}`}>
                         <div className="text-[9px] font-bold text-sky-400">Em 30 Dias</div>
-                        <div className="text-[11px] font-black text-emerald-400 tabular-nums">
+                        <div className="text-[11px] font-black text-emerald-400 tabular-nums dashboard-number-anim">
                           +{fmtBRL(oneShare30Days.yieldAmount)}
                         </div>
                         <div className={`text-[9px] tabular-nums ${mutedText}`}>
@@ -1760,11 +1743,11 @@ export function InvestimentosScreen({
                         </div>
                       </div>
 
-                      <div className={`p-1.5 rounded-lg ${surfaceSubtle}`}>
+                      <div className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder}`}>
                         <div className="text-[9px] font-bold text-purple-400">
                           Venc. ({plan.maturityDays}d)
                         </div>
-                        <div className="text-[11px] font-black text-emerald-400 tabular-nums">
+                        <div className="text-[11px] font-black text-emerald-400 tabular-nums dashboard-number-anim">
                           +{fmtBRL(oneShareMaturity.yieldAmount)}
                         </div>
                         <div className={`text-[9px] tabular-nums ${mutedText}`}>
@@ -1780,7 +1763,7 @@ export function InvestimentosScreen({
                   <button
                     type="button"
                     onClick={() => openBuySharesModal(plan, Math.max(2, plan.minShares || 1))}
-                    className="w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-[#FF6A1A]/20 active:scale-98"
+                    className="w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
                   >
                     <QrCode className="w-4 h-4 stroke-[2.5]" />
                     <span>Investir nesta Cota</span>
@@ -1790,7 +1773,7 @@ export function InvestimentosScreen({
                     <button
                       type="button"
                       onClick={() => handleOpenAdminEditPlan(plan)}
-                      className={`w-full py-2 px-3 rounded-xl text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5 transition-colors ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5 transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] text-[#FF6A1A]`}
                     >
                       <Settings2 className="w-3.5 h-3.5" />
                       <span>Editar Detalhes do Investimento (Admin)</span>
@@ -1804,8 +1787,8 @@ export function InvestimentosScreen({
       </div>
 
       {/* 3. SIMULADOR DE RENDIMENTO MÉDIO DE ACORDO COM O TEMPO DE CADA INVESTIMENTO */}
-      <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-800/50">
+      <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 bg-transparent border ${dividerBorder}`}>
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b ${dividerBorder}`}>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-lg">🧮</span>
@@ -1817,7 +1800,7 @@ export function InvestimentosScreen({
               Veja quanto suas cotas rendem de acordo com o prazo escolhido em cada modalidade
             </p>
           </div>
-          <span className="text-xs font-black px-3 py-1.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 self-start sm:self-center">
+          <span className="text-xs font-black px-3 py-1.5 rounded-xl bg-transparent text-amber-400 border border-amber-500/40 self-start sm:self-center">
             🔒 Carência Mínima para Saque: {activeSimPlan.minWithdrawDays} Dias
           </span>
         </div>
@@ -1837,10 +1820,10 @@ export function InvestimentosScreen({
                       key={p.id}
                       type="button"
                       onClick={() => setSelectedSimPlanId(p.id)}
-                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 bg-transparent ${
                         selected
-                          ? 'bg-[#FF6A1A]/15 border-[#FF6A1A]'
-                          : `${surfaceSubtle} hover:border-slate-700`
+                          ? 'border-2 border-[#FF6A1A] text-[#FF6A1A]'
+                          : `${dividerBorder} hover:border-[#FF6A1A]/50`
                       }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
@@ -1875,7 +1858,7 @@ export function InvestimentosScreen({
                 <button
                   type="button"
                   onClick={() => setSimShares(prev => Math.max(1, prev - 1))}
-                  className={`p-2.5 rounded-xl font-black cursor-pointer ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                  className={`p-2.5 rounded-xl font-black cursor-pointer bg-transparent border ${dividerBorder} text-slate-200 hover:border-[#FF6A1A] transition-colors`}
                 >
                   <Minus className="w-4 h-4" />
                 </button>
@@ -1890,7 +1873,7 @@ export function InvestimentosScreen({
                 <button
                   type="button"
                   onClick={() => setSimShares(prev => prev + 1)}
-                  className={`p-2.5 rounded-xl font-black cursor-pointer ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                  className={`p-2.5 rounded-xl font-black cursor-pointer bg-transparent border ${dividerBorder} text-slate-200 hover:border-[#FF6A1A] transition-colors`}
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -1901,8 +1884,10 @@ export function InvestimentosScreen({
                     key={q}
                     type="button"
                     onClick={() => setSimShares(q)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer ${
-                      simShares === q ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer bg-transparent border transition-colors ${
+                      simShares === q
+                        ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                        : `${dividerBorder} text-slate-400 hover:text-slate-200`
                     }`}
                   >
                     {q} {q === 1 ? 'cota' : 'cotas'} ({fmtBRL(q * activeSimPlan.sharePrice)})
@@ -1922,10 +1907,10 @@ export function InvestimentosScreen({
                     key={p.days}
                     type="button"
                     onClick={() => setSimDays(p.days)}
-                    className={`px-2.5 py-2 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
+                    className={`px-2.5 py-2 rounded-xl text-[11px] font-black cursor-pointer transition-all bg-transparent border ${
                       simDays === p.days
-                        ? 'bg-emerald-500 text-black shadow-sm'
-                        : `${surfaceSubtle} hover:border-emerald-500/40`
+                        ? 'border-emerald-500 text-emerald-400'
+                        : `${dividerBorder} text-slate-400 hover:text-slate-200`
                     }`}
                   >
                     {p.label}
@@ -1937,13 +1922,7 @@ export function InvestimentosScreen({
 
           {/* Resultado da Simulação & Tabela Completa por Tempo */}
           <div className="lg:col-span-7 flex flex-col justify-between gap-3">
-            <div
-              className={`rounded-2xl p-4 border ${
-                isDark
-                  ? 'bg-emerald-950/20 border-emerald-500/40'
-                  : 'bg-emerald-50/80 border-emerald-300'
-              }`}
-            >
+            <div className={`rounded-2xl p-4 border border-emerald-500/40 bg-transparent`}>
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-xs font-black uppercase text-emerald-400">
                   Projeção em {simDays} Dias ({activeSimPlan.name})
@@ -1956,19 +1935,19 @@ export function InvestimentosScreen({
               </div>
 
               <div className="grid grid-cols-3 gap-2.5 mt-3">
-                <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+                <div className={`p-2.5 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Valor Aplicado</span>
-                  <span className="text-sm sm:text-lg font-black tabular-nums block mt-0.5">
+                  <span className="text-sm sm:text-lg font-black tabular-nums dashboard-number-anim block mt-0.5">
                     {fmtBRL(simInvestedAmount)}
                   </span>
                   <span className={`text-[9px] ${mutedText}`}>{simShares} cotas</span>
                 </div>
 
-                <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+                <div className={`p-2.5 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className="block text-[10px] font-bold text-emerald-400">
                     Rendimento ({simDays}d)
                   </span>
-                  <span className="text-sm sm:text-lg font-black tabular-nums text-emerald-400 block mt-0.5">
+                  <span className="text-sm sm:text-lg font-black tabular-nums dashboard-number-anim text-emerald-400 block mt-0.5">
                     + {fmtBRL(simProjection.yieldAmount)}
                   </span>
                   <span className="text-[9px] text-emerald-400 font-bold">
@@ -1976,11 +1955,11 @@ export function InvestimentosScreen({
                   </span>
                 </div>
 
-                <div className={`p-2.5 rounded-xl ${surfaceSubtle}`}>
+                <div className={`p-2.5 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className="block text-[10px] font-bold text-[#FF6A1A]">
                     Valor Total Final
                   </span>
-                  <span className="text-sm sm:text-lg font-black tabular-nums text-[#FF6A1A] block mt-0.5">
+                  <span className="text-sm sm:text-lg font-black tabular-nums dashboard-number-anim text-[#FF6A1A] block mt-0.5">
                     {fmtBRL(simProjection.finalAmount)}
                   </span>
                   <span className={`text-[9px] ${mutedText}`}>
@@ -1991,7 +1970,7 @@ export function InvestimentosScreen({
             </div>
 
             {/* Tabela Comparativa de Rendimento de Acordo com o Tempo */}
-            <div className={`rounded-2xl p-3.5 ${surfaceSubtle}`}>
+            <div className={`rounded-2xl p-3.5 bg-transparent border ${dividerBorder}`}>
               <div className="text-xs font-black mb-2 flex items-center justify-between">
                 <span>📈 Rendimento Médio de {fmtBRL(simInvestedAmount)} por Tempo:</span>
                 <span className={`text-[10px] ${mutedText}`}>
@@ -2010,18 +1989,16 @@ export function InvestimentosScreen({
                     <div
                       key={period.days}
                       onClick={() => setSimDays(period.days)}
-                      className={`p-2 rounded-xl border cursor-pointer transition-all ${
+                      className={`p-2 rounded-xl border cursor-pointer transition-all bg-transparent ${
                         isActive
-                          ? 'bg-[#FF6A1A]/15 border-[#FF6A1A]'
-                          : isDark
-                          ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                          : 'bg-white border-slate-200'
+                          ? 'border-2 border-[#FF6A1A]'
+                          : `${dividerBorder} hover:border-[#FF6A1A]/50`
                       }`}
                     >
                       <div className="text-[10px] font-black text-[#FF6A1A]">
                         {period.days} dias
                       </div>
-                      <div className="text-xs font-black text-emerald-400 tabular-nums mt-0.5">
+                      <div className="text-xs font-black text-emerald-400 tabular-nums dashboard-number-anim mt-0.5">
                         +{fmtBRL(res.yieldAmount)}
                       </div>
                       <div className={`text-[9px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
@@ -2036,7 +2013,7 @@ export function InvestimentosScreen({
             <button
               type="button"
               onClick={() => openBuySharesModal(activeSimPlan, simShares)}
-              className="w-full py-3.5 px-4 rounded-2xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+              className="w-full py-3.5 px-4 rounded-2xl text-xs sm:text-sm font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               <QrCode className="w-4 h-4 stroke-[2.5]" />
               <span>
@@ -2049,8 +2026,8 @@ export function InvestimentosScreen({
       </div>
 
       {/* 4. MINHAS COTAS COMPRADAS & CONTROLE DE SAQUE */}
-      <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-800/50">
+      <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 bg-transparent border ${dividerBorder}`}>
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b ${dividerBorder}`}>
           <div>
             <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
               <span>💼</span>
@@ -2063,7 +2040,7 @@ export function InvestimentosScreen({
           <button
             type="button"
             onClick={() => openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2)}
-            className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5 self-start sm:self-center shrink-0"
+            className="px-3.5 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-colors cursor-pointer flex items-center gap-1.5 self-start sm:self-center shrink-0"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>Comprar Mais Cotas</span>
@@ -2080,16 +2057,16 @@ export function InvestimentosScreen({
             {myPendingDeposits.map(dep => (
               <div
                 key={dep.id}
-                className="rounded-2xl p-3.5 sm:p-4 border border-amber-500/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="rounded-2xl p-3.5 sm:p-4 border border-amber-500/40 bg-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-xl flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-2xl bg-transparent border border-amber-500/40 text-xl flex items-center justify-center shrink-0">
                     {dep.planIcon}
                   </div>
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs sm:text-sm font-black">{dep.planName}</span>
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-transparent text-amber-300 border border-amber-500/40">
                         {dep.shares} {dep.shares === 1 ? 'Cota' : 'Cotas'} · {fmtBRL(dep.amount)}
                       </span>
                     </div>
@@ -2098,7 +2075,7 @@ export function InvestimentosScreen({
                     </p>
                   </div>
                 </div>
-                <span className="text-[11px] font-black px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 self-start sm:self-center shrink-0 flex items-center gap-1.5">
+                <span className="text-[11px] font-black px-3 py-1.5 rounded-xl bg-transparent text-amber-300 border border-amber-500/40 self-start sm:self-center shrink-0 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5" />
                   <span>Aguardando Admin</span>
                 </span>
@@ -2112,7 +2089,7 @@ export function InvestimentosScreen({
             {myRejectedDeposits.map(dep => (
               <div
                 key={dep.id}
-                className="rounded-xl p-3 border border-rose-500/30 bg-rose-500/10 flex items-center justify-between gap-2 text-xs text-rose-300"
+                className="rounded-xl p-3 border border-rose-500/30 bg-transparent flex items-center justify-between gap-2 text-xs text-rose-300"
               >
                 <span>
                   ⚠️ Depósito de <strong>{fmtBRL(dep.amount)}</strong> ({dep.shares}{' '}
@@ -2125,9 +2102,9 @@ export function InvestimentosScreen({
 
         {positions.filter(p => p.status === 'active').length === 0 ? (
           <div
-            className={`mt-4 p-8 rounded-2xl border border-dashed border-slate-700/60 text-center flex flex-col items-center justify-center gap-3 ${surfaceSubtle}`}
+            className={`mt-4 p-8 rounded-2xl border border-dashed ${dividerBorder} text-center flex flex-col items-center justify-center gap-3 bg-transparent`}
           >
-            <div className="w-12 h-12 rounded-2xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center">
+            <div className="w-12 h-12 rounded-2xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center">
               <QrCode className="w-6 h-6" />
             </div>
             <div>
@@ -2139,7 +2116,7 @@ export function InvestimentosScreen({
             <button
               type="button"
               onClick={() => openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2)}
-              className="px-4 py-2.5 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-4 py-2.5 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <QrCode className="w-4 h-4" />
               <span>Investir Primeiras Cotas</span>
@@ -2162,25 +2139,25 @@ export function InvestimentosScreen({
                 return (
                   <div
                     key={pos.id}
-                    className={`rounded-2xl p-3.5 sm:p-4 border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${surfaceSubtle}`}
+                    className={`rounded-2xl p-3.5 sm:p-4 border ${dividerBorder} bg-transparent transition-all flex flex-col md:flex-row md:items-center justify-between gap-3`}
                   >
                     <div className="flex items-start gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A]/15 text-xl flex items-center justify-center shrink-0">
+                      <div className="w-10 h-10 rounded-2xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] text-xl flex items-center justify-center shrink-0">
                         {pos.planIcon}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs sm:text-sm font-black">{pos.planName}</span>
-                          <span className="text-[10px] font-black px-2 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A]">
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A]">
                             {pos.shares} {pos.shares === 1 ? 'Cota' : 'Cotas'}
                           </span>
                           {canWithdraw ? (
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded bg-transparent text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
                               <Unlock className="w-3 h-3" />
                               Saque Liberado ({pos.minWithdrawDays}+ dias)
                             </span>
                           ) : (
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded bg-transparent text-amber-400 border border-amber-500/40 flex items-center gap-1">
                               <Lock className="w-3 h-3" />
                               Saque libera em {daysLeftToUnlock}{' '}
                               {daysLeftToUnlock === 1 ? 'dia' : 'dias'} (
@@ -2211,12 +2188,12 @@ export function InvestimentosScreen({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between md:justify-end gap-2.5 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800/50 shrink-0">
+                    <div className={`flex items-center justify-between md:justify-end gap-2.5 pt-2 md:pt-0 border-t md:border-t-0 ${dividerBorder} shrink-0`}>
                       <div className="text-left md:text-right">
-                        <div className="text-sm sm:text-base font-black tabular-nums">
+                        <div className="text-sm sm:text-base font-black tabular-nums dashboard-number-anim">
                           Aplicado: {fmtBRL(pos.investedAmount)}
                         </div>
-                        <div className="text-[11px] font-bold text-emerald-400 tabular-nums">
+                        <div className="text-[11px] font-bold text-emerald-400 tabular-nums dashboard-number-anim">
                           No vencimento: {fmtBRL(maturityCalc.finalAmount)} (+
                           {fmtBRL(maturityCalc.yieldAmount)})
                         </div>
@@ -2227,8 +2204,8 @@ export function InvestimentosScreen({
                         onClick={() => handleWithdrawPosition(pos)}
                         className={`px-3.5 py-2 rounded-xl text-xs font-black cursor-pointer transition-all flex items-center gap-1.5 ${
                           canWithdraw
-                            ? 'bg-emerald-500 text-black hover:bg-emerald-400'
-                            : 'bg-slate-800 text-amber-400 border border-amber-500/30 hover:bg-slate-700'
+                            ? 'bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500'
+                            : 'bg-transparent text-amber-400 border border-amber-500/40 hover:bg-amber-500/10'
                         }`}
                       >
                         {canWithdraw ? (
@@ -2258,12 +2235,12 @@ export function InvestimentosScreen({
           onClick={() => setEditingPlan(null)}
         >
           <div
-            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
+            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-3.5 border-b border-slate-800/60">
+            <div className={`flex items-start justify-between gap-3 pb-3.5 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center text-lg font-black shrink-0">
+                <div className="w-10 h-10 rounded-2xl bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] flex items-center justify-center text-lg font-black shrink-0">
                   <Settings2 className="w-5 h-5 stroke-[2.5]" />
                 </div>
                 <div>
@@ -2273,7 +2250,7 @@ export function InvestimentosScreen({
                         ? 'Criar Novo Card de Investimento (Admin)'
                         : 'Editar Todos os Detalhes do Investimento (Admin)'}
                     </h3>
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/40">
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40">
                       Acesso Exclusivo Admin
                     </span>
                   </div>
@@ -2285,7 +2262,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setEditingPlan(null)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-[#FF6A1A]`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2293,7 +2270,7 @@ export function InvestimentosScreen({
 
             <form onSubmit={handleSaveAdminPlan} className="mt-4 flex flex-col gap-4">
               {/* 1. Identificação, Selo, Ícone e Cor */}
-              <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-3`}>
+              <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col gap-3`}>
                 <div className="text-xs font-black uppercase tracking-wider text-[#FF6A1A]">
                   1. Identificação & Visual do Card
                 </div>
@@ -2319,8 +2296,8 @@ export function InvestimentosScreen({
                           onClick={() =>
                             setEditingPlan(prev => (prev ? { ...prev, icon: emo } : null))
                           }
-                          className={`w-6 h-6 rounded-md text-xs flex items-center justify-center cursor-pointer ${
-                            editingPlan.icon === emo ? 'bg-[#FF6A1A] text-black' : surfaceCard
+                          className={`w-6 h-6 rounded-md text-xs flex items-center justify-center cursor-pointer border ${
+                            editingPlan.icon === emo ? 'border-[#FF6A1A] text-[#FF6A1A]' : `${dividerBorder} bg-transparent`
                           }`}
                         >
                           {emo}
@@ -2433,7 +2410,7 @@ export function InvestimentosScreen({
               </div>
 
               {/* 2. Valor da Cota & Taxas de Rendimento */}
-              <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-3`}>
+              <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col gap-3`}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
                     2. Valor da Cota & Taxas de Rendimento
@@ -2456,7 +2433,7 @@ export function InvestimentosScreen({
                           : null
                       );
                     }}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-black cursor-pointer hover:bg-emerald-500/25"
+                    className="px-2.5 py-1 rounded-lg bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 text-[10px] font-black cursor-pointer transition-colors"
                   >
                     ⚡ Recalcular Mês/Ano pela Taxa Diária
                   </button>
@@ -2532,9 +2509,7 @@ export function InvestimentosScreen({
                           if (!prev) return null;
                           const monthly = isNaN(val) ? 0 : val;
                           if (monthly > 0) {
-                            // taxa ao dia equivalente em juros compostos: (1 + i_m)^(1/30) - 1
                             const daily = Math.round((Math.pow(1 + monthly / 100, 1 / 30) - 1) * 100 * 1000) / 1000;
-                            // taxa anual equivalente em juros compostos: (1 + i_m)^12 - 1
                             const annual = Math.round((Math.pow(1 + monthly / 100, 12) - 1) * 100 * 10) / 10;
                             return {
                               ...prev,
@@ -2636,7 +2611,7 @@ export function InvestimentosScreen({
               </div>
 
               {/* 3. Prazos, Vencimento e Carência de Saque */}
-              <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-3`}>
+              <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col gap-3`}>
                 <div className="text-xs font-black uppercase tracking-wider text-sky-400">
                   3. Prazos, Vencimento e Regra de Saque
                 </div>
@@ -2747,7 +2722,7 @@ export function InvestimentosScreen({
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                       {/* Card 1: Cota Unitária */}
-                      <div className={`p-2.5 rounded-2xl border flex flex-col justify-between ${surfaceSubtle}`}>
+                      <div className={`p-2.5 rounded-2xl border flex flex-col justify-between bg-transparent ${dividerBorder}`}>
                         <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
                           Cota Base
                         </span>
@@ -2760,12 +2735,12 @@ export function InvestimentosScreen({
                       </div>
 
                       {/* Card 2: Rendimento Diário */}
-                      <div className="p-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 flex flex-col justify-between">
+                      <div className="p-2.5 rounded-2xl border border-emerald-500/40 bg-transparent flex flex-col justify-between">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
                             Por Dia
                           </span>
-                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-transparent border border-emerald-500/40 text-emerald-400">
                             +{pDaily.toFixed(2)}%
                           </span>
                         </div>
@@ -2778,12 +2753,12 @@ export function InvestimentosScreen({
                       </div>
 
                       {/* Card 3: 1º Saque (Carência) */}
-                      <div className="p-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/5 flex flex-col justify-between">
+                      <div className="p-2.5 rounded-2xl border border-amber-500/40 bg-transparent flex flex-col justify-between">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
                             1º Saque
                           </span>
-                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-transparent border border-amber-500/40 text-amber-400">
                             {pMinW === 0 ? 'Imediato' : `${pMinW}d`}
                           </span>
                         </div>
@@ -2796,12 +2771,12 @@ export function InvestimentosScreen({
                       </div>
 
                       {/* Card 4: 30 Dias */}
-                      <div className="p-2.5 rounded-2xl border border-sky-500/30 bg-sky-500/5 flex flex-col justify-between">
+                      <div className="p-2.5 rounded-2xl border border-sky-500/40 bg-transparent flex flex-col justify-between">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
                             30 Dias
                           </span>
-                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-sky-500/20 text-sky-300">
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-transparent border border-sky-500/40 text-sky-400">
                             +{c30.totalPct.toFixed(1)}%
                           </span>
                         </div>
@@ -2814,12 +2789,12 @@ export function InvestimentosScreen({
                       </div>
 
                       {/* Card 5: Vencimento */}
-                      <div className="col-span-2 sm:col-span-1 p-2.5 rounded-2xl border border-purple-500/30 bg-purple-500/5 flex flex-col justify-between">
+                      <div className="col-span-2 sm:col-span-1 p-2.5 rounded-2xl border border-purple-500/40 bg-transparent flex flex-col justify-between">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
                             Vencimento
                           </span>
-                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                          <span className="text-[9px] font-black px-1 py-0.5 rounded bg-transparent border border-purple-500/40 text-purple-400">
                             {pMat}d
                           </span>
                         </div>
@@ -2843,14 +2818,14 @@ export function InvestimentosScreen({
                       <button
                         type="button"
                         onClick={() => handleDeleteAdminPlan(editingPlan.id)}
-                        className="px-3 py-2.5 rounded-xl bg-rose-500 text-white text-xs font-black cursor-pointer"
+                        className="px-3 py-2.5 rounded-xl bg-transparent hover:bg-rose-500/10 text-rose-400 border border-rose-500 text-xs font-black cursor-pointer transition-colors"
                       >
                         Confirmar Exclusão
                       </button>
                       <button
                         type="button"
                         onClick={() => setConfirmDeletePlanId(null)}
-                        className={`px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                        className={`px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder}`}
                       >
                         Cancelar
                       </button>
@@ -2859,7 +2834,7 @@ export function InvestimentosScreen({
                     <button
                       type="button"
                       onClick={() => setConfirmDeletePlanId(editingPlan.id)}
-                      className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5"
+                      className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-transparent hover:bg-rose-500/10 text-rose-400 border border-rose-500/40 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                       <span>Excluir Card</span>
@@ -2873,13 +2848,13 @@ export function InvestimentosScreen({
                   <button
                     type="button"
                     onClick={() => setEditingPlan(null)}
-                    className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                    className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder}`}
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6A1A]/20"
+                    className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
                   >
                     <Save className="w-4 h-4 stroke-[2.5]" />
                     <span>Salvar Dados do Investimento</span>
@@ -2898,10 +2873,10 @@ export function InvestimentosScreen({
           onClick={() => setShowQrAdminModal(false)}
         >
           <div
-            className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl border ${surfaceCard}`}
+            className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/60">
+            <div className={`flex items-center justify-between gap-2 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-2">
                 <QrCode className="w-5 h-5 text-[#FF6A1A]" />
                 <h3 className="text-sm sm:text-base font-black">
@@ -2911,7 +2886,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowQrAdminModal(false)}
-                className={`p-1.5 rounded-xl ${surfaceSubtle} cursor-pointer`}
+                className={`p-1.5 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-[#FF6A1A]`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2922,7 +2897,7 @@ export function InvestimentosScreen({
                 <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
                   Enviar Imagem do QR Code PIX (PNG/JPG)
                 </label>
-                <label className="w-full py-2.5 px-3 rounded-xl border border-dashed border-[#FF6A1A]/50 bg-[#FF6A1A]/10 text-[#FF6A1A] text-xs font-black cursor-pointer flex items-center justify-center gap-2 hover:bg-[#FF6A1A]/20">
+                <label className="w-full py-2.5 px-3 rounded-xl border border-dashed border-[#FF6A1A]/50 bg-transparent text-[#FF6A1A] text-xs font-black cursor-pointer flex items-center justify-center gap-2 hover:bg-[#FF6A1A]/10 transition-colors">
                   <Upload className="w-4 h-4" />
                   <span>Selecionar Imagem do QR Code no Aparelho</span>
                   <input
@@ -2981,7 +2956,7 @@ export function InvestimentosScreen({
                 <button
                   type="button"
                   onClick={() => setShowQrAdminModal(false)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder}`}
                 >
                   Cancelar
                 </button>
@@ -2992,7 +2967,7 @@ export function InvestimentosScreen({
                     setShowQrAdminModal(false);
                     setInvestSuccessBanner('✅ QR Code PIX e dados de recebimento atualizados pelo Admin!');
                   }}
-                  className="px-5 py-2 rounded-xl bg-[#FF6A1A] text-black text-xs font-black cursor-pointer flex items-center gap-1.5"
+                  className="px-5 py-2 rounded-xl bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] text-xs font-black cursor-pointer flex items-center gap-1.5 transition-colors"
                 >
                   <Save className="w-4 h-4" />
                   <span>Salvar QR Code PIX</span>
@@ -3010,13 +2985,13 @@ export function InvestimentosScreen({
           onClick={() => setShowInvestModal(false)}
         >
           <div
-            className={`w-full max-w-xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
+            className={`w-full max-w-xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             {/* Header do Modal */}
-            <div className="flex items-start justify-between gap-3 pb-3.5 border-b border-slate-800/60">
+            <div className={`flex items-start justify-between gap-3 pb-3.5 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center text-xl font-black shrink-0">
+                <div className="w-10 h-10 rounded-2xl bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] flex items-center justify-center text-xl font-black shrink-0">
                   {modalPlan.icon}
                 </div>
                 <div>
@@ -3024,7 +2999,7 @@ export function InvestimentosScreen({
                     <h3 className="text-sm sm:text-base font-black">
                       Investir no {modalPlan.name}
                     </h3>
-                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-transparent text-emerald-400 border border-emerald-500/40">
                       Depósito via QR Code PIX
                     </span>
                   </div>
@@ -3036,7 +3011,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowInvestModal(false)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-[#FF6A1A]`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3044,7 +3019,7 @@ export function InvestimentosScreen({
 
             {/* Seletor de Cota e Valor a Ser Investido */}
             <div className="mt-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
                 <label className={`block text-[10px] font-bold uppercase ${mutedText}`}>
                   Quantidade de Cotas ({fmtBRL(modalPlan.sharePrice)}/cota)
                 </label>
@@ -3054,7 +3029,7 @@ export function InvestimentosScreen({
                     onClick={() =>
                       setModalShares(prev => Math.max(modalPlan.minShares || 1, prev - 1))
                     }
-                    className={`p-2 rounded-xl font-black cursor-pointer ${surfaceCard}`}
+                    className={`p-2 rounded-xl font-black cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] transition-colors`}
                   >
                     <Minus className="w-4 h-4" />
                   </button>
@@ -3076,7 +3051,7 @@ export function InvestimentosScreen({
                   <button
                     type="button"
                     onClick={() => setModalShares(prev => prev + 1)}
-                    className={`p-2 rounded-xl font-black cursor-pointer ${surfaceCard}`}
+                    className={`p-2 rounded-xl font-black cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] transition-colors`}
                   >
                     <Plus className="w-4 h-4" />
                   </button>
@@ -3090,10 +3065,10 @@ export function InvestimentosScreen({
                         setModalShares(n);
                         setCustomExtraAmount('');
                       }}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-black cursor-pointer ${
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-black cursor-pointer transition-colors ${
                         modalShares === n && !customExtraAmount
-                          ? 'bg-[#FF6A1A] text-black'
-                          : surfaceCard
+                          ? 'border border-[#FF6A1A] text-[#FF6A1A] bg-transparent'
+                          : `bg-transparent border ${dividerBorder} ${mutedText} hover:border-slate-500`
                       }`}
                     >
                       {n}x ({fmtBRL(n * modalPlan.sharePrice)})
@@ -3102,12 +3077,12 @@ export function InvestimentosScreen({
                 </div>
               </div>
 
-              <div className={`p-3 rounded-2xl ${surfaceSubtle} flex flex-col justify-between`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col justify-between`}>
                 <div>
                   <label className={`block text-[10px] font-bold uppercase ${mutedText}`}>
                     Valor Total a Depositar no QR Code
                   </label>
-                  <div className="text-2xl sm:text-3xl font-black text-[#FF6A1A] tabular-nums mt-1">
+                  <div className="text-2xl sm:text-3xl font-black text-[#FF6A1A] tabular-nums dashboard-number-anim mt-1">
                     {fmtBRL(modalTotalDeposit)}
                   </div>
                 </div>
@@ -3135,7 +3110,7 @@ export function InvestimentosScreen({
             </div>
 
             {/* Resumo Rápido de Rendimento deste Valor por Tempo */}
-            <div className={`mt-3 p-3 rounded-2xl ${surfaceSubtle}`}>
+            <div className={`mt-3 p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
               <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400 mb-2">
                 📊 Quanto seus {fmtBRL(modalTotalDeposit)} vão render de acordo com o tempo:
               </div>
@@ -3148,14 +3123,12 @@ export function InvestimentosScreen({
                 ].map(item => (
                   <div
                     key={item.days}
-                    className={`p-2 rounded-xl border ${
-                      isDark ? 'bg-slate-950/70 border-slate-800' : 'bg-white border-slate-200'
-                    }`}
+                    className={`p-2 rounded-xl border ${dividerBorder} bg-transparent`}
                   >
                     <div className="text-[10px] font-black text-[#FF6A1A]">
                       {item.days === 3 ? '3 Dias (Mín.)' : `${item.days} Dias`}
                     </div>
-                    <div className="text-xs font-black text-emerald-400 tabular-nums mt-0.5">
+                    <div className="text-xs font-black text-emerald-400 tabular-nums dashboard-number-anim mt-0.5">
                       +{fmtBRL(item.yieldAmount)}
                     </div>
                     <div className={`text-[9px] font-bold tabular-nums ${mutedText}`}>
@@ -3170,9 +3143,7 @@ export function InvestimentosScreen({
             {!isQrCodeGenerated ? (
               /* ETAPA 1: Antes da Confirmação -> QR Code NÃO APARECE */
               <div className="mt-4 flex flex-col gap-3">
-                <div className={`w-full p-3 rounded-xl border text-[11px] font-semibold flex items-center justify-between gap-2 ${
-                  isDark ? 'bg-slate-900/60 border-slate-800/80 text-slate-300' : 'bg-slate-100 border-slate-300 text-slate-700'
-                }`}>
+                <div className={`w-full p-3 rounded-xl border ${dividerBorder} bg-transparent text-[11px] font-semibold flex items-center justify-between gap-2`}>
                   <span className="flex items-center gap-1.5 text-amber-500 dark:text-amber-400">
                     <Clock className="w-4 h-4 shrink-0" />
                     <span>Carência de Saque:</span>
@@ -3187,14 +3158,14 @@ export function InvestimentosScreen({
                   <button
                     type="button"
                     onClick={() => setShowInvestModal(false)}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText}`}
                   >
                     Cancelar
                   </button>
                   <button
                     type="button"
                     onClick={handleRequestInvestmentConfirmation}
-                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <TrendingUp className="w-4 h-4 stroke-[2.5]" />
                     <span>Confirmar Investimento</span>
@@ -3204,10 +3175,10 @@ export function InvestimentosScreen({
             ) : (
               /* ETAPA 2: Depósito registrado como PENDENTE -> QR Code exibido; cotas só liberam após o Admin confirmar */
               <div className="mt-3.5 flex flex-col gap-3">
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5">
+                <div className="p-3 rounded-2xl bg-transparent border border-amber-500/40 flex items-start gap-2.5">
                   <Lock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                   <div className="text-xs">
-                    <div className="font-black text-amber-300">
+                    <div className="font-black text-amber-400">
                       Solicitação registrada · Aguardando seu PIX
                     </div>
                     <p className={mutedText}>
@@ -3217,9 +3188,7 @@ export function InvestimentosScreen({
                 </div>
 
                 <div
-                  className={`p-4 rounded-2xl border-2 border-[#FF6A1A]/50 flex flex-col items-center text-center ${
-                    isDark ? 'bg-[#0b0d13]' : 'bg-orange-50/40'
-                  }`}
+                  className={`p-4 rounded-2xl border ${dividerBorder} bg-transparent flex flex-col items-center text-center`}
                 >
                   <div className="flex items-center gap-1.5 text-xs sm:text-sm font-black text-[#FF6A1A]">
                     <QrCode className="w-4 h-4" />
@@ -3247,7 +3216,7 @@ export function InvestimentosScreen({
                     )}
                   </div>
 
-                  <div className="mt-2 text-[11px] font-bold text-slate-400">
+                  <div className={`mt-2 text-[11px] font-bold ${mutedText}`}>
                     {qrConfig.recipientName} · {qrConfig.bankName}
                   </div>
 
@@ -3255,7 +3224,7 @@ export function InvestimentosScreen({
                     <button
                       type="button"
                       onClick={() => setZoomQrModal(true)}
-                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] transition-colors`}
                     >
                       🔍 Ampliar QR Code
                     </button>
@@ -3268,7 +3237,7 @@ export function InvestimentosScreen({
                           setCopiedPixKey(true);
                           setTimeout(() => setCopiedPixKey(false), 2500);
                         }}
-                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] transition-colors`}
                       >
                         {copiedPixKey ? (
                           <>
@@ -3288,7 +3257,7 @@ export function InvestimentosScreen({
                       <a
                         href={qrConfig.customQrImageUrl}
                         download="qrcode-investimento-motoboy.png"
-                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] transition-colors`}
                       >
                         <Download className="w-3.5 h-3.5" />
                         <span>Baixar QR Code</span>
@@ -3296,7 +3265,7 @@ export function InvestimentosScreen({
                     )}
                   </div>
 
-                  <div className="mt-3 w-full p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-2">
+                  <div className="mt-3 w-full p-2.5 rounded-xl bg-transparent border border-amber-500/40 text-[11px] text-amber-300 font-semibold flex items-center justify-center gap-2">
                     <Clock className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>
                       Lembrete: O prazo mínimo para solicitar saque após investir é de{' '}
@@ -3305,12 +3274,12 @@ export function InvestimentosScreen({
                   </div>
                 </div>
 
-                {/* Botão da Etapa 2: NÃO libera cotas; apenas encerra e aguarda a confirmação do Admin */}
+                {/* Botão da Etapa 2 */}
                 <div className="mt-2 flex flex-col sm:flex-row gap-2">
                   <button
                     type="button"
                     onClick={handleFinishAwaitingAdmin}
-                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                    className="flex-1 py-3.5 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <Clock className="w-4 h-4 stroke-[2.5]" />
                     <span>Já fiz o PIX · Aguardar confirmação do Admin</span>
@@ -3329,11 +3298,11 @@ export function InvestimentosScreen({
           onClick={() => setShowConfirmPopup(false)}
         >
           <div
-            className={`w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} flex flex-col gap-4 animate-in fade-in duration-150`}
+            className={`w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-150 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
+              <div className="w-12 h-12 rounded-2xl bg-transparent border border-[#FF6A1A]/60 flex items-center justify-center text-[#FF6A1A] shrink-0">
                 <AlertCircle className="w-6 h-6 stroke-[2.5]" />
               </div>
               <div>
@@ -3346,7 +3315,7 @@ export function InvestimentosScreen({
               </div>
             </div>
 
-            <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2 text-xs`}>
+            <div className={`p-4 rounded-2xl bg-transparent border ${dividerBorder} space-y-2 text-xs`}>
               <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Plano Selecionado:</span>
                 <span className={`font-black ${primaryText} flex items-center gap-1.5`}>
@@ -3362,7 +3331,7 @@ export function InvestimentosScreen({
               </div>
               <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Valor Total a Depositar:</span>
-                <span className="text-base font-black text-[#FF6A1A]">
+                <span className="text-base font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">
                   {fmtBRL(modalTotalDeposit)}
                 </span>
               </div>
@@ -3384,14 +3353,14 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowConfirmPopup(false)}
-                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} text-slate-300`}
               >
                 Não, Voltar
               </button>
               <button
                 type="button"
                 onClick={handleProceedWithInvestmentConfirmation}
-                className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
                 <span>Sim, Confirmar Investimento</span>
@@ -3408,11 +3377,11 @@ export function InvestimentosScreen({
           onClick={() => setWithdrawingPosition(null)}
         >
           <div
-            className={`w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} flex flex-col gap-4 animate-in fade-in duration-150`}
+            className={`w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-150 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+              <div className="w-12 h-12 rounded-2xl bg-transparent border border-rose-500/60 flex items-center justify-center text-rose-400 shrink-0">
                 <ArrowUpRight className="w-6 h-6 stroke-[2.5]" />
               </div>
               <div>
@@ -3425,7 +3394,7 @@ export function InvestimentosScreen({
               </div>
             </div>
 
-            <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2 text-xs`}>
+            <div className={`p-4 rounded-2xl bg-transparent border ${dividerBorder} space-y-2 text-xs`}>
               <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Plano:</span>
                 <span className={`font-black ${primaryText} flex items-center gap-1.5`}>
@@ -3441,7 +3410,7 @@ export function InvestimentosScreen({
               </div>
               <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                 <span className={mutedText}>Valor Original Investido:</span>
-                <span className="font-black text-[#FF6A1A]">
+                <span className="font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">
                   {fmtBRL(withdrawingPosition.investedAmount)}
                 </span>
               </div>
@@ -3453,10 +3422,8 @@ export function InvestimentosScreen({
               </div>
             </div>
 
-            <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
-              isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-rose-50 border-rose-300 text-rose-800'
-            }`}>
-              <BellRing className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+            <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] bg-transparent border-rose-500/40 text-rose-300`}>
+              <BellRing className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
               <span>
                 <strong>Aviso de Alta Prioridade:</strong> Ao confirmar, uma <strong>notificação imediata de resgate será enviada ao administrador</strong> para processar a transferência do valor para você.
               </span>
@@ -3466,14 +3433,14 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setWithdrawingPosition(null)}
-                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} text-slate-300`}
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleConfirmWithdrawal}
-                className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-rose-500 hover:bg-rose-400 text-white transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20"
+                className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-rose-500/10 text-rose-400 border border-rose-500 transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
                 <span>Sim, Confirmar Resgate</span>
@@ -3490,25 +3457,27 @@ export function InvestimentosScreen({
           onClick={() => setZoomQrModal(false)}
         >
           <div
-            className="bg-white p-5 rounded-3xl shadow-2xl max-w-sm w-full flex flex-col items-center gap-3"
+            className={`p-5 rounded-3xl max-w-sm w-full flex flex-col items-center gap-3 border ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="text-slate-900 font-black text-sm text-center">
+            <div className={`font-black text-sm text-center ${primaryText}`}>
               QR Code Oficial · Depósito de {fmtBRL(modalTotalDeposit)}
             </div>
-            {qrConfig.customQrImageUrl ? (
-              <img
-                src={qrConfig.customQrImageUrl}
-                alt="QR Code PIX Ampliado"
-                className="w-72 h-72 sm:w-80 sm:h-80 object-contain"
-              />
-            ) : (
-              <PixQrCodeSvg size={280} />
-            )}
+            <div className="p-3 bg-white rounded-2xl flex items-center justify-center">
+              {qrConfig.customQrImageUrl ? (
+                <img
+                  src={qrConfig.customQrImageUrl}
+                  alt="QR Code PIX Ampliado"
+                  className="w-64 h-64 sm:w-72 sm:h-72 object-contain"
+                />
+              ) : (
+                <PixQrCodeSvg size={260} />
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setZoomQrModal(false)}
-              className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-black cursor-pointer"
+              className={`w-full py-2.5 rounded-xl text-xs font-black cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-slate-500 transition-colors`}
             >
               Fechar Zoom
             </button>
@@ -3525,13 +3494,13 @@ export function InvestimentosScreen({
           onClick={() => setShowActiveInvestmentsModal(false)}
         >
           <div
-            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto flex flex-col gap-4 animate-in fade-in duration-200 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] flex items-center justify-center shrink-0">
                   <Wallet className="w-6 h-6 stroke-[2.5]" />
                 </div>
                 <div>
@@ -3539,9 +3508,7 @@ export function InvestimentosScreen({
                     <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
                       Meus Investimentos Ativos
                     </h3>
-                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${
-                      isDark ? 'bg-[#FF6A1A]/20 text-[#FF6A1A] border-[#FF6A1A]/30' : 'bg-orange-100 text-orange-950 border-orange-200'
-                    }`}>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border bg-transparent text-[#FF6A1A] border-[#FF6A1A]/40`}>
                       {portfolioStats.totalShares}{' '}
                       {portfolioStats.totalShares === 1 ? 'Cota Ativa' : 'Cotas Ativas'}
                     </span>
@@ -3554,7 +3521,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowActiveInvestmentsModal(false)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-[#FF6A1A]`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3562,35 +3529,35 @@ export function InvestimentosScreen({
 
             {/* Resumo Consolidado no Topo */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
                 <span className={`text-[10px] font-bold uppercase block ${mutedText}`}>
                   Total Investido
                 </span>
-                <span className={`text-base sm:text-lg font-black tabular-nums ${primaryText}`}>
+                <span className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim ${primaryText}`}>
                   {fmtBRL(portfolioStats.totalInvested)}
                 </span>
               </div>
-              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
                 <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   Lucro Acumulado
                 </span>
-                <span className={`text-base sm:text-lg font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                <span className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   + {fmtBRL(portfolioStats.currentYield)}
                 </span>
               </div>
-              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
                 <span className="text-[10px] font-bold uppercase block text-[#FF6A1A]">
                   Patrimônio Atual
                 </span>
-                <span className="text-base sm:text-lg font-black text-[#FF6A1A] tabular-nums">
+                <span className="text-base sm:text-lg font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">
                   {fmtBRL(portfolioStats.totalPatrimony)}
                 </span>
               </div>
-              <div className={`p-3 rounded-2xl ${surfaceSubtle}`}>
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
                 <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                   Liberado p/ Saque
                 </span>
-                <span className={`text-base sm:text-lg font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                <span className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                   {fmtBRL(portfolioStats.availableToWithdraw)}
                 </span>
               </div>
@@ -3610,7 +3577,7 @@ export function InvestimentosScreen({
               </div>
 
               {fundInvestmentsBreakdown.length === 0 ? (
-                <div className={`p-4 rounded-2xl text-center text-xs ${surfaceSubtle} ${mutedText}`}>
+                <div className={`p-4 rounded-2xl text-center text-xs bg-transparent border ${dividerBorder} ${mutedText}`}>
                   <p className={`font-bold ${primaryText}`}>Você ainda não possui cotas ativas no Fundo Motoboy.</p>
                   <p className="text-[11px] mt-1">
                     Escolha um dos fundos abaixo para aplicar e começar a receber rendimentos diários.
@@ -3621,7 +3588,7 @@ export function InvestimentosScreen({
                       setShowActiveInvestmentsModal(false);
                       openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2);
                     }}
-                    className="mt-3 px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer inline-flex items-center gap-1.5"
+                    className="mt-3 px-4 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] cursor-pointer inline-flex items-center gap-1.5 transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                     <span>Investir nas Primeiras Cotas</span>
@@ -3637,9 +3604,7 @@ export function InvestimentosScreen({
                     return (
                       <div
                         key={fund.planId}
-                        className={`p-3.5 sm:p-4 rounded-2xl border transition-all ${surfaceSubtle} ${
-                          isDark ? 'border-slate-700/60 hover:border-[#FF6A1A]/50' : 'border-slate-300 hover:border-[#FF6A1A] shadow-xs'
-                        }`}
+                        className={`p-3.5 sm:p-4 rounded-2xl border transition-all bg-transparent ${dividerBorder} hover:border-[#FF6A1A]/50`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2.5 min-w-0">
@@ -3661,7 +3626,7 @@ export function InvestimentosScreen({
                             <span className={`text-[10px] uppercase font-bold block ${mutedText}`}>
                               Valor Investido no Fundo:
                             </span>
-                            <span className={`text-sm font-black tabular-nums ${primaryText}`}>
+                            <span className={`text-sm font-black tabular-nums dashboard-number-anim ${primaryText}`}>
                               {fmtBRL(fund.totalInvested)}
                             </span>
                           </div>
@@ -3669,7 +3634,7 @@ export function InvestimentosScreen({
                             <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                               Rendimento Gerado:
                             </span>
-                            <span className={`text-sm font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                            <span className={`text-sm font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                               + {fmtBRL(fund.currentYield)}
                             </span>
                           </div>
@@ -3677,7 +3642,7 @@ export function InvestimentosScreen({
 
                         <div className={`mt-2.5 pt-2 border-t ${dividerBorder} flex items-center justify-between text-[11px] font-semibold`}>
                           <span className={mutedText}>Saldo Total Acumulado:</span>
-                          <span className="text-xs font-black text-[#FF6A1A] tabular-nums">
+                          <span className="text-xs font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">
                             {fmtBRL(fund.totalPatrimony)}
                           </span>
                         </div>
@@ -3706,8 +3671,8 @@ export function InvestimentosScreen({
                                 setWithdrawError(null);
                                 setShowWithdrawalModal(true);
                               }}
-                              className={`px-2 py-0.5 rounded font-black cursor-pointer transition-colors ${
-                                isDark ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300'
+                              className={`px-2 py-0.5 rounded font-black cursor-pointer transition-colors bg-transparent border border-emerald-500/50 hover:bg-emerald-500/10 ${
+                                isDark ? 'text-emerald-300' : 'text-emerald-700'
                               }`}
                             >
                               Sacar deste fundo ↗
@@ -3755,28 +3720,26 @@ export function InvestimentosScreen({
                       return (
                         <div
                           key={pos.id}
-                          className={`p-3 rounded-2xl border ${surfaceSubtle} ${dividerBorder} flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs`}
+                          className={`p-3 rounded-2xl border bg-transparent ${dividerBorder} flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs`}
                         >
                           <div className="flex items-start gap-3 min-w-0">
                             <span className="text-2xl mt-0.5">{pos.planIcon}</span>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className={`font-black ${primaryText}`}>{pos.planName}</span>
-                                <span className={`text-[10px] font-black px-2 py-0.5 rounded ${
-                                  isDark ? 'bg-[#FF6A1A]/15 text-[#FF6A1A]' : 'bg-orange-100 text-orange-950 border border-orange-200'
-                                }`}>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A]`}>
                                   {pos.shares} {pos.shares === 1 ? 'Cota' : 'Cotas'}
                                 </span>
                                 {canWithdraw ? (
-                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 ${
-                                    isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 bg-transparent ${
+                                    isDark ? 'text-emerald-400 border-emerald-500/40' : 'text-emerald-700 border-emerald-400'
                                   }`}>
                                     <Unlock className="w-3 h-3" />
                                     Liberado para Saque
                                   </span>
                                 ) : (
-                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 ${
-                                    isDark ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded border flex items-center gap-1 bg-transparent ${
+                                    isDark ? 'text-amber-400 border-amber-500/40' : 'text-amber-700 border-amber-400'
                                   }`}>
                                     <Lock className="w-3 h-3" />
                                     Carência: libera em {daysLeft} {daysLeft === 1 ? 'dia' : 'dias'}
@@ -3799,7 +3762,7 @@ export function InvestimentosScreen({
                               <div className={`font-bold ${secondaryText}`}>
                                 Aplicado: {fmtBRL(pos.investedAmount)}
                               </div>
-                              <div className={`text-[11px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                              <div className={`text-[11px] font-bold tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                                 Acumulado hoje: {fmtBRL(finalAmount)} (+{fmtBRL(yieldAmount)})
                               </div>
                               <div className={`text-[10px] ${mutedText}`}>
@@ -3822,10 +3785,8 @@ export function InvestimentosScreen({
                               }}
                               className={`px-3 py-2 rounded-xl text-xs font-black cursor-pointer transition-all flex items-center gap-1 ${
                                 canWithdraw
-                                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-md shadow-emerald-500/20'
-                                  : isDark
-                                  ? 'bg-slate-800 text-amber-400 border border-amber-500/30 hover:bg-slate-700'
-                                  : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                                  ? 'bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500'
+                                  : 'bg-transparent text-amber-400 border border-amber-500/40 hover:bg-amber-500/10'
                               }`}
                             >
                               {canWithdraw ? (
@@ -3849,7 +3810,7 @@ export function InvestimentosScreen({
             )}
 
             {/* Ações do Rodapé do Modal */}
-            <div className={`flex flex-col sm:flex-row gap-2.5 pt-3 border-t ${borderSubtle}`}>
+            <div className={`flex flex-col sm:flex-row gap-2.5 pt-3 border-t ${dividerBorder}`}>
               <button
                 type="button"
                 onClick={() => {
@@ -3862,10 +3823,8 @@ export function InvestimentosScreen({
                 disabled={portfolioStats.availableToWithdraw <= 0}
                 className={`flex-1 py-3 px-4 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   portfolioStats.availableToWithdraw > 0
-                    ? 'bg-sky-500 hover:bg-sky-400 text-black shadow-lg shadow-sky-500/20'
-                    : isDark
-                    ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                    : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                    ? 'bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500'
+                    : 'bg-transparent text-slate-500 cursor-not-allowed border border-neutral-800'
                 }`}
               >
                 <Unlock className="w-4 h-4" />
@@ -3882,7 +3841,7 @@ export function InvestimentosScreen({
                   setShowActiveInvestmentsModal(false);
                   openBuySharesModal(fundPlans[0] || DEFAULT_MOTOBOY_FUND_PLANS[0], 2);
                 }}
-                className="py-3 px-4 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-[#FF6A1A]/20"
+                className="py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A] transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
                 <span>Investir em Novas Cotas</span>
@@ -3891,7 +3850,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowActiveInvestmentsModal(false)}
-                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} hover:border-slate-400 ${secondaryText}`}
+                className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] transition-colors`}
               >
                 Fechar
               </button>
@@ -3909,13 +3868,13 @@ export function InvestimentosScreen({
           onClick={() => setShowYieldBreakdownModal(false)}
         >
           <div
-            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto flex flex-col gap-4 animate-in fade-in duration-200 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-transparent border border-emerald-500/60 text-emerald-400 flex items-center justify-center shrink-0">
                   <TrendingUp className="w-6 h-6 stroke-[2.5]" />
                 </div>
                 <div>
@@ -3930,7 +3889,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowYieldBreakdownModal(false)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-emerald-500`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-emerald-500`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3938,11 +3897,11 @@ export function InvestimentosScreen({
 
             {/* Top Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-emerald-500/30' : 'border-emerald-200 shadow-xs'}`}>
+              <div className={`p-3.5 rounded-2xl border bg-transparent border-emerald-500/40`}>
                 <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   Rendimento Hoje (Acumulado)
                 </span>
-                <div className={`text-xl font-black tabular-nums mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                <div className={`text-xl font-black tabular-nums dashboard-number-anim mt-1 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   + {fmtBRL(portfolioStats.currentYield)}
                 </div>
                 <span className={`text-[10px] block mt-0.5 ${mutedText}`}>
@@ -3950,11 +3909,11 @@ export function InvestimentosScreen({
                 </span>
               </div>
 
-              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/30' : 'border-sky-200 shadow-xs'}`}>
+              <div className={`p-3.5 rounded-2xl border bg-transparent border-sky-500/40`}>
                 <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                   Projeção no Vencimento
                 </span>
-                <div className={`text-xl font-black tabular-nums mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                <div className={`text-xl font-black tabular-nums dashboard-number-anim mt-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                   + {fmtBRL(portfolioStats.projectedMaturityYield)}
                 </div>
                 <span className={`text-[10px] block mt-0.5 ${mutedText}`}>
@@ -3963,7 +3922,7 @@ export function InvestimentosScreen({
                 </span>
               </div>
 
-              <div className={`p-3.5 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200 shadow-xs'}`}>
+              <div className={`p-3.5 rounded-2xl border bg-transparent border-[#FF6A1A]/40`}>
                 <span className="text-[10px] font-bold text-[#FF6A1A] uppercase block">
                   Equivalente ao CDI
                 </span>
@@ -3977,7 +3936,7 @@ export function InvestimentosScreen({
             </div>
 
             {/* Como é calculado o rendimento */}
-            <div className={`p-3.5 rounded-2xl ${surfaceSubtle} border ${borderSubtle} text-xs space-y-2`}>
+            <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} text-xs space-y-2`}>
               <div className={`font-black flex items-center gap-1.5 ${primaryText}`}>
                 <Sparkles className="w-4 h-4 text-amber-400" />
                 <span>Como funciona a fórmula de juros diários</span>
@@ -3987,15 +3946,15 @@ export function InvestimentosScreen({
                 Diferente de bancos tradicionais que só pagam após 30 dias (aniversário da poupança), no Fundo Motoboy seu saldo cresce a cada 24 horas, inclusive em sábados, domingos e feriados.
               </p>
               <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                <div className={`p-2 rounded-xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                <div className={`p-2 rounded-xl border bg-transparent border-neutral-800/80`}>
                   <div className={`text-[10px] ${mutedText}`}>Poupança Tradicional</div>
                   <div className={`text-xs font-bold mt-0.5 ${secondaryText}`}>~0,55% /mês</div>
                 </div>
-                <div className={`p-2 rounded-xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                <div className={`p-2 rounded-xl border bg-transparent border-neutral-800/80`}>
                   <div className={`text-[10px] ${mutedText}`}>CDI de Banco 100%</div>
                   <div className={`text-xs font-bold mt-0.5 ${secondaryText}`}>~0,85% /mês</div>
                 </div>
-                <div className={`p-2 rounded-xl border ${isDark ? 'bg-emerald-500/15 border-emerald-500/40' : 'bg-emerald-50 border-emerald-300'}`}>
+                <div className={`p-2 rounded-xl border bg-transparent border-emerald-500/40`}>
                   <div className={`text-[10px] font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-800'}`}>Fundo Motoboy</div>
                   <div className={`text-xs font-black mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>1,65% a 2,48% /mês</div>
                 </div>
@@ -4013,7 +3972,7 @@ export function InvestimentosScreen({
                     return (
                       <div
                         key={fund.planId}
-                        className={`p-3 rounded-xl border ${surfaceSubtle} ${dividerBorder} flex items-center justify-between gap-3 text-xs`}
+                        className={`p-3 rounded-xl border bg-transparent ${dividerBorder} flex items-center justify-between gap-3 text-xs`}
                       >
                         <div className="flex items-center gap-2.5">
                           <span className="text-xl">{fund.planIcon}</span>
@@ -4025,7 +3984,7 @@ export function InvestimentosScreen({
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className={`font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                          <div className={`font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                             + {fmtBRL(fund.currentYield)}
                           </div>
                           <div className={`text-[10px] font-semibold ${secondaryText}`}>
@@ -4044,7 +4003,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowYieldBreakdownModal(false)}
-                className="w-full py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black transition-all cursor-pointer"
+                className="w-full py-3 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 transition-all cursor-pointer"
               >
                 Entendido / Fechar Extrato
               </button>
@@ -4062,14 +4021,14 @@ export function InvestimentosScreen({
           onClick={() => setShowWithdrawalModal(false)}
         >
           <div
-            className={`w-full max-w-xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            className={`w-full max-w-xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto flex flex-col gap-4 animate-in fade-in duration-200 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-400 flex items-center justify-center shrink-0">
-                  <Unlock className="w-6 h-6 stroke-[2.5]" />
+                <div className="w-10 h-10 rounded-xl bg-transparent border border-sky-500/40 text-sky-400 flex items-center justify-center shrink-0">
+                  <Unlock className="w-5 h-5 stroke-[2.5]" />
                 </div>
                 <div>
                   <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
@@ -4083,7 +4042,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowWithdrawalModal(false)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-sky-500`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer text-slate-400 hover:text-white hover:border-slate-500 transition-colors`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -4092,9 +4051,9 @@ export function InvestimentosScreen({
             {/* SE RESGATE FOI CONCLUÍDO: COMPROVANTE */}
             {withdrawReceipt ? (
               <div className="flex flex-col gap-3 py-2 animate-in zoom-in-95 duration-200">
-                <div className="p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/40 text-center flex flex-col items-center gap-2">
-                  <div className="w-12 h-12 rounded-full bg-emerald-500 text-black flex items-center justify-center text-xl font-black">
-                    <CheckCircle2 className="w-7 h-7 stroke-[2.5]" />
+                <div className="p-4 rounded-2xl bg-transparent border border-emerald-500/40 text-center flex flex-col items-center gap-2">
+                  <div className="w-11 h-11 rounded-full bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 flex items-center justify-center text-xl font-black">
+                    <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
                   </div>
                   <div>
                     <h4 className={`text-base font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
@@ -4107,10 +4066,10 @@ export function InvestimentosScreen({
                 </div>
 
                 {/* Detalhes do comprovante */}
-                <div className={`p-4 rounded-2xl ${surfaceSubtle} space-y-2.5 text-xs`}>
+                <div className={`p-4 rounded-2xl bg-transparent border ${dividerBorder} space-y-2.5 text-xs`}>
                   <div className={`flex justify-between items-center pb-2 border-b ${dividerBorder}`}>
                     <span className={mutedText}>Valor Total a Receber via PIX:</span>
-                    <span className={`text-base font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                    <span className={`text-base font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                       {fmtBRL(withdrawReceipt.amount)}
                     </span>
                   </div>
@@ -4140,8 +4099,8 @@ export function InvestimentosScreen({
                   </div>
                 </div>
 
-                <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
-                  isDark ? 'bg-sky-500/10 border-sky-500/30 text-sky-300' : 'bg-sky-50 border-sky-300 text-sky-900'
+                <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] bg-transparent ${
+                  isDark ? 'border-sky-500/30 text-sky-300' : 'border-sky-300 text-sky-900'
                 }`}>
                   <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
                   <span>
@@ -4152,7 +4111,7 @@ export function InvestimentosScreen({
                 <button
                   type="button"
                   onClick={() => setShowWithdrawalModal(false)}
-                  className="w-full py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black transition-all cursor-pointer mt-1"
+                  className="w-full py-3 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 transition-all cursor-pointer mt-1"
                 >
                   Concluir / Fechar
                 </button>
@@ -4162,21 +4121,21 @@ export function InvestimentosScreen({
               <form onSubmit={handleExecuteDedicatedWithdrawal} className="flex flex-col gap-3.5">
                 {/* Banner de Saldo Disponível */}
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className={`p-3 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/40' : 'border-sky-300 shadow-xs'}`}>
+                  <div className={`p-3 rounded-2xl border bg-transparent ${isDark ? 'border-sky-500/40' : 'border-sky-300'}`}>
                     <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                       Disponível para Saque
                     </span>
-                    <span className={`text-lg font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                    <span className={`text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                       {fmtBRL(portfolioStats.availableToWithdraw)}
                     </span>
                     <span className={`text-[10px] block ${mutedText}`}>Carência cumprida</span>
                   </div>
 
-                  <div className={`p-3 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-amber-500/40' : 'border-amber-300 shadow-xs'}`}>
+                  <div className={`p-3 rounded-2xl border bg-transparent ${isDark ? 'border-amber-500/40' : 'border-amber-300'}`}>
                     <span className={`text-[10px] font-bold uppercase block ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
                       Em Carência de 72h
                     </span>
-                    <span className={`text-lg font-black tabular-nums ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                    <span className={`text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
                       {fmtBRL(portfolioStats.lockedInGracePeriod)}
                     </span>
                     <span className={`text-[10px] block ${mutedText}`}>Bloqueado temporariamente</span>
@@ -4184,7 +4143,7 @@ export function InvestimentosScreen({
                 </div>
 
                 {portfolioStats.availableToWithdraw <= 0 ? (
-                  <div className={`p-4 rounded-2xl border text-center ${surfaceSubtle} space-y-2 ${
+                  <div className={`p-4 rounded-2xl border text-center bg-transparent space-y-2 ${
                     isDark ? 'border-amber-500/40' : 'border-amber-300'
                   }`}>
                     <div className="w-10 h-10 rounded-full bg-amber-500/15 text-amber-500 flex items-center justify-center mx-auto text-lg">
@@ -4202,8 +4161,8 @@ export function InvestimentosScreen({
                         setShowWithdrawalModal(false);
                         setShowFundRulesModal(true);
                       }}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer mt-1 ${
-                        isDark ? 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10' : 'text-amber-800 border-amber-300 hover:bg-amber-100 bg-white shadow-xs'
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer mt-1 bg-transparent transition-colors ${
+                        isDark ? 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10' : 'text-amber-800 border-amber-300 hover:bg-amber-100'
                       }`}
                     >
                       Ver Regras de Liquidez e Prazos ↗
@@ -4212,7 +4171,7 @@ export function InvestimentosScreen({
                 ) : (
                   <>
                     {/* 1. SELEÇÃO DE COTAS A RESGATAR */}
-                    <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-2.5`}>
+                    <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col gap-2.5`}>
                       <label className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
                         <Wallet className="w-4 h-4 text-[#FF6A1A]" />
                         <span>1. Selecione o que deseja resgatar</span>
@@ -4221,14 +4180,10 @@ export function InvestimentosScreen({
                       <div className="flex flex-col gap-2">
                         {/* Opção Resgatar Tudo */}
                         <label
-                          className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                          className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all bg-transparent ${
                             withdrawTargetId === 'all_eligible'
-                              ? isDark
-                                ? 'bg-sky-500/15 border-sky-500'
-                                : 'bg-sky-50 border-sky-500 shadow-xs'
-                              : isDark
-                              ? 'border-slate-700/60 hover:border-slate-600'
-                              : 'border-slate-300 hover:border-slate-400 bg-white'
+                              ? 'border-sky-500 text-sky-400'
+                              : `${dividerBorder} hover:border-slate-500`
                           }`}
                         >
                           <div className="flex items-center gap-2.5">
@@ -4248,7 +4203,7 @@ export function InvestimentosScreen({
                               </div>
                             </div>
                           </div>
-                          <span className={`text-xs font-black tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                          <span className={`text-xs font-black tabular-nums dashboard-number-anim ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                             {fmtBRL(portfolioStats.availableToWithdraw)}
                           </span>
                         </label>
@@ -4272,14 +4227,10 @@ export function InvestimentosScreen({
                             return (
                               <label
                                 key={pos.id}
-                                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all bg-transparent ${
                                   isSelected
-                                    ? isDark
-                                      ? 'bg-sky-500/15 border-sky-500'
-                                      : 'bg-sky-50 border-sky-500 shadow-xs'
-                                    : isDark
-                                    ? 'border-slate-700/60 hover:border-slate-600'
-                                    : 'border-slate-300 hover:border-slate-400 bg-white'
+                                    ? 'border-sky-500'
+                                    : `${dividerBorder} hover:border-slate-500`
                                 }`}
                               >
                                 <div className="flex items-center gap-2.5">
@@ -4294,9 +4245,7 @@ export function InvestimentosScreen({
                                     <div className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
                                       <span>{pos.planIcon}</span>
                                       <span>{pos.planName}</span>
-                                      <span className={`text-[10px] px-1.5 py-0.2 rounded ${
-                                        isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-200 text-slate-700'
-                                      }`}>
+                                      <span className={`text-[10px] px-1.5 py-0.2 rounded border ${dividerBorder} ${secondaryText}`}>
                                         {pos.shares} {pos.shares === 1 ? 'cota' : 'cotas'}
                                       </span>
                                     </div>
@@ -4305,7 +4254,7 @@ export function InvestimentosScreen({
                                     </div>
                                   </div>
                                 </div>
-                                <span className={`text-xs font-black tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                                <span className={`text-xs font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                                   {fmtBRL(finalAmount)}
                                 </span>
                               </label>
@@ -4315,7 +4264,7 @@ export function InvestimentosScreen({
                     </div>
 
                     {/* 2. CHAVE PIX DE DESTINO */}
-                    <div className={`p-3.5 rounded-2xl ${surfaceSubtle} flex flex-col gap-2.5`}>
+                    <div className={`p-3.5 rounded-2xl bg-transparent border ${dividerBorder} flex flex-col gap-2.5`}>
                       <label className={`text-xs font-black flex items-center gap-1.5 ${primaryText}`}>
                         <QrCode className="w-4 h-4 text-[#FF6A1A]" />
                         <span>2. Onde deseja receber seu PIX?</span>
@@ -4333,14 +4282,10 @@ export function InvestimentosScreen({
                             key={t.id}
                             type="button"
                             onClick={() => setWithdrawPixType(t.id as any)}
-                            className={`py-1.5 text-[11px] font-bold rounded-xl border cursor-pointer transition-all ${
+                            className={`py-1.5 text-[11px] font-bold rounded-xl border cursor-pointer transition-all bg-transparent ${
                               withdrawPixType === t.id
-                                ? isDark
-                                  ? 'bg-sky-500 text-black border-sky-400'
-                                  : 'bg-sky-600 text-white border-sky-600 shadow-xs'
-                                : isDark
-                                ? 'border-slate-700/60 text-slate-300 hover:border-slate-500'
-                                : 'border-slate-300 text-slate-700 hover:border-slate-400 bg-white shadow-xs'
+                                ? 'border-sky-500 text-sky-400'
+                                : `${dividerBorder} ${secondaryText} hover:border-slate-500`
                             }`}
                           >
                             {t.label}
@@ -4398,15 +4343,15 @@ export function InvestimentosScreen({
 
                     {/* Alerta de erro se houver */}
                     {withdrawError && (
-                      <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 flex items-center gap-2">
+                      <div className="p-3 rounded-xl bg-transparent border border-rose-500/50 text-xs text-rose-400 flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
                         <span>{withdrawError}</span>
                       </div>
                     )}
 
                     {/* Aviso de Confirmação & Alta Prioridade */}
-                    <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] ${
-                      isDark ? 'bg-sky-500/10 border-sky-500/30 text-sky-300' : 'bg-sky-50 border-sky-300 text-sky-900'
+                    <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] bg-transparent ${
+                      isDark ? 'border-sky-500/30 text-sky-300' : 'border-sky-300 text-sky-900'
                     }`}>
                       <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
                       <span>
@@ -4419,13 +4364,13 @@ export function InvestimentosScreen({
                       <button
                         type="button"
                         onClick={() => setShowWithdrawalModal(false)}
-                        className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} ${secondaryText}`}
+                        className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-slate-500 transition-colors`}
                       >
                         Cancelar
                       </button>
                       <button
                         type="submit"
-                        className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-sky-500 hover:bg-sky-400 text-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20"
+                        className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500 transition-all cursor-pointer flex items-center justify-center gap-2"
                       >
                         <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
                         <span>Confirmar Solicitação de Resgate PIX</span>
@@ -4448,14 +4393,14 @@ export function InvestimentosScreen({
           onClick={() => setShowFundRulesModal(false)}
         >
           <div
-            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col gap-4 animate-in fade-in duration-200 ${surfaceCard}`}
+            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto flex flex-col gap-4 animate-in fade-in duration-200 ${modalSurface}`}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${borderSubtle}`}>
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
-                  <Clock className="w-6 h-6 stroke-[2.5]" />
+                <div className="w-10 h-10 rounded-xl bg-transparent border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                  <Clock className="w-5 h-5 stroke-[2.5]" />
                 </div>
                 <div>
                   <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
@@ -4469,7 +4414,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowFundRulesModal(false)}
-                className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-amber-500`}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer text-slate-400 hover:text-white hover:border-slate-500 transition-colors`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -4478,7 +4423,7 @@ export function InvestimentosScreen({
             {/* Grid de Regras em Destaque */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               {/* Regra 1: Carência Mínima */}
-              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-amber-500/30' : 'border-amber-200 shadow-xs'} flex flex-col gap-2`}>
+              <div className={`p-4 rounded-2xl border bg-transparent ${isDark ? 'border-amber-500/40' : 'border-amber-300'} flex flex-col gap-2`}>
                 <div className={`flex items-center gap-2 font-black ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
                   <Lock className="w-4 h-4" />
                   <span>1. Prazo de Carência Mínima (72h / 3 Dias)</span>
@@ -4490,7 +4435,7 @@ export function InvestimentosScreen({
               </div>
 
               {/* Regra 2: Liquidação PIX */}
-              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-sky-500/30' : 'border-sky-200 shadow-xs'} flex flex-col gap-2`}>
+              <div className={`p-4 rounded-2xl border bg-transparent ${isDark ? 'border-sky-500/40' : 'border-sky-300'} flex flex-col gap-2`}>
                 <div className={`flex items-center gap-2 font-black ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
                   <ArrowUpRight className="w-4 h-4" />
                   <span>2. Liquidação via PIX (D+0 / D+1)</span>
@@ -4501,7 +4446,7 @@ export function InvestimentosScreen({
               </div>
 
               {/* Regra 3: Juros Diários */}
-              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-emerald-500/30' : 'border-emerald-200 shadow-xs'} flex flex-col gap-2`}>
+              <div className={`p-4 rounded-2xl border bg-transparent ${isDark ? 'border-emerald-500/40' : 'border-emerald-300'} flex flex-col gap-2`}>
                 <div className={`flex items-center gap-2 font-black ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   <TrendingUp className="w-4 h-4" />
                   <span>3. Rendimento Diário Composto</span>
@@ -4512,7 +4457,7 @@ export function InvestimentosScreen({
               </div>
 
               {/* Regra 4: Resgate Parcial ou Total */}
-              <div className={`p-4 rounded-2xl border ${surfaceSubtle} ${isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200 shadow-xs'} flex flex-col gap-2`}>
+              <div className={`p-4 rounded-2xl border bg-transparent ${isDark ? 'border-[#FF6A1A]/40' : 'border-orange-300'} flex flex-col gap-2`}>
                 <div className="flex items-center gap-2 text-[#FF6A1A] font-black">
                   <ShieldCheck className="w-4 h-4" />
                   <span>4. Autonomia de Resgate Parcial</span>
@@ -4530,10 +4475,10 @@ export function InvestimentosScreen({
                 <span>Tabela Comparativa de Cotas & Liquidez do Fundo</span>
               </h4>
 
-              <div className={`overflow-x-auto rounded-2xl border ${cardBorder}`}>
+              <div className={`overflow-x-auto rounded-2xl border ${dividerBorder}`}>
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className={`${isDark ? 'bg-slate-900/90 text-slate-300 border-slate-800' : 'bg-slate-100 text-slate-700 border-slate-200'} text-[10px] uppercase font-black border-b`}>
+                    <tr className={`bg-transparent ${isDark ? 'text-slate-300' : 'text-slate-700'} text-[10px] uppercase font-black border-b ${dividerBorder}`}>
                       <th className="p-3">Cota / Fundo</th>
                       <th className="p-3 text-center">Valor Cota</th>
                       <th className="p-3 text-center">Taxa Diária</th>
@@ -4542,9 +4487,9 @@ export function InvestimentosScreen({
                       <th className="p-3 text-center">Vencimento</th>
                     </tr>
                   </thead>
-                  <tbody className={`divide-y ${isDark ? 'divide-slate-800/60' : 'divide-slate-200'} font-semibold`}>
+                  <tbody className={`divide-y ${dividerBorder} font-semibold`}>
                     {fundPlans.map(plan => (
-                      <tr key={plan.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} transition-colors`}>
+                      <tr key={plan.id} className={`${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'} transition-colors`}>
                         <td className="p-3">
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{plan.icon}</span>
@@ -4577,7 +4522,7 @@ export function InvestimentosScreen({
             </div>
 
             {/* Dúvidas Frequentes FAQ */}
-            <div className={`p-4 rounded-2xl ${surfaceSubtle} border ${borderSubtle} space-y-2.5 text-xs`}>
+            <div className={`p-4 rounded-2xl bg-transparent border ${dividerBorder} space-y-2.5 text-xs`}>
               <div className={`font-black flex items-center gap-1.5 ${primaryText}`}>
                 <HelpCircle className="w-4 h-4 text-[#FF6A1A]" />
                 <span>Dúvidas Frequentes sobre o Fundo do Motoboy</span>
@@ -4606,14 +4551,14 @@ export function InvestimentosScreen({
             </div>
 
             {/* Botão de Fechar */}
-            <div className={`flex gap-2 pt-1 border-t ${borderSubtle}`}>
+            <div className={`flex gap-2 pt-1 border-t ${dividerBorder}`}>
               <button
                 type="button"
                 onClick={() => {
                   setShowFundRulesModal(false);
                   setShowWithdrawalModal(true);
                 }}
-                className="flex-1 py-3 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-400 text-black transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20"
+                className="flex-1 py-3 rounded-xl text-xs font-black bg-transparent hover:bg-amber-500/10 text-amber-400 border border-amber-500 transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Unlock className="w-4 h-4" />
                 <span>Ir para Solicitação de Saque</span>
@@ -4622,7 +4567,7 @@ export function InvestimentosScreen({
               <button
                 type="button"
                 onClick={() => setShowFundRulesModal(false)}
-                className={`py-3 px-5 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle} ${secondaryText} hover:border-slate-400`}
+                className={`py-3 px-5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-slate-500 transition-colors`}
               >
                 Fechar
               </button>

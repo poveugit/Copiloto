@@ -34,14 +34,161 @@ export interface ExpenseEntry {
 
 export interface ProjectedRevenueItem {
   id: string;
-  date: string; // YYYY-MM-DD
-  amount: number;
+  date: string; // YYYY-MM-DD (data prevista final / último dia selecionado)
+  startDate?: string; // YYYY-MM-DD (primeiro dia selecionado ou início da contagem)
+  selectedDates?: string[]; // YYYY-MM-DD[] (dias livres selecionados no calendário)
+  workDays?: number; // quantidade de dias que irá trabalhar
+  dailyRate?: number; // valor da diária prevista por dia
+  amount: number; // valor total previsto
   description: string;
   app?: string;
   status: 'pending' | 'realized' | 'cancelled';
   notes?: string;
   createdAt: string;
   realizedEntryId?: number;
+}
+
+export interface ProjectedRevenueBalanceInfo {
+  totalAmount: number;
+  dailyRate: number;
+  workDays: number;
+  elapsedDays: number;
+  remainingDays: number;
+  debitedAmount: number;
+  remainingAmount: number;
+  hasDailySchedule: boolean;
+  startDate: string;
+  selectedDates: string[];
+  progressPct: number;
+}
+
+function parseYmdMiddayMs(ymd: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '').trim());
+  if (!m) return NaN;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0, 0).getTime();
+}
+
+export function diffProjectedYmdDays(fromYmd: string, toYmd: string): number {
+  const a = parseYmdMiddayMs(fromYmd);
+  const b = parseYmdMiddayMs(toYmd);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86400000);
+}
+
+export function shiftProjectedYmdDays(ymd: string, deltaDays: number): string {
+  const ms = parseYmdMiddayMs(ymd);
+  if (!Number.isFinite(ms)) return ymd;
+  const d = new Date(ms + deltaDays * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function computeProjectedRevenueBalance(
+  item: ProjectedRevenueItem,
+  todayDateStr?: string
+): ProjectedRevenueBalanceInfo {
+  const now = new Date();
+  const today =
+    todayDateStr ||
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const totalAmount = Math.max(0, Number(item.amount) || 0);
+  const selectedDates = Array.isArray(item.selectedDates)
+    ? Array.from(new Set(item.selectedDates.map(String).filter(d => /^\d{4}-\d{2}-\d{2}/.test(d)))).sort()
+    : [];
+  const explicitWorkDays = selectedDates.length > 0 ? selectedDates.length : Number(item.workDays) || 0;
+  const explicitDailyRate = Number(item.dailyRate) || 0;
+  const hasDailySchedule =
+    selectedDates.length > 0 ||
+    (explicitDailyRate > 0 && explicitWorkDays >= 1) ||
+    (explicitWorkDays > 1 && totalAmount > 0);
+
+  if (!hasDailySchedule) {
+    const startDate = item.startDate || item.date;
+    const isPending = item.status === 'pending';
+    return {
+      totalAmount,
+      dailyRate: totalAmount,
+      workDays: 1,
+      elapsedDays: 0,
+      remainingDays: isPending ? Math.max(0, diffProjectedYmdDays(today, item.date)) : 0,
+      debitedAmount: 0,
+      remainingAmount: isPending ? totalAmount : 0,
+      hasDailySchedule: false,
+      startDate,
+      selectedDates: [],
+      progressPct: item.status === 'realized' ? 100 : 0,
+    };
+  }
+
+  const workDays = Math.max(
+    1,
+    Math.round(
+      selectedDates.length > 0
+        ? selectedDates.length
+        : explicitWorkDays > 0
+        ? explicitWorkDays
+        : explicitDailyRate > 0
+        ? totalAmount / explicitDailyRate
+        : 1
+    )
+  );
+  const dailyRate =
+    explicitDailyRate > 0
+      ? explicitDailyRate
+      : Math.round((totalAmount / workDays) * 100) / 100;
+  const startDate =
+    selectedDates.length > 0
+      ? selectedDates[0]
+      : item.startDate || shiftProjectedYmdDays(item.date, -workDays);
+
+  if (item.status !== 'pending') {
+    return {
+      totalAmount,
+      dailyRate,
+      workDays,
+      elapsedDays: item.status === 'realized' ? workDays : 0,
+      remainingDays: 0,
+      debitedAmount: 0,
+      remainingAmount: 0,
+      hasDailySchedule: true,
+      startDate,
+      selectedDates,
+      progressPct: item.status === 'realized' ? 100 : 0,
+    };
+  }
+
+  // Se houver dias específicos selecionados no calendário, debita 1 diária por cada dia selecionado já passado (< today)
+  const rawElapsed =
+    selectedDates.length > 0
+      ? selectedDates.filter(d => d < today).length
+      : diffProjectedYmdDays(startDate, today);
+  const elapsedDays = Math.max(0, Math.min(workDays, rawElapsed));
+  const remainingDays = Math.max(0, workDays - elapsedDays);
+  const debitedAmount =
+    elapsedDays >= workDays
+      ? totalAmount
+      : Math.min(totalAmount, Math.round(elapsedDays * dailyRate * 100) / 100);
+  const remainingAmount =
+    elapsedDays >= workDays
+      ? 0
+      : Math.max(0, Math.round((totalAmount - debitedAmount) * 100) / 100);
+  const progressPct =
+    totalAmount > 0
+      ? Math.min(100, Math.max(0, Math.round((debitedAmount / totalAmount) * 100)))
+      : Math.min(100, Math.max(0, Math.round((elapsedDays / workDays) * 100)));
+
+  return {
+    totalAmount,
+    dailyRate,
+    workDays,
+    elapsedDays,
+    remainingDays,
+    debitedAmount,
+    remainingAmount,
+    hasDailySchedule: true,
+    startDate,
+    selectedDates,
+    progressPct,
+  };
 }
 
 export interface MaintenanceHistoryRecord {
@@ -378,6 +525,9 @@ export interface LocalRoomDatabaseState {
   deletedAppIds?: string[];
   deletedEntryIds?: number[];
   deletedExpenseIds?: number[];
+  deletedBikeExpenseIds?: string[];
+  deletedHouseholdExpenseIds?: string[];
+  deletedProjectedRevenueIds?: string[];
   lastSyncedAt?: string;
 }
 
@@ -402,8 +552,10 @@ export function getSupabaseClient(): SupabaseClient | null {
  */
 function isExpenseConfigCustomized(
   list: Array<{ id: string; monthlyAmount: number; totalCost?: number; isCustomEdited?: boolean }> | undefined | null,
-  defaults: Array<{ id: string }>
+  defaults: Array<{ id: string }>,
+  deletedIds?: string[] | null
 ): boolean {
+  if (Array.isArray(deletedIds) && deletedIds.length > 0) return true;
   if (!Array.isArray(list) || list.length === 0) return false;
   if (list.some(i => Number(i.monthlyAmount) > 0 || Number(i.totalCost) > 0 || i.isCustomEdited)) {
     return true;
@@ -412,12 +564,18 @@ function isExpenseConfigCustomized(
   return list.length !== defaultIds.size || list.some(i => !defaultIds.has(i.id));
 }
 
-export function isHouseholdListCustomized(list?: HouseholdExpenseItem[] | null): boolean {
-  return isExpenseConfigCustomized(list, DEFAULT_HOUSEHOLD_EXPENSES);
+export function isHouseholdListCustomized(
+  list?: HouseholdExpenseItem[] | null,
+  deletedIds?: string[] | null
+): boolean {
+  return isExpenseConfigCustomized(list, DEFAULT_HOUSEHOLD_EXPENSES, deletedIds);
 }
 
-export function isBikeListCustomized(list?: BikeExpenseItem[] | null): boolean {
-  return isExpenseConfigCustomized(list, DEFAULT_BIKE_EXPENSES);
+export function isBikeListCustomized(
+  list?: BikeExpenseItem[] | null,
+  deletedIds?: string[] | null
+): boolean {
+  return isExpenseConfigCustomized(list, DEFAULT_BIKE_EXPENSES, deletedIds);
 }
 
 /**
@@ -427,7 +585,14 @@ export function isBikeListCustomized(list?: BikeExpenseItem[] | null): boolean {
 async function fetchCloudExpenseConfigLists(
   client: SupabaseClient,
   deviceId: string
-): Promise<{ household?: HouseholdExpenseItem[]; bike?: BikeExpenseItem[] }> {
+): Promise<{
+  household?: HouseholdExpenseItem[];
+  bike?: BikeExpenseItem[];
+  deletedHouseholdIds?: string[];
+  deletedBikeIds?: string[];
+  projectedRevenues?: ProjectedRevenueItem[];
+  deletedProjectedIds?: string[];
+}> {
   try {
     const res: any = await withTimeout(
       client.from('moto_settings').select('maintenance').eq('device_id', deviceId).maybeSingle(),
@@ -437,11 +602,38 @@ async function fetchCloudExpenseConfigLists(
     const m = res?.data?.maintenance;
     if (!m || typeof m !== 'object') return {};
     const snap = m.cloudSnapshot && typeof m.cloudSnapshot === 'object' ? m.cloudSnapshot : {};
-    const pick = <T,>(a: unknown, b: unknown): T[] | undefined =>
-      Array.isArray(a) && a.length > 0 ? (a as T[]) : Array.isArray(b) && b.length > 0 ? (b as T[]) : undefined;
+    const deletedHouseholdIds: string[] | undefined = Array.isArray(snap.deletedHouseholdExpenseIds)
+      ? snap.deletedHouseholdExpenseIds.map((id: unknown) => String(id))
+      : undefined;
+    const deletedBikeIds: string[] | undefined = Array.isArray(snap.deletedBikeExpenseIds)
+      ? snap.deletedBikeExpenseIds.map((id: unknown) => String(id))
+      : undefined;
+    const deletedProjectedIds: string[] | undefined = Array.isArray(snap.deletedProjectedRevenueIds)
+      ? snap.deletedProjectedRevenueIds.map((id: unknown) => String(id))
+      : undefined;
+    const delHouseSet = new Set<string>(deletedHouseholdIds || []);
+    const delBikeSet = new Set<string>(deletedBikeIds || []);
+    const delProjSet = new Set<string>(deletedProjectedIds || []);
+    const pick = <T extends { id: string }>(
+      a: unknown,
+      b: unknown,
+      delSet: Set<string>
+    ): T[] | undefined => {
+      const raw =
+        Array.isArray(a) && (a.length > 0 || delSet.size > 0)
+          ? (a as T[])
+          : Array.isArray(b) && (b.length > 0 || delSet.size > 0)
+          ? (b as T[])
+          : undefined;
+      return raw ? raw.filter(item => item && !delSet.has(String(item.id))) : undefined;
+    };
     return {
-      household: pick<HouseholdExpenseItem>(snap.householdExpenses, m.householdExpenses),
-      bike: pick<BikeExpenseItem>(snap.bikeExpenses, m.bikeExpenses),
+      household: pick<HouseholdExpenseItem>(snap.householdExpenses, m.householdExpenses, delHouseSet),
+      bike: pick<BikeExpenseItem>(snap.bikeExpenses, m.bikeExpenses, delBikeSet),
+      deletedHouseholdIds,
+      deletedBikeIds,
+      projectedRevenues: pick<ProjectedRevenueItem>(snap.projectedRevenues, m.projectedRevenues, delProjSet),
+      deletedProjectedIds,
     };
   } catch {
     return {};
@@ -457,14 +649,15 @@ async function pushExpenseConfigIfCloudMissing(
   userEmail?: string | null
 ): Promise<void> {
   if (!userEmail) return;
-  const hasHousehold = isHouseholdListCustomized(state.householdExpenses);
-  const hasBike = isBikeListCustomized(state.bikeExpenses);
+  const hasHousehold = isHouseholdListCustomized(state.householdExpenses, state.deletedHouseholdExpenseIds);
+  const hasBike = isBikeListCustomized(state.bikeExpenses, state.deletedBikeExpenseIds);
   const client = getSupabaseClient();
   if (!(hasHousehold || hasBike) || !client) return;
   try {
     const cloudLists = await fetchCloudExpenseConfigLists(client, getUserDeviceId(userEmail));
-    const missingHousehold = hasHousehold && !isHouseholdListCustomized(cloudLists.household);
-    const missingBike = hasBike && !isBikeListCustomized(cloudLists.bike);
+    const missingHousehold =
+      hasHousehold && !isHouseholdListCustomized(cloudLists.household, cloudLists.deletedHouseholdIds);
+    const missingBike = hasBike && !isBikeListCustomized(cloudLists.bike, cloudLists.deletedBikeIds);
     if (missingHousehold || missingBike) {
       await runWorkManagerCloudSync(state, userEmail, false, false);
     }
@@ -551,6 +744,7 @@ function hasPopulatedData(state?: Partial<LocalRoomDatabaseState> | null): boole
   if (!state) return false;
   const eLen = Array.isArray(state.entries) ? state.entries.length : 0;
   const xLen = Array.isArray(state.expenses) ? state.expenses.length : 0;
+  const pLen = Array.isArray(state.projectedRevenues) ? state.projectedRevenues.length : 0;
   const odo = Number(state.fuelConfig?.odometerBaseKm || 0);
   const customBike =
     state.fuelConfig?.bikeModelName &&
@@ -560,7 +754,7 @@ function hasPopulatedData(state?: Partial<LocalRoomDatabaseState> | null): boole
     state.maintenanceItems.some(
       m => Number(m.lastChangeKm) > 0 || (Array.isArray(m.history) && m.history.length > 0)
     );
-  return eLen > 0 || xLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
+  return eLen > 0 || xLen > 0 || pLen > 0 || odo > 0 || Boolean(customBike) || Boolean(hasMaintChanges);
 }
 
 export async function runWorkManagerCloudSync(
@@ -602,16 +796,55 @@ export async function runWorkManagerCloudSync(
 
   // Proteção anti-sobrescrita: um aparelho com a lista padrão (zerada) nunca pode apagar
   // as despesas da casa / da moto que o usuário já configurou e que estão salvas no banco.
-  let effectiveHousehold: HouseholdExpenseItem[] = state.householdExpenses || [];
-  let effectiveBike: BikeExpenseItem[] = state.bikeExpenses || [];
+  let effectiveDeletedHouseholdIds: string[] = Array.isArray(state.deletedHouseholdExpenseIds)
+    ? state.deletedHouseholdExpenseIds.map(String)
+    : [];
+  let effectiveDeletedBikeIds: string[] = Array.isArray(state.deletedBikeExpenseIds)
+    ? state.deletedBikeExpenseIds.map(String)
+    : [];
+  let effectiveDeletedProjectedIds: string[] = Array.isArray(state.deletedProjectedRevenueIds)
+    ? state.deletedProjectedRevenueIds.map(String)
+    : [];
+  let effectiveHousehold: HouseholdExpenseItem[] = (state.householdExpenses || []).filter(
+    h => h && !effectiveDeletedHouseholdIds.includes(String(h.id))
+  );
+  let effectiveBike: BikeExpenseItem[] = (state.bikeExpenses || []).filter(
+    b => b && !effectiveDeletedBikeIds.includes(String(b.id))
+  );
+  let effectiveProjectedRevenues: ProjectedRevenueItem[] = (state.projectedRevenues || []).filter(
+    p => p && !effectiveDeletedProjectedIds.includes(String(p.id))
+  );
   const syncClient = getSupabaseClient();
   if (syncClient) {
     const cloudLists = await fetchCloudExpenseConfigLists(syncClient, deviceId);
-    if (!isHouseholdListCustomized(effectiveHousehold) && isHouseholdListCustomized(cloudLists.household)) {
-      effectiveHousehold = cloudLists.household as HouseholdExpenseItem[];
+    if (
+      !isHouseholdListCustomized(effectiveHousehold, effectiveDeletedHouseholdIds) &&
+      isHouseholdListCustomized(cloudLists.household, cloudLists.deletedHouseholdIds)
+    ) {
+      effectiveHousehold = (cloudLists.household || []) as HouseholdExpenseItem[];
+      if (cloudLists.deletedHouseholdIds) {
+        effectiveDeletedHouseholdIds = cloudLists.deletedHouseholdIds;
+      }
     }
-    if (!isBikeListCustomized(effectiveBike) && isBikeListCustomized(cloudLists.bike)) {
-      effectiveBike = cloudLists.bike as BikeExpenseItem[];
+    if (
+      !isBikeListCustomized(effectiveBike, effectiveDeletedBikeIds) &&
+      isBikeListCustomized(cloudLists.bike, cloudLists.deletedBikeIds)
+    ) {
+      effectiveBike = (cloudLists.bike || []) as BikeExpenseItem[];
+      if (cloudLists.deletedBikeIds) {
+        effectiveDeletedBikeIds = cloudLists.deletedBikeIds;
+      }
+    }
+    if (
+      effectiveProjectedRevenues.length === 0 &&
+      effectiveDeletedProjectedIds.length === 0 &&
+      Array.isArray(cloudLists.projectedRevenues) &&
+      cloudLists.projectedRevenues.length > 0
+    ) {
+      effectiveProjectedRevenues = cloudLists.projectedRevenues;
+      if (cloudLists.deletedProjectedIds) {
+        effectiveDeletedProjectedIds = cloudLists.deletedProjectedIds;
+      }
     }
   }
 
@@ -639,9 +872,12 @@ export async function runWorkManagerCloudSync(
     deletedAppIds: state.deletedAppIds || [],
     deletedEntryIds: state.deletedEntryIds || [],
     deletedExpenseIds: state.deletedExpenseIds || [],
+    deletedBikeExpenseIds: effectiveDeletedBikeIds,
+    deletedHouseholdExpenseIds: effectiveDeletedHouseholdIds,
+    deletedProjectedRevenueIds: effectiveDeletedProjectedIds,
     householdExpenses: effectiveHousehold,
     bikeExpenses: effectiveBike,
-    projectedRevenues: state.projectedRevenues || [],
+    projectedRevenues: effectiveProjectedRevenues,
     lastSyncedAt: isoNow,
   };
 
@@ -763,6 +999,7 @@ export async function runWorkManagerCloudSync(
         financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
         householdExpenses: effectiveHousehold,
         bikeExpenses: effectiveBike,
+        projectedRevenues: effectiveProjectedRevenues,
         cloudSnapshot,
         ...(pilotProfileObj ? { pilotProfile: pilotProfileObj } : {}),
       };
@@ -1113,30 +1350,79 @@ function combineSnapshotsList(
 
   const best = sorted[0];
 
-  const bestHousehold =
-    valid.find(
-      s =>
-        Array.isArray(s.householdExpenses) &&
-        s.householdExpenses.some(h => Number(h.monthlyAmount) > 0 || (h as any).isCustomEdited)
-    )?.householdExpenses ||
-    valid.find(s => Array.isArray(s.householdExpenses) && s.householdExpenses.length > 0)?.householdExpenses;
+  const collectDeletedConfigIds = <T extends { id: string }>(
+    getDeleted: (s: Partial<LocalRoomDatabaseState>) => string[] | undefined,
+    getList: (s: Partial<LocalRoomDatabaseState>) => T[] | undefined
+  ): Set<string> => {
+    const delSet = new Set<string>();
+    for (const s of sorted) {
+      const sTime = s.lastSyncedAt ? new Date(s.lastSyncedAt).getTime() : 0;
+      for (const rawId of getDeleted(s) || []) {
+        const id = String(rawId);
+        // Only suppress deletion if a strictly newer snapshot explicitly re-added the item
+        const restoredNewer = sorted.some(newer => {
+          const nTime = newer.lastSyncedAt ? new Date(newer.lastSyncedAt).getTime() : 0;
+          if (nTime <= sTime) return false;
+          const nDeleted = new Set((getDeleted(newer) || []).map(String));
+          return !nDeleted.has(id) && (getList(newer) || []).some(item => String(item.id) === id);
+        });
+        if (!restoredNewer) delSet.add(id);
+      }
+    }
+    return delSet;
+  };
 
-  const bestBike =
-    valid.find(
-      s =>
-        Array.isArray(s.bikeExpenses) &&
-        s.bikeExpenses.some(b => Number(b.monthlyAmount) > 0 || (b as any).isCustomEdited)
-    )?.bikeExpenses ||
-    valid.find(s => Array.isArray(s.bikeExpenses) && s.bikeExpenses.length > 0)?.bikeExpenses;
+  const delHousehold = collectDeletedConfigIds(
+    s => s.deletedHouseholdExpenseIds,
+    s => s.householdExpenses
+  );
+  const delBike = collectDeletedConfigIds(
+    s => s.deletedBikeExpenseIds,
+    s => s.bikeExpenses
+  );
+  const delProjected = collectDeletedConfigIds(
+    s => s.deletedProjectedRevenueIds,
+    s => s.projectedRevenues
+  );
+
+  const projMap = new Map<string, ProjectedRevenueItem>();
+  for (const s of sorted) {
+    for (const p of s.projectedRevenues || []) {
+      if (p && !delProjected.has(String(p.id)) && !projMap.has(String(p.id))) {
+        projMap.set(String(p.id), p);
+      }
+    }
+  }
+
+  const rawBestHousehold =
+    sorted.find(s => isHouseholdListCustomized(s.householdExpenses, s.deletedHouseholdExpenseIds))
+      ?.householdExpenses ||
+    sorted.find(s => Array.isArray(s.householdExpenses) && s.householdExpenses.length > 0)?.householdExpenses ||
+    best.householdExpenses;
+  const bestHousehold = Array.isArray(rawBestHousehold)
+    ? rawBestHousehold.filter(h => h && !delHousehold.has(String(h.id)))
+    : undefined;
+
+  const rawBestBike =
+    sorted.find(s => isBikeListCustomized(s.bikeExpenses, s.deletedBikeExpenseIds))?.bikeExpenses ||
+    sorted.find(s => Array.isArray(s.bikeExpenses) && s.bikeExpenses.length > 0)?.bikeExpenses ||
+    best.bikeExpenses;
+  const bestBike = Array.isArray(rawBestBike)
+    ? rawBestBike.filter(b => b && !delBike.has(String(b.id)))
+    : undefined;
 
   return {
     ...best,
     entries: Array.from(combinedEntries.values()),
     expenses: Array.from(combinedExpenses.values()),
-    householdExpenses: bestHousehold || best.householdExpenses,
-    bikeExpenses: bestBike || best.bikeExpenses,
+    householdExpenses: bestHousehold,
+    bikeExpenses: bestBike,
+    projectedRevenues: Array.from(projMap.values()),
     deletedEntryIds: Array.from(delEntries),
     deletedExpenseIds: Array.from(delExpenses),
+    deletedBikeExpenseIds: Array.from(delBike),
+    deletedHouseholdExpenseIds: Array.from(delHousehold),
+    deletedProjectedRevenueIds: Array.from(delProjected),
   };
 }
 
@@ -1295,6 +1581,15 @@ export async function fetchRemoteCloudData(
         const deletedExpenseSet = new Set<number>(
           Array.isArray(snap.deletedExpenseIds) ? snap.deletedExpenseIds.map(Number) : []
         );
+        const deletedBikeExpenseSet = new Set<string>(
+          Array.isArray(snap.deletedBikeExpenseIds) ? snap.deletedBikeExpenseIds.map(String) : []
+        );
+        const deletedHouseholdExpenseSet = new Set<string>(
+          Array.isArray(snap.deletedHouseholdExpenseIds) ? snap.deletedHouseholdExpenseIds.map(String) : []
+        );
+        const deletedProjectedRevenueSet = new Set<string>(
+          Array.isArray(snap.deletedProjectedRevenueIds) ? snap.deletedProjectedRevenueIds.map(String) : []
+        );
 
         const entryMap = new Map<number, RideEntry>();
         for (const e of tableEntries) {
@@ -1419,28 +1714,46 @@ export async function fetchRemoteCloudData(
             odometerBaseKm: Number(m.odometerBaseKm) || 0,
           },
           financialPlan: m.financialPlan || snap.financialPlan || DEFAULT_FINANCIAL_PLAN,
-          householdExpenses:
-            Array.isArray(snap.householdExpenses) && snap.householdExpenses.length > 0
-              ? snap.householdExpenses
-              : Array.isArray(m.householdExpenses) && m.householdExpenses.length > 0
-              ? m.householdExpenses
-              : Array.isArray(settings?.custom_household_expenses)
-              ? settings.custom_household_expenses
-              : undefined,
-          bikeExpenses:
-            Array.isArray(snap.bikeExpenses) && snap.bikeExpenses.length > 0
-              ? snap.bikeExpenses
-              : Array.isArray(m.bikeExpenses) && m.bikeExpenses.length > 0
-              ? m.bikeExpenses
-              : Array.isArray(settings?.custom_bike_expenses)
-              ? settings.custom_bike_expenses
-              : undefined,
-          projectedRevenues:
-            Array.isArray(snap.projectedRevenues)
+          householdExpenses: (() => {
+            const raw =
+              Array.isArray(snap.householdExpenses) &&
+              (snap.householdExpenses.length > 0 || deletedHouseholdExpenseSet.size > 0)
+                ? snap.householdExpenses
+                : Array.isArray(m.householdExpenses) &&
+                  (m.householdExpenses.length > 0 || deletedHouseholdExpenseSet.size > 0)
+                ? m.householdExpenses
+                : Array.isArray(settings?.custom_household_expenses)
+                ? settings.custom_household_expenses
+                : undefined;
+            return Array.isArray(raw)
+              ? raw.filter((h: HouseholdExpenseItem) => h && !deletedHouseholdExpenseSet.has(String(h.id)))
+              : undefined;
+          })(),
+          bikeExpenses: (() => {
+            const raw =
+              Array.isArray(snap.bikeExpenses) &&
+              (snap.bikeExpenses.length > 0 || deletedBikeExpenseSet.size > 0)
+                ? snap.bikeExpenses
+                : Array.isArray(m.bikeExpenses) &&
+                  (m.bikeExpenses.length > 0 || deletedBikeExpenseSet.size > 0)
+                ? m.bikeExpenses
+                : Array.isArray(settings?.custom_bike_expenses)
+                ? settings.custom_bike_expenses
+                : undefined;
+            return Array.isArray(raw)
+              ? raw.filter((b: BikeExpenseItem) => b && !deletedBikeExpenseSet.has(String(b.id)))
+              : undefined;
+          })(),
+          projectedRevenues: (() => {
+            const raw = Array.isArray(snap.projectedRevenues)
               ? snap.projectedRevenues
               : Array.isArray(m.projectedRevenues)
               ? m.projectedRevenues
-              : [],
+              : [];
+            return raw.filter(
+              (p: ProjectedRevenueItem) => p && !deletedProjectedRevenueSet.has(String(p.id))
+            );
+          })(),
           customApps: Array.isArray(settings?.custom_apps)
             ? settings.custom_apps
             : Array.isArray(snap.customApps)
@@ -1458,6 +1771,9 @@ export async function fetchRemoteCloudData(
           deletedAppIds: Array.isArray(snap.deletedAppIds) ? snap.deletedAppIds : [],
           deletedEntryIds: Array.from(deletedEntrySet),
           deletedExpenseIds: Array.from(deletedExpenseSet),
+          deletedBikeExpenseIds: Array.from(deletedBikeExpenseSet),
+          deletedHouseholdExpenseIds: Array.from(deletedHouseholdExpenseSet),
+          deletedProjectedRevenueIds: Array.from(deletedProjectedRevenueSet),
           lastSyncedAt: snap.lastSyncedAt || settings?.updated_at,
         });
       }
@@ -1497,8 +1813,29 @@ export async function uploadLocalDataToCloud(
   const deletedExpenseIds = Array.from(
     new Set<number>([...(localState.deletedExpenseIds || []), ...(remote?.deletedExpenseIds || [])])
   );
+  const deletedBikeExpenseIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedBikeExpenseIds || []).map(String),
+      ...(remote?.deletedBikeExpenseIds || []).map(String),
+    ])
+  );
+  const deletedHouseholdExpenseIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedHouseholdExpenseIds || []).map(String),
+      ...(remote?.deletedHouseholdExpenseIds || []).map(String),
+    ])
+  );
+  const deletedProjectedRevenueIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedProjectedRevenueIds || []).map(String),
+      ...(remote?.deletedProjectedRevenueIds || []).map(String),
+    ])
+  );
   const delEntrySet = new Set(deletedEntryIds);
   const delExpenseSet = new Set(deletedExpenseIds);
+  const delBikeSet = new Set(deletedBikeExpenseIds);
+  const delHouseholdSet = new Set(deletedHouseholdExpenseIds);
+  const delProjectedSet = new Set(deletedProjectedRevenueIds);
 
   // Preserve remote entries/expenses that aren't deleted, but local entries/expenses override on same ID
   const entriesMap = new Map<number, RideEntry>();
@@ -1531,19 +1868,44 @@ export async function uploadLocalDataToCloud(
     (a, b) => b.date.localeCompare(a.date) || b.id - a.id
   );
 
-  const localHasCustomHousehold = isHouseholdListCustomized(localState.householdExpenses);
-  const finalHouseholdExpenses = localHasCustomHousehold
-    ? localState.householdExpenses
-    : Array.isArray(remote?.householdExpenses) && remote.householdExpenses.length > 0
+  const localHasCustomHousehold = isHouseholdListCustomized(
+    localState.householdExpenses,
+    localState.deletedHouseholdExpenseIds
+  );
+  const baseHouseholdExpenses = localHasCustomHousehold
+    ? localState.householdExpenses || []
+    : Array.isArray(remote?.householdExpenses) &&
+      (remote.householdExpenses.length > 0 || (remote.deletedHouseholdExpenseIds?.length ?? 0) > 0)
     ? remote.householdExpenses
     : localState.householdExpenses || DEFAULT_HOUSEHOLD_EXPENSES;
+  const finalHouseholdExpenses = baseHouseholdExpenses.filter(
+    h => h && !delHouseholdSet.has(String(h.id))
+  );
 
-  const localHasCustomBike = isBikeListCustomized(localState.bikeExpenses);
-  const finalBikeExpenses = localHasCustomBike
-    ? localState.bikeExpenses
-    : Array.isArray(remote?.bikeExpenses) && remote.bikeExpenses.length > 0
+  const localHasCustomBike = isBikeListCustomized(
+    localState.bikeExpenses,
+    localState.deletedBikeExpenseIds
+  );
+  const baseBikeExpenses = localHasCustomBike
+    ? localState.bikeExpenses || []
+    : Array.isArray(remote?.bikeExpenses) &&
+      (remote.bikeExpenses.length > 0 || (remote.deletedBikeExpenseIds?.length ?? 0) > 0)
     ? remote.bikeExpenses
     : localState.bikeExpenses || DEFAULT_BIKE_EXPENSES;
+  const finalBikeExpenses = baseBikeExpenses.filter(b => b && !delBikeSet.has(String(b.id)));
+
+  const projUploadMap = new Map<string, ProjectedRevenueItem>();
+  for (const p of remote?.projectedRevenues || []) {
+    if (p && !delProjectedSet.has(String(p.id))) {
+      projUploadMap.set(String(p.id), p);
+    }
+  }
+  for (const p of localState.projectedRevenues || []) {
+    if (p && !delProjectedSet.has(String(p.id))) {
+      projUploadMap.set(String(p.id), p);
+    }
+  }
+  const mergedUploadProjected = Array.from(projUploadMap.values());
 
   // Local maintenance items and local fuelConfig / goals take priority when sending to cloud
   const stateToPush: LocalRoomDatabaseState = {
@@ -1552,8 +1914,12 @@ export async function uploadLocalDataToCloud(
     expenses: mergedExpenses,
     householdExpenses: finalHouseholdExpenses,
     bikeExpenses: finalBikeExpenses,
+    projectedRevenues: mergedUploadProjected,
     deletedEntryIds,
     deletedExpenseIds,
+    deletedBikeExpenseIds,
+    deletedHouseholdExpenseIds,
+    deletedProjectedRevenueIds,
     lastSyncedAt: isoNow,
   };
 
@@ -1621,8 +1987,29 @@ export async function downloadCloudDataToLocal(
   const deletedExpenseIds = Array.from(
     new Set<number>([...(localState.deletedExpenseIds || []), ...(remote.deletedExpenseIds || [])])
   );
+  const deletedBikeExpenseIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedBikeExpenseIds || []).map(String),
+      ...(remote.deletedBikeExpenseIds || []).map(String),
+    ])
+  );
+  const deletedHouseholdExpenseIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedHouseholdExpenseIds || []).map(String),
+      ...(remote.deletedHouseholdExpenseIds || []).map(String),
+    ])
+  );
+  const deletedProjectedRevenueIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedProjectedRevenueIds || []).map(String),
+      ...(remote.deletedProjectedRevenueIds || []).map(String),
+    ])
+  );
   const delEntrySet = new Set(deletedEntryIds);
   const delExpenseSet = new Set(deletedExpenseIds);
+  const delBikeSet = new Set(deletedBikeExpenseIds);
+  const delHouseholdSet = new Set(deletedHouseholdExpenseIds);
+  const delProjectedSet = new Set(deletedProjectedRevenueIds);
 
   // Merge Entries (Local first, then Remote so Remote updates win when downloading from cloud)
   const entriesMap = new Map<number, RideEntry>();
@@ -1716,14 +2103,39 @@ export async function downloadCloudDataToLocal(
     if (s && s.id) shiftMap.set(s.id, s);
   }
 
-  // Merge householdExpenses (Remote wins when downloading, combining with local items)
-  const mergedHouseholdExpenses: HouseholdExpenseItem[] = (() => {
-    const remoteList = Array.isArray(remote.householdExpenses) ? remote.householdExpenses : [];
-    const localList = Array.isArray(localState.householdExpenses) ? localState.householdExpenses : [];
-    if (remoteList.length === 0) return localList.length > 0 ? localList : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
+  // Shared helper to merge household/bike fixed expense lists while honoring explicit deletions
+  const mergeExpenseConfigList = <
+    T extends {
+      id: string;
+      monthlyAmount: number;
+      totalCost?: number;
+      isActive?: boolean;
+      isCustomEdited?: boolean;
+    }
+  >(
+    localRaw: T[] | undefined,
+    remoteRaw: T[] | undefined,
+    deletedSet: Set<string>,
+    defaults: T[]
+  ): T[] => {
+    const hasAnyArray = Array.isArray(localRaw) || Array.isArray(remoteRaw);
+    const localList = Array.isArray(localRaw)
+      ? localRaw.filter(i => i && !deletedSet.has(String(i.id)))
+      : [];
+    const remoteList = Array.isArray(remoteRaw)
+      ? remoteRaw.filter(i => i && !deletedSet.has(String(i.id)))
+      : [];
+
+    if (localList.length === 0 && remoteList.length === 0) {
+      if (deletedSet.size > 0 || hasAnyArray) {
+        return [];
+      }
+      return defaults.map(d => ({ ...d }));
+    }
+    if (remoteList.length === 0) return localList;
     if (localList.length === 0) return remoteList;
 
-    const map = new Map<string, HouseholdExpenseItem>();
+    const map = new Map<string, T>();
     for (const l of localList) map.set(l.id, l);
     for (const r of remoteList) {
       const existing = map.get(r.id);
@@ -1741,34 +2153,37 @@ export async function downloadCloudDataToLocal(
       }
     }
     return Array.from(map.values());
-  })();
+  };
 
-  // Merge bikeExpenses (Remote wins when downloading)
-  const mergedBikeExpenses: BikeExpenseItem[] = (() => {
-    const remoteList = Array.isArray(remote.bikeExpenses) ? remote.bikeExpenses : [];
-    const localList = Array.isArray(localState.bikeExpenses) ? localState.bikeExpenses : [];
-    if (remoteList.length === 0) return localList.length > 0 ? localList : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
-    if (localList.length === 0) return remoteList;
+  // Merge householdExpenses (Remote wins when downloading, honoring deletedHouseholdExpenseIds)
+  const mergedHouseholdExpenses: HouseholdExpenseItem[] = mergeExpenseConfigList(
+    localState.householdExpenses,
+    remote.householdExpenses,
+    delHouseholdSet,
+    DEFAULT_HOUSEHOLD_EXPENSES
+  );
 
-    const map = new Map<string, BikeExpenseItem>();
-    for (const l of localList) map.set(l.id, l);
-    for (const r of remoteList) {
-      const existing = map.get(r.id);
-      if (!existing) {
-        map.set(r.id, r);
-      } else {
-        map.set(r.id, {
-          ...existing,
-          ...r,
-          monthlyAmount: Number(r.monthlyAmount) > 0 ? Number(r.monthlyAmount) : Number(existing.monthlyAmount) || 0,
-          totalCost: Number(r.totalCost) > 0 ? Number(r.totalCost) : Number(existing.totalCost) || 0,
-          isActive: r.isActive !== undefined ? r.isActive : existing.isActive,
-          isCustomEdited: r.isCustomEdited ?? existing.isCustomEdited,
-        });
-      }
+  // Merge bikeExpenses (Remote wins when downloading, honoring deletedBikeExpenseIds)
+  const mergedBikeExpenses: BikeExpenseItem[] = mergeExpenseConfigList(
+    localState.bikeExpenses,
+    remote.bikeExpenses,
+    delBikeSet,
+    DEFAULT_BIKE_EXPENSES
+  );
+
+  // Merge projectedRevenues (Local first, then Remote so Remote updates win when downloading, honoring deletions)
+  const projDownloadMap = new Map<string, ProjectedRevenueItem>();
+  for (const p of localState.projectedRevenues || []) {
+    if (p && !delProjectedSet.has(String(p.id))) {
+      projDownloadMap.set(String(p.id), p);
     }
-    return Array.from(map.values());
-  })();
+  }
+  for (const p of remote.projectedRevenues || []) {
+    if (p && !delProjectedSet.has(String(p.id))) {
+      projDownloadMap.set(String(p.id), p);
+    }
+  }
+  const mergedProjectedRevenues = Array.from(projDownloadMap.values());
 
   const mergedState: LocalRoomDatabaseState = {
     ...localState,
@@ -1776,6 +2191,7 @@ export async function downloadCloudDataToLocal(
     expenses: mergedExpenses,
     householdExpenses: mergedHouseholdExpenses,
     bikeExpenses: mergedBikeExpenses,
+    projectedRevenues: mergedProjectedRevenues,
     maintenanceItems: mergedMaintItems,
     dailyGoal: Number(remote.dailyGoal ?? localState.dailyGoal ?? 0),
     weeklyGoal: Number(remote.weeklyGoal ?? localState.weeklyGoal ?? 0),
@@ -1802,6 +2218,9 @@ export async function downloadCloudDataToLocal(
     shiftOverrides: { ...(localState.shiftOverrides || {}), ...(remote.shiftOverrides || {}) },
     deletedEntryIds,
     deletedExpenseIds,
+    deletedBikeExpenseIds,
+    deletedHouseholdExpenseIds,
+    deletedProjectedRevenueIds,
     lastSyncedAt: isoNow,
   };
 

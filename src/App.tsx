@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Home,
   Wrench,
@@ -104,6 +104,7 @@ import {
   HouseholdCategory,
   DEFAULT_HOUSEHOLD_EXPENSES,
   ProjectedRevenueItem,
+  computeProjectedRevenueBalance,
   ExpenseRecurrenceType,
   AppDefinition,
   CategoryDefinition,
@@ -259,6 +260,46 @@ const FreeNumberInput: React.FC<FreeNumberInputProps> = ({
   );
 };
 
+interface AnimatedNumberProps {
+  value: number;
+  formatter?: (val: number) => string;
+  duration?: number;
+  className?: string;
+}
+
+const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
+  value,
+  formatter,
+  duration = 650,
+  className = '',
+}) => {
+  const [displayVal, setDisplayVal] = useState<number>(0);
+
+  useEffect(() => {
+    const target = Number.isFinite(value) ? value : 0;
+    let startTimestamp: number | null = null;
+    let rafId: number;
+
+    const step = (timestamp: number) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const elapsed = timestamp - startTimestamp;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - progress, 4);
+      const current = target * eased;
+      setDisplayVal(progress >= 1 ? target : current);
+      if (progress < 1) {
+        rafId = window.requestAnimationFrame(step);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [value, duration]);
+
+  const formatted = formatter ? formatter(displayVal) : displayVal.toLocaleString('pt-BR');
+  return <span className={`dashboard-number-anim tabular-nums ${className}`}>{formatted}</span>;
+};
+
 const LEVEL_NAMES = [
   'Estreante',
   'Rota Conhecida',
@@ -382,6 +423,9 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     deletedAppIds: [],
     deletedEntryIds: [],
     deletedExpenseIds: [],
+    deletedBikeExpenseIds: [],
+    deletedHouseholdExpenseIds: [],
+    deletedProjectedRevenueIds: [],
   };
 }
 
@@ -406,9 +450,29 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         bikeModelName: user?.bikeModel || DEFAULT_FUEL_CONFIG.bikeModelName,
       };
 
+      const deletedBikeIds: string[] = Array.isArray(parsed.deletedBikeExpenseIds)
+        ? parsed.deletedBikeExpenseIds.map(String)
+        : [];
+      const deletedHouseholdIds: string[] = Array.isArray(parsed.deletedHouseholdExpenseIds)
+        ? parsed.deletedHouseholdExpenseIds.map(String)
+        : [];
+      const deletedBikeSet = new Set(deletedBikeIds);
+      const deletedHouseholdSet = new Set(deletedHouseholdIds);
+      const deletedProjectedIds: string[] = Array.isArray(parsed.deletedProjectedRevenueIds)
+        ? parsed.deletedProjectedRevenueIds.map(String)
+        : [];
+      const deletedProjectedSet = new Set(deletedProjectedIds);
+      const projectedList: ProjectedRevenueItem[] = Array.isArray(parsed.projectedRevenues)
+        ? parsed.projectedRevenues.filter(
+            (p: ProjectedRevenueItem) => p && !deletedProjectedSet.has(String(p.id))
+          )
+        : [];
+
       const bikeExpensesList: BikeExpenseItem[] =
-        Array.isArray(parsed.bikeExpenses) && parsed.bikeExpenses.length > 0
-          ? parsed.bikeExpenses.map((item: BikeExpenseItem) => {
+        Array.isArray(parsed.bikeExpenses)
+          ? parsed.bikeExpenses
+              .filter((item: BikeExpenseItem) => item && !deletedBikeSet.has(String(item.id)))
+              .map((item: BikeExpenseItem) => {
               const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
               let merged: BikeExpenseItem = defaultMatch
                 ? {
@@ -453,12 +517,16 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
 
               return merged;
             })
-          : DEFAULT_BIKE_EXPENSES.map(item => ({ ...item }));
+          : DEFAULT_BIKE_EXPENSES.filter(item => !deletedBikeSet.has(String(item.id))).map(item => ({ ...item }));
 
       const houseExpenses: HouseholdExpenseItem[] =
         Array.isArray(parsed.householdExpenses)
-          ? parsed.householdExpenses
-          : DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item }));
+          ? parsed.householdExpenses.filter(
+              (item: HouseholdExpenseItem) => item && !deletedHouseholdSet.has(String(item.id))
+            )
+          : DEFAULT_HOUSEHOLD_EXPENSES.filter(item => !deletedHouseholdSet.has(String(item.id))).map(item => ({
+              ...item,
+            }));
 
       const cleanEntries = Array.isArray(parsed.entries)
         ? parsed.entries
@@ -496,7 +564,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         },
         bikeExpenses: bikeExpensesList,
         householdExpenses: houseExpenses,
-        projectedRevenues: Array.isArray(parsed.projectedRevenues) ? parsed.projectedRevenues : [],
+        projectedRevenues: projectedList,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
         appOverrides: parsed.appOverrides || {},
@@ -506,6 +574,11 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         deletedAppIds: Array.isArray(parsed.deletedAppIds) ? parsed.deletedAppIds : [],
         deletedEntryIds: Array.isArray(parsed.deletedEntryIds) ? parsed.deletedEntryIds : [],
         deletedExpenseIds: Array.isArray(parsed.deletedExpenseIds) ? parsed.deletedExpenseIds : [],
+        deletedBikeExpenseIds: deletedBikeIds,
+        deletedHouseholdExpenseIds: deletedHouseholdIds,
+        deletedProjectedRevenueIds: Array.isArray(parsed.deletedProjectedRevenueIds)
+          ? parsed.deletedProjectedRevenueIds.map(String)
+          : [],
         lastSyncedAt: parsed.lastSyncedAt,
       };
     }
@@ -749,7 +822,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
       detailNote: `Previsão ${mName}`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -825,7 +898,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
       detailNote: `A cada ${item.intervalDays} dias`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -883,7 +956,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: item.nextDueDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:text-slate-300 dark:border-slate-700/60',
+      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
       detailNote: 'Data específica',
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -942,7 +1015,7 @@ function getExpenseDueInfo(
     daysRemaining: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     status: 'future',
     targetDateStr: today,
-    badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700/40',
+    badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
     detailNote: `Todo dia ${dueDay}`,
     timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     paidAmount: 0,
@@ -1068,12 +1141,11 @@ export default function App() {
 
   // Estados de Faturamento Futuro Previsto
   const [showProjectedModal, setShowProjectedModal] = useState<boolean>(false);
+  const [showProjectedCalendarModal, setShowProjectedCalendarModal] = useState<boolean>(false);
+  const [projectedCalendarMonth, setProjectedCalendarMonth] = useState<string>(() => todayStr().slice(0, 7));
+  const [projectedSelectedDates, setProjectedSelectedDates] = useState<string[]>([]);
   const [editingProjectedId, setEditingProjectedId] = useState<string | null>(null);
-  const [projectedDate, setProjectedDate] = useState<string>(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().slice(0, 10);
-  });
+  const [projectedDailyRate, setProjectedDailyRate] = useState<string>('');
   const [projectedAmount, setProjectedAmount] = useState<string>('');
   const [projectedDescription, setProjectedDescription] = useState<string>('');
   const [projectedApp, setProjectedApp] = useState<string>('Particular');
@@ -1744,6 +1816,15 @@ export default function App() {
     dbState.expenses.forEach(ex => {
       if (ex.date && ex.date.length >= 7) set.add(ex.date.slice(0, 7));
     });
+    (dbState.projectedRevenues || []).forEach(p => {
+      if (p.date && p.date.length >= 7) set.add(p.date.slice(0, 7));
+      if (p.startDate && p.startDate.length >= 7) set.add(p.startDate.slice(0, 7));
+      if (Array.isArray(p.selectedDates)) {
+        p.selectedDates.forEach(d => {
+          if (d && d.length >= 7) set.add(d.slice(0, 7));
+        });
+      }
+    });
     // Adiciona os próximos 6 meses futuros e os últimos 12 meses anteriores
     const [cy, cm] = currentYM.split('-').map(Number);
     for (let i = -6; i <= 12; i++) {
@@ -1752,7 +1833,7 @@ export default function App() {
       set.add(ym);
     }
     return Array.from(set).sort().reverse();
-  }, [dbState.entries, dbState.expenses]);
+  }, [dbState.entries, dbState.expenses, dbState.projectedRevenues]);
 
   // Finanças completas do mês selecionado na Central de Finanças
   const selectedMonthFinancials = useMemo(() => {
@@ -1800,15 +1881,54 @@ export default function App() {
     const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const isCurrentMonth = selectedFinanceMonth === currentYM;
 
-    // Faturamento Futuro Previsto do mês selecionado
+    // Faturamento Futuro Previsto do mês selecionado (com débito diário automático conforme os dias passam)
+    const today = todayStr();
     const rawProjectedList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
       ? dbState.projectedRevenues
       : [];
+    const doesProjectedMatchMonth = (p: ProjectedRevenueItem, ym: string) => {
+      if (Array.isArray(p.selectedDates) && p.selectedDates.length > 0) {
+        return p.selectedDates.some(d => d && d.startsWith(ym));
+      }
+      if (p.date && p.date.startsWith(ym)) return true;
+      if (p.startDate && p.startDate.startsWith(ym)) return true;
+      if (p.startDate && p.date && p.startDate.length >= 7 && p.date.length >= 7) {
+        return p.startDate.slice(0, 7) <= ym && p.date.slice(0, 7) >= ym;
+      }
+      return false;
+    };
     const mProjected = rawProjectedList.filter(
-      p => p.status !== 'cancelled' && p.date && p.date.startsWith(selectedFinanceMonth)
+      p => p.status !== 'cancelled' && doesProjectedMatchMonth(p, selectedFinanceMonth)
     );
     const mProjectedPending = mProjected.filter(p => p.status === 'pending');
-    const projectedPendingRevenue = mProjectedPending.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const projectedBalances = mProjectedPending.map(p => computeProjectedRevenueBalance(p, today));
+    const projectedPendingRevenue = projectedBalances.reduce((s, b) => s + b.remainingAmount, 0);
+    const projectedInitialRevenue = projectedBalances.reduce((s, b) => s + b.totalAmount, 0);
+    const projectedDebitedRevenue = projectedBalances.reduce((s, b) => s + b.debitedAmount, 0);
+
+    const allPendingProjected = rawProjectedList.filter(p => p.status === 'pending');
+    const allProjectedBalances = allPendingProjected.map(p => computeProjectedRevenueBalance(p, today));
+    const allProjectedPendingRevenue = allProjectedBalances.reduce((s, b) => s + b.remainingAmount, 0);
+    const allProjectedInitialRevenue = allProjectedBalances.reduce((s, b) => s + b.totalAmount, 0);
+    const allProjectedDebitedRevenue = allProjectedBalances.reduce((s, b) => s + b.debitedAmount, 0);
+    const firstOtherProjectedMonth =
+      allPendingProjected.find(p => !doesProjectedMatchMonth(p, selectedFinanceMonth))?.date?.slice(0, 7) ||
+      null;
+
+    // Média diária real do histórico de corridas (para sugestão no lançamento futuro)
+    const dailyTotalsMap = new Map<string, number>();
+    dbState.entries.forEach(e => {
+      if (!e.isCancelled && e.date) {
+        dailyTotalsMap.set(e.date, (dailyTotalsMap.get(e.date) || 0) + (Number(e.revenue) || 0));
+      }
+    });
+    const historicalDailyAvg =
+      dailyTotalsMap.size > 0
+        ? Math.round(
+            (Array.from(dailyTotalsMap.values()).reduce((a, b) => a + b, 0) / dailyTotalsMap.size) * 100
+          ) / 100
+        : 0;
+
     const projectedTotalRevenue = totalRevenue + projectedPendingRevenue;
     const projectedBalance = projectedTotalRevenue - totalExpenses;
 
@@ -1817,6 +1937,14 @@ export default function App() {
       expenses: mExpenses,
       projectedList: mProjected,
       projectedPendingRevenue,
+      projectedInitialRevenue,
+      projectedDebitedRevenue,
+      allProjectedPendingRevenue,
+      allProjectedInitialRevenue,
+      allProjectedDebitedRevenue,
+      allProjectedPendingCount: allPendingProjected.length,
+      firstOtherProjectedMonth,
+      historicalDailyAvg,
       projectedTotalRevenue,
       projectedBalance,
       totalRevenue,
@@ -2188,6 +2316,26 @@ export default function App() {
     }
   };
 
+  const duplicateMaintenanceCard = (item: MaintenanceItem) => {
+    const newId = 'maint_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const source = maintDraft && editingMaintId === item.id ? maintDraft : item;
+    const duplicatedItem: MaintenanceItem = {
+      ...source,
+      id: newId,
+      name: `${(source.name || item.name).trim()} (Cópia)`,
+      isDefault: false,
+      history: [],
+      updatedAt: Date.now(),
+    };
+    const updatedList = [...dbState.maintenanceItems, duplicatedItem];
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      maintenanceItems: updatedList,
+    });
+    setEditingMaintId(newId);
+    setMaintDraft({ ...duplicatedItem });
+  };
+
   // Maintenance Component Replacement History Pop-up Modal State
   const [selectedMaintHistoryId, setSelectedMaintHistoryId] = useState<string | null>(null);
   const [showAddMaintHistoryForm, setShowAddMaintHistoryForm] = useState<boolean>(false);
@@ -2398,7 +2546,7 @@ export default function App() {
     setShowNewBikeCatInput(false);
     setNewBikeCatName('');
     const rawList =
-      Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      Array.isArray(dbState.bikeExpenses)
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
     const rawItem = rawList.find(b => b.id === item.id) || item;
@@ -2435,7 +2583,7 @@ export default function App() {
   };
 
   const saveBikeExpense = () => {
-    const list = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+    const list = Array.isArray(dbState.bikeExpenses)
       ? [...dbState.bikeExpenses]
       : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
 
@@ -2540,6 +2688,7 @@ export default function App() {
     persistAndEnqueueWorkManager({
       ...dbState,
       bikeExpenses: list,
+      deletedBikeExpenseIds: (dbState.deletedBikeExpenseIds || []).filter(id => id !== sanitized.id),
       ...(planChanged ? { financialPlan: updatedPlan } : {}),
       ...(maintChanged ? { maintenanceItems: updatedMaintItems } : {}),
     });
@@ -2548,18 +2697,22 @@ export default function App() {
   };
 
   const deleteBikeExpense = (id: string) => {
-    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+    const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
     const list = currentList.filter(b => b.id !== id);
+    const nextDeletedIds = Array.from(
+      new Set([...(dbState.deletedBikeExpenseIds || []).map(String), String(id)])
+    );
     persistAndEnqueueWorkManager({
       ...dbState,
       bikeExpenses: list,
+      deletedBikeExpenseIds: nextDeletedIds,
     });
   };
 
   const toggleBikeExpense = (id: string) => {
-    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+    const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
     const list = currentList.map(b =>
@@ -2572,14 +2725,16 @@ export default function App() {
   };
 
   const resetDefaultBikeExpenses = () => {
+    const defaultIds = new Set(DEFAULT_BIKE_EXPENSES.map(b => b.id));
     persistAndEnqueueWorkManager({
       ...dbState,
       bikeExpenses: DEFAULT_BIKE_EXPENSES.map(b => ({ ...b })),
+      deletedBikeExpenseIds: (dbState.deletedBikeExpenseIds || []).filter(id => !defaultIds.has(String(id))),
     });
   };
 
   const duplicateBikeExpense = (item: BikeExpenseItem) => {
-    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+    const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
 
@@ -2602,7 +2757,7 @@ export default function App() {
   };
 
   const duplicateHouseholdExpense = (item: HouseholdExpenseItem) => {
-    const currentList = Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+    const currentList = Array.isArray(dbState.householdExpenses)
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
 
@@ -2648,7 +2803,7 @@ export default function App() {
 
   const toggleBikeExpensePaidStatus = (itemId: string, targetYM?: string) => {
     const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
-    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+    const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
 
@@ -2692,7 +2847,7 @@ export default function App() {
 
   const toggleHouseholdExpensePaidStatus = (itemId: string, targetYM?: string) => {
     const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
-    const currentList = Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+    const currentList = Array.isArray(dbState.householdExpenses)
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
 
@@ -2757,6 +2912,7 @@ export default function App() {
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
     setEntryModalFeedback(null);
+    setIsEntryModeDedicated(true);
     setShowEntryModal(true);
   };
 
@@ -2856,6 +3012,7 @@ export default function App() {
           : householdDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
       icon: householdDraft.icon?.trim() || '🏠',
       isActive: householdDraft.isActive !== false,
+      isCustomEdited: true,
     };
 
     const existingIndex = list.findIndex(h => h.id === sanitized.id);
@@ -2868,6 +3025,9 @@ export default function App() {
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: list,
+      deletedHouseholdExpenseIds: (dbState.deletedHouseholdExpenseIds || []).filter(
+        id => id !== sanitized.id
+      ),
     });
     setShowHouseholdModal(false);
     setEditingHouseholdItem(null);
@@ -2878,9 +3038,13 @@ export default function App() {
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
     const list = currentList.filter(h => h.id !== id);
+    const nextDeletedIds = Array.from(
+      new Set([...(dbState.deletedHouseholdExpenseIds || []).map(String), String(id)])
+    );
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: list,
+      deletedHouseholdExpenseIds: nextDeletedIds,
     });
   };
 
@@ -2898,59 +3062,106 @@ export default function App() {
   };
 
   const resetDefaultHouseholdExpenses = () => {
+    const defaultIds = new Set(DEFAULT_HOUSEHOLD_EXPENSES.map(h => h.id));
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h })),
+      deletedHouseholdExpenseIds: (dbState.deletedHouseholdExpenseIds || []).filter(
+        id => !defaultIds.has(String(id))
+      ),
     });
   };
 
   // ================= PROJEÇÃO / FATURAMENTO FUTURO PREVISTO HANDLERS =================
   const openNewProjectedRevenueModal = (defaultDate?: string) => {
     setEditingProjectedId(null);
-    const targetDate = defaultDate || (() => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      return tomorrow.toISOString().slice(0, 10);
-    })();
-    setProjectedDate(targetDate);
-    setProjectedAmount('');
+    const today = todayStr();
+    const initialDates = defaultDate ? [defaultDate] : [];
+    const suggestedDaily =
+      selectedMonthFinancials.historicalDailyAvg > 0
+        ? selectedMonthFinancials.historicalDailyAvg
+        : 0;
+    setProjectedCalendarMonth((defaultDate || today).slice(0, 7));
+    setProjectedSelectedDates(initialDates);
+    setProjectedDailyRate(suggestedDaily > 0 ? String(suggestedDaily) : '');
+    setProjectedAmount(
+      initialDates.length > 0 && suggestedDaily > 0
+        ? String(Math.round(initialDates.length * suggestedDaily * 100) / 100)
+        : ''
+    );
     setProjectedDescription('');
     setProjectedApp('Particular');
     setProjectedNotes('');
+    setShowProjectedCalendarModal(false);
     setShowProjectedModal(true);
   };
 
   const openEditProjectedRevenueModal = (item: ProjectedRevenueItem) => {
+    const bal = computeProjectedRevenueBalance(item, todayStr());
     setEditingProjectedId(item.id);
-    setProjectedDate(item.date);
+    const initialDates =
+      bal.selectedDates.length > 0
+        ? bal.selectedDates
+        : item.date
+        ? [item.date]
+        : [todayStr()];
+    setProjectedCalendarMonth((initialDates[0] || todayStr()).slice(0, 7));
+    setProjectedSelectedDates(initialDates);
+    setProjectedDailyRate(String(item.dailyRate || bal.dailyRate || item.amount));
     setProjectedAmount(String(item.amount));
     setProjectedDescription(item.description);
     setProjectedApp(item.app || 'Particular');
     setProjectedNotes(item.notes || '');
+    setShowProjectedCalendarModal(false);
     setShowProjectedModal(true);
   };
 
   const handleSaveProjectedRevenue = () => {
-    const val = parseFloat(projectedAmount.replace(',', '.'));
-    if (!val || val <= 0) {
-      alert('Por favor, informe um valor previsto válido maior que zero.');
+    const sortedDates = Array.from(
+      new Set(projectedSelectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+    ).sort();
+    if (sortedDates.length === 0) {
+      alert('Por favor, selecione no calendário pelo menos 1 dia que irá rodar.');
       return;
     }
+
+    const workDaysVal = sortedDates.length;
+    const dailyRateVal = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
+    const explicitTotal = parseFloat(projectedAmount.replace(',', '.')) || 0;
+    const totalVal =
+      dailyRateVal > 0
+        ? Math.round(workDaysVal * dailyRateVal * 100) / 100
+        : Math.round(explicitTotal * 100) / 100;
+
+    if (!totalVal || totalVal <= 0) {
+      alert('Por favor, informe o valor da diária prevista (ou o valor total) maior que zero.');
+      return;
+    }
+    const finalDailyRate =
+      dailyRateVal > 0
+        ? Math.round(dailyRateVal * 100) / 100
+        : Math.round((totalVal / workDaysVal) * 100) / 100;
     const desc = projectedDescription.trim() || 'Faturamento Previsto';
-    const dateStr = projectedDate.trim() || todayStr();
+    const startStr = sortedDates[0];
+    const dateStr = sortedDates[sortedDates.length - 1];
 
     const currentList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
       ? dbState.projectedRevenues
       : [];
 
+    let savedId = editingProjectedId;
     let updatedList: ProjectedRevenueItem[];
     if (editingProjectedId) {
       updatedList = currentList.map(p =>
         p.id === editingProjectedId
           ? {
               ...p,
+              startDate: startStr,
               date: dateStr,
-              amount: val,
+              selectedDates: sortedDates,
+              workDays: workDaysVal,
+              dailyRate: finalDailyRate,
+              amount: totalVal,
               description: desc,
               app: projectedApp,
               notes: projectedNotes.trim() || undefined,
@@ -2958,10 +3169,15 @@ export default function App() {
           : p
       );
     } else {
+      savedId = 'proj_' + Date.now();
       const newItem: ProjectedRevenueItem = {
-        id: 'proj_' + Date.now(),
+        id: savedId,
+        startDate: startStr,
         date: dateStr,
-        amount: val,
+        selectedDates: sortedDates,
+        workDays: workDaysVal,
+        dailyRate: finalDailyRate,
+        amount: totalVal,
         description: desc,
         app: projectedApp,
         status: 'pending',
@@ -2974,20 +3190,26 @@ export default function App() {
     persistAndEnqueueWorkManager({
       ...dbState,
       projectedRevenues: updatedList,
+      deletedProjectedRevenueIds: (dbState.deletedProjectedRevenueIds || []).filter(
+        id => id !== savedId
+      ),
     });
 
+    setShowProjectedCalendarModal(false);
     setShowProjectedModal(false);
     setEditingProjectedId(null);
   };
 
   const handleConvertProjectedToReal = (item: ProjectedRevenueItem) => {
+    const bal = computeProjectedRevenueBalance(item, todayStr());
+    const realizedAmt = bal.remainingAmount > 0 ? bal.remainingAmount : Number(item.amount) || 0;
     const newEntry: RideEntry = {
       id: Date.now(),
       date: item.date || todayStr(),
       app: item.app || 'Particular',
       shift: 'integral',
       km: 0,
-      revenue: item.amount,
+      revenue: realizedAmt,
       hours: 1,
     };
 
@@ -3028,16 +3250,24 @@ export default function App() {
       ? dbState.projectedRevenues
       : [];
     const updatedList = currentList.filter(p => p.id !== id);
+    const nextDeletedProjectedIds = Array.from(
+      new Set([...(dbState.deletedProjectedRevenueIds || []).map(String), String(id)])
+    );
     persistAndEnqueueWorkManager({
       ...dbState,
       projectedRevenues: updatedList,
+      deletedProjectedRevenueIds: nextDeletedProjectedIds,
     });
     setDeletingProjectedId(null);
   };
 
-  // ================= ADD / EDIT RIDE OR EXPENSE MODAL STATE =================
+  // ================= MENU COCKPIT & ADD / EDIT RIDE OR EXPENSE MODAL STATE =================
+  const [showQuickRegisterCockpit, setShowQuickRegisterCockpit] = useState<boolean>(false);
+  const [isQuickRegisterClosing, setIsQuickRegisterClosing] = useState<boolean>(false);
+  const quickRegisterCloseTimerRef = useRef<number | null>(null);
   const [showEntryModal, setShowEntryModal] = useState<boolean>(false);
   const [entryMode, setEntryMode] = useState<'ganho' | 'gasto'>('ganho');
+  const [isEntryModeDedicated, setIsEntryModeDedicated] = useState<boolean>(false);
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [selectedApp, setSelectedApp] = useState<string>(BASE_APPS[0].id);
   const [selectedShift, setSelectedShift] = useState<string>(BASE_SHIFTS[0].id);
@@ -3207,18 +3437,23 @@ export default function App() {
       return;
     }
 
+    const isFreshShift =
+      (Number(activeShiftSession.gpsDistanceKm) || 0) === 0 && !activeShiftSession.lastTimestamp;
+
     const watcher = startGpsShiftWatcher(
       {
         lat: activeShiftSession.lastLat,
         lng: activeShiftSession.lastLng,
         timestamp: activeShiftSession.lastTimestamp,
+        resetNativeAccumulator: isFreshShift,
       },
       update => {
         setGpsPermissionStatus('granted');
         setActiveShiftSession(prev => {
           if (!prev || !prev.isActive) return prev;
+          // Preserva precisão de centímetros (0.00001 km) sem truncar deslocamentos curtos a cada atualização
           const nextDistance =
-            Math.round(((Number(prev.gpsDistanceKm) || 0) + update.deltaKm) * 100) / 100;
+            Math.round(((Number(prev.gpsDistanceKm) || 0) + update.deltaKm) * 100000) / 100000;
           const nextSession: ShiftSession = {
             ...prev,
             gpsDistanceKm: nextDistance,
@@ -3311,6 +3546,7 @@ export default function App() {
     setShowRadarModal(false);
     setEditingEntryId(null);
     setEntryMode('ganho');
+    setIsEntryModeDedicated(true);
     setEntryDate(todayStr());
     if (allApps.length > 0) setSelectedApp(allApps[0].id);
     setEntryRev(String(rideData.revenue));
@@ -3358,6 +3594,7 @@ export default function App() {
         }
 
         setVoiceSpeechFeedback(`Entendido: "${parsed.rawTranscript}"`);
+        setIsEntryModeDedicated(false);
         setShowEntryModal(true);
         setTimeout(() => setVoiceSpeechFeedback(null), 5000);
       },
@@ -3414,6 +3651,52 @@ export default function App() {
     startVoiceCaptureSession();
   };
 
+  const openQuickRegisterCockpit = useCallback(() => {
+    if (quickRegisterCloseTimerRef.current !== null) {
+      window.clearTimeout(quickRegisterCloseTimerRef.current);
+      quickRegisterCloseTimerRef.current = null;
+    }
+    setIsQuickRegisterClosing(false);
+    setShowQuickRegisterCockpit(true);
+  }, []);
+
+  const closeQuickRegisterCockpit = useCallback((immediate = false) => {
+    if (quickRegisterCloseTimerRef.current !== null) {
+      window.clearTimeout(quickRegisterCloseTimerRef.current);
+      quickRegisterCloseTimerRef.current = null;
+    }
+    if (immediate) {
+      setIsQuickRegisterClosing(false);
+      setShowQuickRegisterCockpit(false);
+      return;
+    }
+    setIsQuickRegisterClosing(true);
+    quickRegisterCloseTimerRef.current = window.setTimeout(() => {
+      setShowQuickRegisterCockpit(false);
+      setIsQuickRegisterClosing(false);
+      quickRegisterCloseTimerRef.current = null;
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    if (!showQuickRegisterCockpit) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeQuickRegisterCockpit();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showQuickRegisterCockpit, closeQuickRegisterCockpit]);
+
+  useEffect(() => {
+    return () => {
+      if (quickRegisterCloseTimerRef.current !== null) {
+        window.clearTimeout(quickRegisterCloseTimerRef.current);
+      }
+    };
+  }, []);
+
   // PWA Shortcuts action detection (?action=novo_registro | ?action=radar | ?action=turno)
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3421,7 +3704,7 @@ export default function App() {
       const urlParams = new URLSearchParams(window.location.search);
       const action = urlParams.get('action');
       if (action === 'novo_registro') {
-        openNewEntryModal();
+        openQuickRegisterCockpit();
       } else if (action === 'radar') {
         setShowRadarModal(true);
       } else if (action === 'turno') {
@@ -3430,11 +3713,12 @@ export default function App() {
     } catch {
       // ignore url error
     }
-  }, []);
+  }, [openQuickRegisterCockpit]);
 
-  const openNewEntryModal = () => {
+  const openNewEntryModal = (initialMode: 'ganho' | 'gasto' = 'ganho', dedicated = false) => {
     setEditingEntryId(null);
-    setEntryMode('ganho');
+    setEntryMode(initialMode);
+    setIsEntryModeDedicated(dedicated);
     setEntryDate(todayStr());
     setEntryKm('');
     setEntryRev('');
@@ -3471,6 +3755,7 @@ export default function App() {
   const openNewFuelModal = () => {
     setEditingEntryId(null);
     setEntryMode('gasto');
+    setIsEntryModeDedicated(true);
     setExpenseType('moto');
     setExpenseDescription('');
     setSelectedHouseholdExpenseId('');
@@ -3490,6 +3775,7 @@ export default function App() {
   const openNewHouseholdPaymentModal = (item: HouseholdExpenseItem) => {
     setEditingEntryId(null);
     setEntryMode('gasto');
+    setIsEntryModeDedicated(true);
     setExpenseType('casa');
     setSelectedHouseholdExpenseId(item.id);
     setSelectedBikeExpenseId('');
@@ -4096,21 +4382,24 @@ export default function App() {
   // Reset confirmation
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
 
-  // Theme surface classes (60-30-10 discipline, dark & light mode)
-  const bgCanvas = isDark ? 'bg-[#090A0F] text-slate-100' : 'bg-[#F8FAFC] text-slate-900';
+  // Theme surface classes (Minimalist AllBlack & Light mode)
+  const bgCanvas = isDark ? 'bg-black text-slate-100' : 'bg-[#F8FAFC] text-slate-900';
   const surfaceCard = isDark
-    ? 'bg-[#12141C] border border-slate-800/80 text-slate-100'
-    : 'bg-white border border-slate-200/90 text-slate-900 shadow-xs';
+    ? 'bg-transparent border border-neutral-800/80 text-slate-100'
+    : 'bg-transparent border border-slate-200/90 text-slate-900';
   const surfaceSubtle = isDark
-    ? 'bg-[#181B26] border border-slate-800/60'
-    : 'bg-slate-100/80 border border-slate-200/70';
+    ? 'bg-transparent border border-neutral-800/60'
+    : 'bg-transparent border border-slate-200/80';
+  const modalSurface = isDark
+    ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl'
+    : 'bg-white border border-slate-200 text-slate-900 shadow-xl';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-600';
   const primaryText = isDark ? 'text-slate-100' : 'text-slate-900';
   const secondaryText = isDark ? 'text-slate-200' : 'text-slate-800';
-  const dividerBorder = isDark ? 'border-slate-800/40' : 'border-slate-200';
+  const dividerBorder = isDark ? 'border-neutral-800/70' : 'border-slate-200';
   const inputSurface = isDark
-    ? 'bg-[#090A0F] border border-slate-700/80 text-white focus:border-[#FF6A1A]'
-    : 'bg-slate-50 border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+    ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]'
+    : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
 
   // Last 7 days chart data
   const chart7Days = useMemo(() => {
@@ -4769,7 +5058,7 @@ export default function App() {
 
     // Despesas Cadastradas da Moto & Peças (Respeita 100% qualquer edição feita pelo usuário + cálculo proporcional nos itens padrão)
     const rawBikeExpenses: BikeExpenseItem[] =
-      Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      Array.isArray(dbState.bikeExpenses)
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
 
@@ -5572,7 +5861,7 @@ export default function App() {
         {/* Top Minimal Brand + Theme Switcher */}
         <header className="w-full max-w-6xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#FF6A1A] text-black font-black flex items-center justify-center text-lg shadow-sm">
+            <div className="w-9 h-9 rounded-xl bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A] font-black flex items-center justify-center text-lg">
               🎒
             </div>
             <div>
@@ -5590,14 +5879,14 @@ export default function App() {
               type="button"
               onClick={() => setIsDark(prev => !prev)}
               aria-label="Alternar tema claro ou escuro"
-              className={`p-2.5 rounded-xl cursor-pointer transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center ${surfaceSubtle}`}
+              className={`p-2.5 rounded-xl cursor-pointer transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center bg-transparent border ${dividerBorder}`}
             >
               {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
           </div>
         </header>
 
-        {/* Main Responsive Split Container (Desktop 2-Column | Mobile 1-Column Ergonomic Card) */}
+        {/* Main Responsive Split Container (Desktop 2-Column | Mobile 1-Column Minimalist) */}
         <main className="w-full max-w-6xl mx-auto my-6 sm:my-auto grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-center">
           {/* Left Hero / Value Proposition (Visible on Desktop, compact header on Mobile) */}
           <div className="lg:col-span-6 flex flex-col gap-4 sm:gap-6">
@@ -5607,28 +5896,28 @@ export default function App() {
               </h1>
             </div>
 
-            <div className="hidden sm:grid grid-cols-3 gap-3">
-              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
-                <div className="text-lg font-black text-[#FF6A1A] tabular-nums">100%</div>
+            <div className={`hidden sm:grid grid-cols-3 gap-4 pt-4 border-t ${dividerBorder}`}>
+              <div className={`rounded-xl p-3.5 bg-transparent border ${dividerBorder}`}>
+                <div className="text-lg font-black text-[#FF6A1A] tabular-nums dashboard-number-anim">100%</div>
                 <div className={`text-xs font-semibold mt-1 ${mutedText}`}>Funciona Offline no Room DB</div>
               </div>
-              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
-                <div className="text-lg font-black text-emerald-400 tabular-nums">R$/KM</div>
+              <div className={`rounded-xl p-3.5 bg-transparent border ${dividerBorder}`}>
+                <div className={`text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>R$/KM</div>
                 <div className={`text-xs font-semibold mt-1 ${mutedText}`}>Lucro Real por Turno e App</div>
               </div>
-              <div className={`rounded-2xl p-4 ${surfaceCard}`}>
-                <div className="text-lg font-black text-amber-400 tabular-nums">Alertas</div>
+              <div className={`rounded-xl p-3.5 bg-transparent border ${dividerBorder}`}>
+                <div className={`text-lg font-black tabular-nums dashboard-number-anim ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>Alertas</div>
                 <div className={`text-xs font-semibold mt-1 ${mutedText}`}>Aviso Preventivo de Manutenção</div>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Login, Cadastro & Redefinir Senha Card */}
+          {/* Right Column: Login, Cadastro & Redefinir Senha Section */}
           <div className="lg:col-span-6 w-full max-w-md mx-auto lg:max-w-none">
-            <div className={`rounded-3xl p-5 sm:p-8 ${surfaceCard}`}>
+            <div className={`rounded-2xl p-5 sm:p-8 bg-transparent border ${dividerBorder}`}>
               {/* 2-Tab Segmented Switcher (Entrar | Criar Conta) */}
               {authMode !== 'recover' && (
-                <div className={`grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl mb-6 ${surfaceSubtle}`}>
+                <div className={`grid grid-cols-2 gap-2 pb-5 mb-6 border-b ${dividerBorder}`}>
                   <button
                     type="button"
                     onClick={() => {
@@ -5638,10 +5927,10 @@ export default function App() {
                       setAuthPassword('');
                       setAuthConfirmPassword('');
                     }}
-                    className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] ${
+                    className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] bg-transparent border ${
                       authMode === 'login'
-                        ? 'bg-[#FF6A1A] text-black shadow-xs'
-                        : `${mutedText} hover:text-current`
+                        ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                        : `${dividerBorder} ${mutedText} hover:text-current`
                     }`}
                   >
                     <LogIn className="w-4 h-4 shrink-0" />
@@ -5660,10 +5949,10 @@ export default function App() {
                       setAuthPassword('');
                       setAuthConfirmPassword('');
                     }}
-                    className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] ${
+                    className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black cursor-pointer transition-all flex items-center justify-center gap-2 min-h-[44px] bg-transparent border ${
                       authMode === 'register'
-                        ? 'bg-[#FF6A1A] text-black shadow-xs'
-                        : `${mutedText} hover:text-current`
+                        ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                        : `${dividerBorder} ${mutedText} hover:text-current`
                     }`}
                   >
                     <UserPlus className="w-4 h-4 shrink-0" />
@@ -5674,8 +5963,8 @@ export default function App() {
 
               {/* Contextual Header for Redefinir Senha Mode */}
               {authMode === 'recover' && (
-                <div className={`mb-5 p-3.5 rounded-2xl border ${
-                  isDark ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30' : 'bg-orange-50 border-orange-200'
+                <div className={`mb-5 p-3.5 rounded-2xl bg-transparent border ${
+                  isDark ? 'border-[#FF6A1A]/40' : 'border-orange-300'
                 }`}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs sm:text-sm font-black text-[#FF6A1A] flex items-center gap-1.5">
@@ -5688,7 +5977,7 @@ export default function App() {
                         setAuthMode('login');
                         setAuthError(null);
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${surfaceSubtle}`}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer bg-transparent border ${dividerBorder}`}
                     >
                       Voltar ao Login
                     </button>
@@ -5714,10 +6003,10 @@ export default function App() {
                     {savedAccounts.map(acc => (
                       <div
                         key={acc.email}
-                        className={`rounded-2xl p-2.5 flex items-center justify-between gap-2 border transition-colors ${
+                        className={`rounded-xl p-2.5 flex items-center justify-between gap-2 bg-transparent border transition-colors ${
                           isDark
-                            ? 'bg-slate-900/90 border-slate-800 hover:border-[#FF6A1A]/50'
-                            : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]'
+                            ? 'border-neutral-800 hover:border-[#FF6A1A]/50'
+                            : 'border-slate-200 hover:border-[#FF6A1A]'
                         }`}
                       >
                         <button
@@ -5725,7 +6014,7 @@ export default function App() {
                           onClick={() => handleQuickSavedLogin(acc)}
                           className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer"
                         >
-                          <div className="w-9 h-9 rounded-xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 text-[#FF6A1A] font-black text-xs flex items-center justify-center shrink-0">
+                          <div className="w-9 h-9 rounded-xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] font-black text-xs flex items-center justify-center shrink-0">
                             {(acc.name || acc.email).slice(0, 2).toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
@@ -5736,7 +6025,7 @@ export default function App() {
                               {acc.email}
                             </div>
                           </div>
-                          <span className="px-2.5 py-1 rounded-lg bg-[#FF6A1A] text-black text-[11px] font-black shrink-0">
+                          <span className="px-2.5 py-1 rounded-lg bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A] text-[11px] font-black shrink-0">
                             Entrar
                           </span>
                         </button>
@@ -5759,10 +6048,10 @@ export default function App() {
 
               {/* Feedback Banners */}
               {authError && (
-                <div className={`mb-4 p-3.5 rounded-2xl border text-xs font-bold flex flex-col gap-2 ${
+                <div className={`mb-4 p-3.5 rounded-2xl bg-transparent border text-xs font-bold flex flex-col gap-2 ${
                   isDark
-                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-                    : 'bg-rose-50 border-rose-300 text-rose-800'
+                    ? 'border-rose-500/40 text-rose-300'
+                    : 'border-rose-300 text-rose-800'
                 }`}>
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? 'text-rose-400' : 'text-rose-600'}`} />
@@ -5778,8 +6067,8 @@ export default function App() {
                         setAuthPassword('');
                         setAuthConfirmPassword('');
                       }}
-                      className={`self-start px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer flex items-center gap-1.5 ${
-                        isDark ? 'bg-rose-500/25 hover:bg-rose-500/35 text-rose-200' : 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
+                      className={`self-start px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer flex items-center gap-1.5 bg-transparent border ${
+                        isDark ? 'border-rose-500/40 text-rose-300 hover:bg-rose-500/10' : 'border-rose-300 text-rose-800 hover:bg-rose-50'
                       }`}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
@@ -5790,10 +6079,10 @@ export default function App() {
               )}
 
               {authSuccess && (
-                <div className={`mb-4 p-3.5 rounded-2xl border text-xs font-bold flex items-start gap-2.5 ${
+                <div className={`mb-4 p-3.5 rounded-2xl bg-transparent border text-xs font-bold flex items-start gap-2.5 ${
                   isDark
-                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                    : 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                    ? 'border-emerald-500/40 text-emerald-300'
+                    : 'border-emerald-300 text-emerald-800'
                 }`}>
                   <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
                   <span>{authSuccess}</span>
@@ -5884,10 +6173,10 @@ export default function App() {
                           key={model}
                           type="button"
                           onClick={() => setAuthBikeModel(model)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors bg-transparent border ${
                             authBikeModel === model
-                              ? 'bg-[#FF6A1A] text-black'
-                              : `${surfaceSubtle} hover:border-[#FF6A1A]`
+                              ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                              : `${dividerBorder} ${mutedText} hover:border-[#FF6A1A]`
                           }`}
                         >
                           {model}
@@ -5971,22 +6260,18 @@ export default function App() {
                       saveRememberedCredentials(null);
                     }
                   }}
-                  className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                  className={`w-full p-3 rounded-xl bg-transparent border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
                     rememberMe
-                      ? isDark
-                        ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/50'
-                        : 'bg-orange-50 border-orange-300'
-                      : surfaceSubtle
+                      ? 'border-[#FF6A1A]/50'
+                      : dividerBorder
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div
-                      className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                      className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 transition-colors bg-transparent border ${
                         rememberMe
-                          ? 'bg-[#FF6A1A] text-black'
-                          : isDark
-                          ? 'bg-slate-800 border border-slate-700'
-                          : 'bg-white border border-slate-300'
+                          ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                          : dividerBorder
                       }`}
                     >
                       {rememberMe && <Check className="w-3.5 h-3.5 stroke-[3]" />}
@@ -5999,12 +6284,10 @@ export default function App() {
                     </div>
                   </div>
                   <span
-                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 bg-transparent border ${
                       rememberMe
-                        ? 'bg-[#FF6A1A]/20 text-[#FF6A1A]'
-                        : isDark
-                        ? 'bg-slate-800 text-slate-400'
-                        : 'bg-slate-200 text-slate-600'
+                        ? 'border-[#FF6A1A]/50 text-[#FF6A1A]'
+                        : `${dividerBorder} ${mutedText}`
                     }`}
                   >
                     {rememberMe ? 'Ativo' : 'Off'}
@@ -6014,7 +6297,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={isAuthLoading}
-                  className="mt-1 w-full py-3.5 px-5 rounded-2xl bg-[#FF6A1A] text-black font-black text-sm hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
+                  className="mt-1 w-full py-3.5 px-5 rounded-xl bg-transparent border border-[#FF6A1A] text-[#FF6A1A] font-black text-sm hover:bg-[#FF6A1A]/10 transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-[48px]"
                 >
                   <span>
                     {isAuthLoading
@@ -6049,7 +6332,7 @@ export default function App() {
       {/* TOP BAR CONTRACT: 3 ZONES (Brand | Nav Links | Primary Action) */}
       <header
         className={`sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-8 px-3 sm:px-6 lg:px-8 border-b backdrop-blur-md ${
-          isDark ? 'bg-[#090A0F]/90 border-slate-800/80' : 'bg-white/90 border-slate-200'
+          isDark ? 'bg-black/95 border-neutral-800/80' : 'bg-white/95 border-slate-200'
         }`}
         style={{
           paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))',
@@ -6135,11 +6418,11 @@ export default function App() {
                 activeShiftSession?.isActive
                   ? isDark
                     ? 'bg-transparent border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10'
-                    : 'bg-emerald-50 border-emerald-500 text-emerald-700 hover:bg-emerald-100'
+                    : 'bg-transparent border-emerald-500 text-emerald-700 hover:bg-emerald-50'
                   : showCockpitMenu
                   ? isDark
                     ? 'bg-transparent border-[#FF6A1A]/50 text-[#FF6A1A]'
-                    : 'bg-orange-50 border-[#FF6A1A] text-[#ea580c]'
+                    : 'bg-transparent border-[#FF6A1A] text-[#ea580c]'
                   : isDark
                   ? 'bg-transparent border-transparent text-slate-400 hover:text-white hover:bg-white/5'
                   : 'bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-black/5'
@@ -6164,14 +6447,14 @@ export default function App() {
                 <div
                   className={`fixed left-3 right-3 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 md:w-96 max-w-full rounded-2xl p-4 shadow-2xl z-50 border ${
                     isDark
-                      ? 'bg-[#12141C] border-slate-800 text-slate-100'
+                      ? 'bg-black border-neutral-800 text-slate-100'
                       : 'bg-white border-slate-200 text-slate-900'
                   }`}
                   style={{
                     top: 'calc(3.75rem + env(safe-area-inset-top, 0px))',
                   }}
                 >
-                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800/40">
+                  <div className={`flex items-center justify-between gap-2 pb-3 border-b ${dividerBorder}`}>
                     <div className="flex items-center gap-2 min-w-0">
                       <Gauge className="w-4 h-4 text-[#FF6A1A] shrink-0" />
                       <span className="text-xs font-black uppercase tracking-wider truncate">
@@ -6181,7 +6464,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setShowCockpitMenu(false)}
-                      className={`p-1.5 rounded-lg shrink-0 ${surfaceSubtle} cursor-pointer hover:text-white`}
+                      className={`p-1.5 rounded-lg shrink-0 bg-transparent border ${dividerBorder} cursor-pointer hover:text-current`}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -6195,14 +6478,14 @@ export default function App() {
                         setShowCockpitMenu(false);
                         setShowRadarModal(true);
                       }}
-                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left bg-transparent border ${
                         isDark
-                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-amber-500/30 hover:border-amber-500/60'
-                          : 'bg-amber-50/50 hover:bg-amber-50 border-amber-300'
+                          ? 'border-amber-500/30 hover:border-amber-500/60 hover:bg-amber-500/5'
+                          : 'border-amber-300 hover:bg-amber-50/50'
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-                        <Zap className="w-4 h-4 fill-amber-400/20" />
+                      <div className="w-8 h-8 rounded-lg bg-transparent border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                        <Zap className="w-4 h-4" />
                       </div>
                       <div>
                         <div className="text-xs font-black leading-tight">Radar de Lucro</div>
@@ -6219,19 +6502,19 @@ export default function App() {
                         setShowCockpitMenu(false);
                         setShowTurnoModal(true);
                       }}
-                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left bg-transparent border ${
                         activeShiftSession?.isActive
-                          ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                          ? 'border-emerald-500/60 ring-1 ring-emerald-500/30'
                           : isDark
-                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-sky-500/30 hover:border-sky-500/60'
-                          : 'bg-sky-50/50 hover:bg-sky-50 border-sky-300'
+                          ? 'border-sky-500/30 hover:border-sky-500/60 hover:bg-sky-500/5'
+                          : 'border-sky-300 hover:bg-sky-50/50'
                       }`}
                     >
                       <div
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-transparent border ${
                           activeShiftSession?.isActive
-                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                            : 'bg-sky-500/15 border-sky-500/30 text-sky-400'
+                            ? 'border-emerald-500/40 text-emerald-400'
+                            : 'border-sky-500/30 text-sky-400'
                         }`}
                       >
                         {activeShiftSession?.isActive ? (
@@ -6259,13 +6542,13 @@ export default function App() {
                         setShowCockpitMenu(false);
                         setShowRelatorioMeiModal(true);
                       }}
-                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left bg-transparent border ${
                         isDark
-                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-purple-500/30 hover:border-purple-500/60'
-                          : 'bg-purple-50/50 hover:bg-purple-50 border-purple-300'
+                          ? 'border-purple-500/30 hover:border-purple-500/60 hover:bg-purple-500/5'
+                          : 'border-purple-300 hover:bg-purple-50/50'
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-transparent border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
                         <Printer className="w-4 h-4" />
                       </div>
                       <div>
@@ -6283,13 +6566,13 @@ export default function App() {
                         setShowCockpitMenu(false);
                         setShowMetaReversaModal(true);
                       }}
-                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left border ${
+                      className={`p-3 rounded-xl flex flex-col items-start gap-2 transition-all cursor-pointer text-left bg-transparent border ${
                         isDark
-                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-[#FF6A1A]/30 hover:border-[#FF6A1A]/60'
-                          : 'bg-orange-50/50 hover:bg-orange-50 border-[#FF6A1A]/40'
+                          ? 'border-[#FF6A1A]/30 hover:border-[#FF6A1A]/60 hover:bg-[#FF6A1A]/5'
+                          : 'border-[#FF6A1A]/40 hover:bg-orange-50/50'
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-transparent border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
                         <Target className="w-4 h-4" />
                       </div>
                       <div>
@@ -6307,18 +6590,18 @@ export default function App() {
                         setShowCockpitMenu(false);
                         setActiveTab('investments');
                       }}
-                      className={`col-span-2 p-3 rounded-xl flex items-center justify-between gap-2.5 transition-all cursor-pointer text-left border ${
+                      className={`col-span-2 p-3 rounded-xl flex items-center justify-between gap-2.5 transition-all cursor-pointer text-left bg-transparent border ${
                         isDark
-                          ? 'bg-[#151722] hover:bg-[#1b1e2c] border-emerald-500/40 hover:border-emerald-500/70'
-                          : 'bg-emerald-50/70 hover:bg-emerald-100/70 border-emerald-300'
+                          ? 'border-emerald-500/40 hover:border-emerald-500/70 hover:bg-emerald-500/5'
+                          : 'border-emerald-300 hover:bg-emerald-50/70'
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-transparent border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                           <TrendingUp className="w-4 h-4" />
                         </div>
                         <div>
-                          <div className="text-xs font-black leading-tight text-emerald-400">
+                          <div className={`text-xs font-black leading-tight ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
                             Fundo de Investimentos (Comprar Cotas)
                           </div>
                           <div className={`text-[10px] mt-0.5 leading-tight ${mutedText}`}>
@@ -6326,7 +6609,7 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                      <ArrowRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <ArrowRight className={`w-4 h-4 shrink-0 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
                     </button>
                   </div>
                 </div>
@@ -6361,86 +6644,91 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 sm:pt-6">
         {/* ================= ABA 1: PAINEL (DASHBOARD) ================= */}
         {activeTab === 'dashboard' && (
-          <div className="flex flex-col gap-4 sm:gap-6">
-            {/* CARDS EM DESTAQUE NO TOPO: RESERVAS OBRIGATÓRIAS DO MOTOBOY */}
-              {activeShiftSession?.isActive && (
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg ${
-                  isDark ? 'bg-emerald-500/15 border border-emerald-500/40 text-slate-100' : 'bg-emerald-50 border border-emerald-300 text-slate-900'
-                }`}>
-                  <div className="flex items-start sm:items-center gap-3 min-w-0">
-                    <span className="relative flex h-3 w-3 shrink-0 mt-1 sm:mt-0">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                          Turno Ativo · Odômetro GPS Automático
-                        </span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
-                          isDark ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-white text-emerald-800 border-emerald-300'
+          <div className="flex flex-col gap-5 sm:gap-7">
+            {/* BANNER MINIMALISTA DE TURNO ATIVO */}
+            {activeShiftSession?.isActive && (
+              <div className={`pb-4 border-b ${dividerBorder} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
+                <div className="flex items-start sm:items-center gap-3 min-w-0">
+                  <span className="relative flex h-2.5 w-2.5 shrink-0 mt-1.5 sm:mt-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                        Turno Ativo · Odômetro GPS Automático
+                      </span>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-md bg-transparent border ${
+                        isDark ? 'text-emerald-300 border-emerald-500/40' : 'text-emerald-800 border-emerald-500/50'
+                      }`}>
+                        +{(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        km no GPS
+                      </span>
+                      {(activeShiftSession.currentSpeedKmh || 0) > 0 && (
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md bg-transparent border ${
+                          isDark ? 'text-sky-300 border-sky-500/40' : 'text-sky-800 border-sky-500/50'
                         }`}>
-                          +{(Number(activeShiftSession.gpsDistanceKm) || 0).toLocaleString('pt-BR', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}{' '}
-                          km no GPS
+                          {activeShiftSession.currentSpeedKmh} km/h
                         </span>
-                        {(activeShiftSession.currentSpeedKmh || 0) > 0 && (
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
-                            isDark ? 'bg-sky-500/20 text-sky-300 border-sky-500/30' : 'bg-white text-sky-800 border-sky-300'
-                          }`}>
-                            {activeShiftSession.currentSpeedKmh} km/h
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs sm:text-sm font-bold mt-1 flex items-center gap-2 flex-wrap">
-                        <span>
-                          Início: <strong>{activeShiftSession.startKm.toLocaleString('pt-BR')} km</strong>
-                        </span>
-                        <span>·</span>
-                        <span>
-                          Ganhos no turno:{' '}
-                          <strong className={`${isDark ? 'text-emerald-400' : 'text-emerald-700'} font-black`}>
-                            {fmtMoney(Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0)))}
-                          </strong>
-                        </span>
-                      </div>
+                      )}
+                    </div>
+                    <div className={`text-xs sm:text-sm font-bold mt-1 flex items-center gap-2 flex-wrap ${primaryText}`}>
+                      <span>
+                        Início: <strong>{activeShiftSession.startKm.toLocaleString('pt-BR')} km</strong>
+                      </span>
+                      <span className={mutedText}>·</span>
+                      <span>
+                        Ganhos no turno:{' '}
+                        <strong className={`${isDark ? 'text-emerald-400' : 'text-emerald-700'} font-black`}>
+                          <AnimatedNumber
+                            value={Math.max(0, totals.totalRevenue - (activeShiftSession.startRevenue || 0))}
+                            formatter={fmtMoney}
+                          />
+                        </strong>
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                    {gpsPermissionStatus !== 'granted' && (
-                      <button
-                        type="button"
-                        onClick={() => setShowGpsPermissionModal(true)}
-                        className="px-3 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Navigation className="w-3.5 h-3.5" />
-                        <span>Permitir GPS 2º Plano</span>
-                      </button>
-                    )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  {gpsPermissionStatus !== 'granted' && (
                     <button
                       type="button"
-                      onClick={() => setShowTurnoModal(true)}
-                      className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors shrink-0 cursor-pointer flex items-center gap-1.5 shadow-md"
+                      onClick={() => setShowGpsPermissionModal(true)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A] hover:border-[#FF6A1A] transition-colors cursor-pointer flex items-center gap-1.5"
                     >
-                      <Square className="w-3.5 h-3.5 fill-black" />
-                      <span>Ver / Encerrar</span>
+                      <Navigation className="w-3.5 h-3.5" />
+                      <span>Permitir GPS 2º Plano</span>
                     </button>
-                  </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowTurnoModal(true)}
+                    className={`px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold bg-transparent border transition-colors shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                      isDark
+                        ? 'border-emerald-500/50 text-emerald-400 hover:border-emerald-400'
+                        : 'border-emerald-600/60 text-emerald-700 hover:border-emerald-700'
+                    }`}
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                    <span>Ver / Encerrar</span>
+                  </button>
                 </div>
-              )}
+              </div>
+            )}
 
-            {/* HERO DO TOPO: ODÔMETRO TOTAL + SALDO ATUAL DO MOTOBOY */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-stretch">
+            {/* HERO DO TOPO (MINIMALISTA SEM CARDS PESADOS): ODÔMETRO TOTAL + SALDO ATUAL DO MOTOBOY */}
+            <div className={`grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch pb-6 border-b ${dividerBorder}`}>
               {/* 1. ODÔMETRO TOTAL NO TOPO */}
-              <div className={`lg:col-span-7 rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} flex flex-col justify-between shadow-sm`}>
+              <div className={`lg:col-span-7 flex flex-col justify-between pb-6 lg:pb-0 border-b lg:border-b-0 lg:border-r lg:pr-8 ${dividerBorder}`}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className={`text-[11px] sm:text-xs font-bold tracking-wider uppercase ${mutedText}`}>
                     Odômetro Total · {dbState.fuelConfig.bikeModelName}
                   </div>
                   {activeShiftSession?.isActive && activeShiftSession.gpsEnabled !== false && (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase bg-transparent text-emerald-500 dark:text-emerald-400 border border-emerald-500/40">
                       <Navigation className="w-3 h-3 animate-pulse" />
                       <span>
                         GPS em Tempo Real (+
@@ -6454,12 +6742,16 @@ export default function App() {
                   )}
                 </div>
                 <div className="mt-2 flex items-baseline gap-2 sm:gap-3 flex-wrap">
-                  <span className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight tabular-nums">
-                    {totals.totalKm.toLocaleString('pt-BR', {
-                      minimumFractionDigits: activeShiftSession?.isActive && totals.liveShiftGpsKm > 0 ? 1 : 0,
-                      maximumFractionDigits: 1,
-                    })}
-                  </span>
+                  <AnimatedNumber
+                    value={totals.totalKm}
+                    formatter={v =>
+                      v.toLocaleString('pt-BR', {
+                        minimumFractionDigits: activeShiftSession?.isActive && totals.liveShiftGpsKm > 0 ? 1 : 0,
+                        maximumFractionDigits: 1,
+                      })
+                    }
+                    className={`text-4xl sm:text-6xl md:text-7xl font-black tracking-tight ${primaryText}`}
+                  />
                   <span className="text-xs sm:text-sm font-extrabold text-[#FF6A1A] uppercase tracking-wider">
                     KM Rodados
                   </span>
@@ -6469,60 +6761,60 @@ export default function App() {
                   {level.end.toLocaleString('pt-BR')} km
                 </div>
 
-                {/* Road Progress Bar */}
-                <div className="mt-6 sm:mt-8 pt-2 sm:pt-4 relative">
-                  <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                {/* Road Progress Bar Animada */}
+                <div className="mt-5 sm:mt-6 pt-1 relative">
+                  <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
                     <div
-                      className="h-full bg-gradient-to-r from-[#FF7B31] to-[#FF5000] rounded-full transition-all duration-500"
+                      className="h-full bg-gradient-to-r from-[#FF7B31] to-[#FF5000] rounded-full dashboard-progress-fill"
                       style={{ width: `${level.pct}%` }}
                     />
                   </div>
                   <div className={`flex justify-between text-[11px] sm:text-xs font-bold mt-2 tabular-nums ${mutedText}`}>
                     <span>{level.start.toLocaleString('pt-BR')} km</span>
-                    <span className="text-[#FF6A1A]">{Math.round(level.pct)}% do nível</span>
+                    <span className="text-[#FF6A1A]">
+                      <AnimatedNumber value={Math.round(level.pct)} formatter={v => `${Math.round(v)}% do nível`} />
+                    </span>
                     <span className="text-[#FF6A1A]">{level.end.toLocaleString('pt-BR')} km</span>
                   </div>
                 </div>
 
                 {/* RAIO-X OPERACIONAL DO ODÔMETRO: CUSTO REAL POR KM, AUTONOMIA & MARGEM LIMPA */}
-                <div className={`mt-5 sm:mt-6 pt-4 sm:pt-6 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-200'}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3.5">
+                <div className={`mt-5 sm:mt-6 pt-5 border-t ${dividerBorder}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 flex items-center justify-center text-[#FF6A1A] shrink-0">
-                        <Gauge className="w-4 h-4" />
-                      </div>
+                      <Gauge className="w-4 h-4 text-[#FF6A1A] shrink-0" />
                       <div>
-                        <h3 className="text-xs sm:text-sm font-black tracking-tight text-slate-900 dark:text-white">
+                        <h3 className={`text-xs sm:text-sm font-black tracking-tight ${primaryText}`}>
                           Custo Operacional & Autonomia da Moto
                         </h3>
-                        <p className={`text-[10px] sm:text-[11px] font-semibold ${mutedText}`}>
+                        <p className={`text-[10px] sm:text-[11px] font-medium ${mutedText}`}>
                           Telemetria em tempo real baseada nos abastecimentos
                         </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 self-stretch sm:self-auto">
-                      {/* Botão de Abastecer */}
+                      {/* Botão de Abastecer (Sem fundo, borda fina e suave) */}
                       <button
                         type="button"
                         onClick={openNewFuelModal}
                         title="Registrar novo abastecimento com preço pago e litros"
-                        className="flex-1 sm:flex-initial px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black transition-all bg-[#FF6A1A] hover:bg-[#ff7b33] text-black flex items-center justify-center gap-1.5 shadow-md active:scale-95 cursor-pointer shrink-0"
+                        className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold transition-all bg-transparent border border-[#FF6A1A]/50 hover:border-[#FF6A1A] text-[#FF6A1A] flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0"
                       >
-                        <Fuel className="w-4 h-4 stroke-[2.5]" />
+                        <Fuel className="w-3.5 h-3.5 stroke-[2.2]" />
                         <span>+ Abastecer</span>
                       </button>
 
-                      {/* Botão de Ver Detalhes do KM */}
+                      {/* Botão de Ver Detalhes do KM (Sem fundo, borda fina e suave) */}
                       <button
                         type="button"
                         onClick={() => setShowOdometerCostDetails(prev => !prev)}
-                        className={`flex-1 sm:flex-initial px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
+                        className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold bg-transparent border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                           showOdometerCostDetails
-                            ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
+                            ? 'border-[#FF6A1A] text-[#FF6A1A]'
                             : isDark
-                            ? 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-200'
-                            : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-800'
+                            ? 'border-slate-800 hover:border-slate-600 text-slate-200'
+                            : 'border-slate-300 hover:border-slate-400 text-slate-800'
                         }`}
                       >
                         <span>{showOdometerCostDetails ? 'Ocultar Detalhes' : 'Ver Detalhes do KM'}</span>
@@ -6531,42 +6823,45 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-1.5 sm:gap-4">
-                    {/* 1. Custo Real por KM */}
-                    <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 border-l-amber-500 ${surfaceSubtle}`}>
-                      <div className={`text-[10px] sm:text-xs font-bold truncate ${mutedText}`}>Custo Real / KM</div>
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3.5">
+                    {/* 1. Custo Real por KM (Sem fundo, borda fina e suave) */}
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 min-w-0 bg-transparent border ${dividerBorder}`}>
+                      <div className={`text-[10px] sm:text-xs font-semibold truncate ${mutedText}`}>Custo Real / KM</div>
                       <div className="text-xs sm:text-lg lg:text-xl font-black mt-1 tabular-nums text-amber-500 dark:text-amber-400 truncate">
-                        R$ {(financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm).toLocaleString('pt-BR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        <AnimatedNumber
+                          value={financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm}
+                          formatter={v =>
+                            `R$ ${v.toLocaleString('pt-BR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}`
+                          }
+                        />
                       </div>
                       <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
                         Gasolina + Peças
                       </div>
                     </div>
 
-                    {/* 2. Autonomia Baseada no Abastecimento Real */}
-                    <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 ${
-                      fuelTelemetry.hasLoggedFuel
-                        ? fuelTelemetry.remainingAutonomyKm <= 35
-                          ? 'border-l-rose-500 bg-rose-500/10'
-                          : fuelTelemetry.remainingAutonomyKm <= 70
-                          ? 'border-l-amber-500 bg-amber-500/10'
-                          : 'border-l-sky-500'
-                        : 'border-l-sky-500'
-                    } ${surfaceSubtle}`}>
+                    {/* 2. Autonomia Baseada no Abastecimento Real (Sem fundo, borda fina e suave) */}
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 min-w-0 bg-transparent border ${
+                      fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 35
+                        ? 'border-rose-500/40'
+                        : fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 70
+                        ? 'border-amber-500/40'
+                        : dividerBorder
+                    }`}>
                       <div className="flex items-center justify-between gap-1">
-                        <div className={`text-[10px] sm:text-xs font-bold truncate ${
-                          fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 35 ? 'text-rose-500 dark:text-rose-400 font-black' : mutedText
+                        <div className={`text-[10px] sm:text-xs font-semibold truncate ${
+                          fuelTelemetry.hasLoggedFuel && fuelTelemetry.remainingAutonomyKm <= 35 ? 'text-rose-500 dark:text-rose-400 font-bold' : mutedText
                         }`}>
                           {fuelTelemetry.hasLoggedFuel ? 'Autonomia Restante' : 'Autonomia Tanque'}
                         </div>
                         {fuelTelemetry.hasLoggedFuel && (
-                          <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded bg-transparent border ${
                             fuelTelemetry.remainingAutonomyKm <= 35
-                              ? 'bg-rose-500/20 text-rose-500 dark:text-rose-400 animate-pulse'
-                              : 'bg-sky-500/20 text-sky-600 dark:text-sky-400'
+                              ? 'border-rose-500/40 text-rose-500 dark:text-rose-400 animate-pulse'
+                              : 'border-sky-500/30 text-sky-600 dark:text-sky-400'
                           }`}>
                             {fuelTelemetry.remainingAutonomyKm <= 35 ? 'Reserva' : `${fuelTelemetry.fuelPercentage}%`}
                           </span>
@@ -6579,7 +6874,10 @@ export default function App() {
                           ? 'text-amber-500 dark:text-amber-400'
                           : 'text-sky-600 dark:text-sky-400'
                       }`}>
-                        {fuelTelemetry.remainingAutonomyKm.toLocaleString('pt-BR')}{' '}
+                        <AnimatedNumber
+                          value={fuelTelemetry.remainingAutonomyKm}
+                          formatter={v => Math.round(v).toLocaleString('pt-BR')}
+                        />{' '}
                         <span className="text-[10px] sm:text-xs font-bold">km</span>
                       </div>
                       <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
@@ -6589,22 +6887,32 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* 3. Margem Limpa por KM */}
+                    {/* 3. Margem Limpa por KM (Sem fundo, borda fina e suave) */}
                     {(() => {
                       const totalCostKm = financialIntelligence.fuelCostPerKm + financialIntelligence.baseMaintCostPerKm;
                       const grossKm = totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : (progressAnalytics.grossPerKm > 0 ? progressAnalytics.grossPerKm : 0);
                       const netKm = grossKm > 0 ? Math.max(0, grossKm - totalCostKm) : 0;
                       return (
-                        <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-4 min-w-0 border-l-4 border-l-emerald-500 ${
-                          netKm > 0 ? 'bg-emerald-500/10 border border-emerald-500/25' : surfaceSubtle
-                        }`}>
-                          <div className={`text-[10px] sm:text-xs font-bold truncate ${netKm > 0 ? 'text-emerald-600 dark:text-emerald-400' : mutedText}`}>
+                        <div className={`rounded-xl p-2.5 sm:p-3.5 min-w-0 bg-transparent border ${dividerBorder}`}>
+                          <div className={`text-[10px] sm:text-xs font-semibold truncate ${netKm > 0 ? 'text-emerald-600 dark:text-emerald-400' : mutedText}`}>
                             Lucro Limpo / KM
                           </div>
                           <div className={`text-xs sm:text-lg lg:text-xl font-black mt-1 tabular-nums truncate ${
                             netKm > 0 ? 'text-emerald-600 dark:text-emerald-400' : mutedText
                           }`}>
-                            {netKm > 0 ? `+ R$ ${netKm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                            {netKm > 0 ? (
+                              <AnimatedNumber
+                                value={netKm}
+                                formatter={v =>
+                                  `+ R$ ${v.toLocaleString('pt-BR', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}`
+                                }
+                              />
+                            ) : (
+                              '—'
+                            )}
                           </div>
                           <div className={`text-[9px] sm:text-[11px] mt-0.5 truncate ${mutedText}`}>
                             {netKm > 0 ? 'Livre no bolso' : 'Sem corridas'}
@@ -6614,15 +6922,11 @@ export default function App() {
                     })()}
                   </div>
 
-                  {/* Detalhamento Expansível do Custo Operacional e Telemetria de Combustível */}
+                  {/* Detalhamento Expansível do Custo Operacional e Telemetria de Combustível (Minimalista sem fundo) */}
                   {showOdometerCostDetails && (
-                    <div className={`mt-4 p-4 sm:p-5 rounded-2xl border text-xs transition-all ${
-                      isDark
-                        ? 'bg-[#151824] border-slate-800 text-slate-200'
-                        : 'bg-slate-100/90 border-slate-300/80 text-slate-800'
-                    } space-y-3`}>
-                      <div className="flex items-center justify-between font-bold border-b pb-2.5 border-slate-300 dark:border-slate-800 flex-wrap gap-2">
-                        <span className="flex items-center gap-2 text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                    <div className={`mt-4 pt-4 border-t ${dividerBorder} text-xs space-y-3`}>
+                      <div className={`flex items-center justify-between font-bold pb-2 border-b ${dividerBorder} flex-wrap gap-2`}>
+                        <span className={`flex items-center gap-2 text-xs sm:text-sm font-black ${primaryText}`}>
                           <Fuel className="w-4 h-4 text-[#FF6A1A]" />
                           <span>Telemetria do Combustível & Custo ({dbState.fuelConfig.bikeModelName})</span>
                         </span>
@@ -6630,45 +6934,45 @@ export default function App() {
                           <button
                             type="button"
                             onClick={openNewFuelModal}
-                            className="text-xs font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
+                            className="text-xs font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1 bg-transparent"
                           >
                             + Abastecer Agora
                           </button>
-                          <span className="text-slate-400">·</span>
+                          <span className={mutedText}>·</span>
                           <button
                             type="button"
                             onClick={() => {
                               setActiveTab('maintenance');
                               startEditFuelCard();
                             }}
-                            className="text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-[#FF6A1A] hover:underline cursor-pointer"
+                            className={`text-xs font-bold ${secondaryText} hover:text-[#FF6A1A] hover:underline cursor-pointer bg-transparent`}
                           >
                             Configurar Moto →
                           </button>
                         </div>
                       </div>
 
-                      {/* Grid de estatísticas com cards individuais de alto contraste */}
+                      {/* Grid de estatísticas minimalista (sem fundo, apenas borda fina e suave) */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
+                          <div className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
                             Consumo Médio
                           </div>
-                          <div className="text-xs sm:text-sm font-black mt-1 text-slate-900 dark:text-white tabular-nums">
+                          <div className={`text-xs sm:text-sm font-black mt-1 tabular-nums ${primaryText}`}>
                             {financialIntelligence.kmPerLiter} km/L
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
+                          <div className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
                             Preço Gasolina
                           </div>
-                          <div className="text-xs sm:text-sm font-black mt-1 text-slate-900 dark:text-white tabular-nums">
+                          <div className={`text-xs sm:text-sm font-black mt-1 tabular-nums ${primaryText}`}>
                             {fmtCurrencyExact(fuelTelemetry.pricePerL)}/L
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
                           <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                             Combustível / KM
                           </div>
@@ -6677,7 +6981,7 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
                           <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                             Desgaste Peças / KM
                           </div>
@@ -6686,7 +6990,7 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
                           <div className="text-[10px] font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">
                             Último Abastecimento
                           </div>
@@ -6697,7 +7001,7 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
                           <div className="text-[10px] font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">
                             Valor Pago
                           </div>
@@ -6706,19 +7010,19 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 shadow-2xs">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
+                          <div className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
                             KM Rodados no Tanque
                           </div>
-                          <div className="text-xs sm:text-sm font-black mt-1 text-slate-900 dark:text-white tabular-nums">
+                          <div className={`text-xs sm:text-sm font-black mt-1 tabular-nums ${primaryText}`}>
                             {fuelTelemetry.kmSinceFuel} km
                           </div>
                         </div>
 
-                        <div className={`p-2.5 sm:p-3 rounded-xl border shadow-2xs ${
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${
                           fuelTelemetry.remainingAutonomyKm <= 35
-                            ? 'bg-rose-500/10 border-rose-500/30'
-                            : 'bg-emerald-500/10 border-emerald-500/30'
+                            ? 'border-rose-500/40'
+                            : 'border-emerald-500/40'
                         }`}>
                           <div className={`text-[10px] font-bold uppercase tracking-wider ${
                             fuelTelemetry.remainingAutonomyKm <= 35 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
@@ -6737,7 +7041,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 2. CARD DE SALDO ATUAL DO MOTOBOY */}
+              {/* 2. SALDO ATUAL DO MOTOBOY (MINIMALISTA SEM CARD DE FUNDO) */}
               {(() => {
                 const isMonthScope = dashboardSaldoScope === 'month';
                 const isCustomScope = dashboardSaldoScope === 'custom';
@@ -6790,25 +7094,16 @@ export default function App() {
                   : 'Todas as corridas';
 
                 return (
-                  <div className={`lg:col-span-5 rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard} flex flex-col justify-between shadow-sm border-2 ${
-                    isPositive ? 'border-emerald-500/30 dark:border-emerald-500/20' : 'border-rose-500/30 dark:border-rose-500/20'
-                  } relative overflow-hidden`}>
-                    {/* Background glow accent */}
-                    <div className={`absolute -right-12 -top-12 w-44 h-44 rounded-full blur-3xl pointer-events-none opacity-20 ${
-                      isPositive ? 'bg-emerald-500' : 'bg-rose-500'
-                    }`} />
-
+                  <div className="lg:col-span-5 flex flex-col justify-between">
                     <div>
-                      {/* Header do Card com Toggle de Período */}
-                      <div className="flex items-center justify-between gap-2 flex-wrap pb-3 mb-3 border-b border-slate-700/30">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
-                            isPositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                          }`}>
-                            <Wallet className="w-5 h-5" />
-                          </div>
+                      {/* Header do Saldo com Toggle de Período (Minimalista) */}
+                      <div className={`flex items-center justify-between gap-2 flex-wrap pb-3 mb-3 border-b ${dividerBorder}`}>
+                        <div className="flex items-center gap-2">
+                          <Wallet className={`w-5 h-5 shrink-0 ${
+                            isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
+                          }`} />
                           <div>
-                            <span className="text-xs sm:text-sm font-black tracking-tight flex items-center gap-1.5">
+                            <span className={`text-xs sm:text-sm font-black tracking-tight flex items-center gap-1.5 ${primaryText}`}>
                               <span>Saldo Atual do Motoboy</span>
                             </span>
                             <p className={`text-[10px] font-semibold ${mutedText}`}>
@@ -6817,15 +7112,15 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Toggle Este Mês / Geral / Personalizado */}
-                        <div className="flex items-center bg-slate-900/60 dark:bg-slate-950 p-1 rounded-xl border border-slate-700/60 text-[11px] font-black">
+                        {/* Toggle Este Mês / Geral / Personalizado (Sem fundo nos botões) */}
+                        <div className={`flex items-center p-0.5 rounded-xl bg-transparent border ${dividerBorder} text-[11px] font-bold`}>
                           <button
                             type="button"
                             onClick={() => setDashboardSaldoScope('month')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer bg-transparent border ${
                               isMonthScope
-                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
-                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
+                                : `border-transparent ${mutedText} hover:${primaryText}`
                             }`}
                           >
                             Este Mês
@@ -6833,10 +7128,10 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setDashboardSaldoScope('all')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer bg-transparent border ${
                               dashboardSaldoScope === 'all'
-                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
-                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
+                                : `border-transparent ${mutedText} hover:${primaryText}`
                             }`}
                           >
                             Geral
@@ -6844,10 +7139,10 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setDashboardSaldoScope('custom')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 bg-transparent border ${
                               isCustomScope
-                                ? 'bg-[#FF6A1A] text-black shadow-sm font-black'
-                                : 'text-slate-400 hover:text-slate-200 font-bold'
+                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
+                                : `border-transparent ${mutedText} hover:${primaryText}`
                             }`}
                           >
                             <Calendar className="w-3 h-3" />
@@ -6858,8 +7153,8 @@ export default function App() {
 
                       {/* Seletor de Datas quando Personalizado está ativo */}
                       {isCustomScope && (
-                        <div className="mb-3.5 p-2.5 sm:p-3 rounded-2xl bg-slate-900/40 dark:bg-slate-950/80 border border-slate-700/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-                          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1 shrink-0">
+                        <div className={`mb-3.5 pb-3 border-b ${dividerBorder} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs`}>
+                          <span className="text-[10px] font-bold text-[#FF6A1A] uppercase tracking-wider flex items-center gap-1 shrink-0">
                             <Calendar className="w-3.5 h-3.5" />
                             <span>Filtrar Período:</span>
                           </span>
@@ -6870,9 +7165,7 @@ export default function App() {
                                 type="date"
                                 value={dashboardCustomStartDate}
                                 onChange={e => setDashboardCustomStartDate(e.target.value)}
-                                className={`w-full sm:w-auto px-2 py-1 rounded-xl text-xs font-bold outline-none border border-slate-700/80 ${
-                                  isDark ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
-                                }`}
+                                className={`w-full sm:w-auto px-2 py-1 rounded-lg text-xs font-bold outline-none bg-transparent border ${dividerBorder} ${primaryText}`}
                               />
                             </div>
                             <div className="flex items-center gap-1 flex-1 sm:flex-initial">
@@ -6881,9 +7174,7 @@ export default function App() {
                                 type="date"
                                 value={dashboardCustomEndDate}
                                 onChange={e => setDashboardCustomEndDate(e.target.value)}
-                                className={`w-full sm:w-auto px-2 py-1 rounded-xl text-xs font-bold outline-none border border-slate-700/80 ${
-                                  isDark ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
-                                }`}
+                                className={`w-full sm:w-auto px-2 py-1 rounded-lg text-xs font-bold outline-none bg-transparent border ${dividerBorder} ${primaryText}`}
                               />
                             </div>
                           </div>
@@ -6891,7 +7182,7 @@ export default function App() {
                       )}
 
                       {/* Saldo Principal em Destaque */}
-                      <div className="mt-2">
+                      <div className="mt-1">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
                             {periodSaldoLabel}
@@ -6899,7 +7190,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => handleOpenAdjustBalance(curBalance)}
-                            className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
+                            className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 hover:border-[#FF6A1A] transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
                             title="Ajustar Saldo Atual e Gerar Transação Automática"
                           >
                             <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -6908,36 +7199,38 @@ export default function App() {
                         </div>
 
                         <div className="mt-1 flex items-baseline gap-2 flex-wrap">
-                          <span className={`text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight tabular-nums ${
-                            isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
-                          }`}>
-                            {fmtMoney(curBalance)}
-                          </span>
+                          <AnimatedNumber
+                            value={curBalance}
+                            formatter={fmtMoney}
+                            className={`text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight ${
+                              isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
+                            }`}
+                          />
                         </div>
                       </div>
 
-                      {/* Entradas x Saídas (Moto + Casa) */}
-                      <div className="grid grid-cols-2 gap-2 mt-4">
-                        <div className="p-2.5 sm:p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 min-w-0">
-                          <div className="flex items-center justify-between text-[10px] font-bold text-emerald-500">
+                      {/* Entradas x Saídas (Sem fundo, apenas borda fina e suave) */}
+                      <div className="grid grid-cols-2 gap-2.5 mt-4">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder} min-w-0`}>
+                          <div className="flex items-center justify-between text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
                             <span>+ FATURAMENTO</span>
                             <span>↗</span>
                           </div>
-                          <div className="text-sm sm:text-base font-black mt-0.5 text-emerald-400 tabular-nums truncate">
-                            {fmtMoney(curGross)}
+                          <div className="text-sm sm:text-base font-black mt-0.5 text-emerald-600 dark:text-emerald-400 tabular-nums truncate">
+                            <AnimatedNumber value={curGross} formatter={fmtMoney} />
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                             {entriesScopeLabel}
                           </div>
                         </div>
 
-                        <div className="p-2.5 sm:p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 min-w-0">
-                          <div className="flex items-center justify-between text-[10px] font-bold text-rose-500">
+                        <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder} min-w-0`}>
+                          <div className="flex items-center justify-between text-[10px] font-bold text-rose-600 dark:text-rose-400">
                             <span>- GASTOS TOTAIS</span>
                             <span>↘</span>
                           </div>
-                          <div className="text-sm sm:text-base font-black mt-0.5 text-rose-400 tabular-nums truncate">
-                            {fmtMoney(curExpenses)}
+                          <div className="text-sm sm:text-base font-black mt-0.5 text-rose-600 dark:text-rose-400 tabular-nums truncate">
+                            <AnimatedNumber value={curExpenses} formatter={fmtMoney} />
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                             Moto + Despesas Casa
@@ -6959,7 +7252,6 @@ export default function App() {
                           : DEFAULT_HOUSEHOLD_EXPENSES;
                         const activeHouse = rawHouseList.filter(h => h.isActive !== false);
 
-                        // Verifica se a conta da casa já foi paga neste mês
                         const isHousePaidThisMonth = (h: HouseholdExpenseItem) => {
                           const inExpenses = dbState.expenses.some(e => {
                             if (!e.date || !e.date.startsWith(curMonthStr) || e.isCancelled) return false;
@@ -6974,7 +7266,6 @@ export default function App() {
                           return false;
                         };
 
-                        // Contas da casa com vencimento HOJE pendentes
                         const houseDueToday = activeHouse.filter(h => {
                           const due = getExpenseDueInfo(h);
                           const day = Number(h.dueDay) || 10;
@@ -6982,7 +7273,6 @@ export default function App() {
                         });
                         const pendingHouseDueToday = houseDueToday.filter(h => !isHousePaidThisMonth(h));
 
-                        // Despesas da moto com vencimento HOJE pendentes
                         const rawBikeList: BikeExpenseItem[] = Array.isArray(dbState.bikeExpenses)
                           ? dbState.bikeExpenses
                           : DEFAULT_BIKE_EXPENSES;
@@ -7028,7 +7318,6 @@ export default function App() {
                           })),
                         ];
 
-                        // REGRA: Se NÃO houver nenhum vencimento pendente no dia de hoje, o card fica 100% OCULTO!
                         if (allPendingDueToday.length === 0) {
                           return null;
                         }
@@ -7038,7 +7327,6 @@ export default function App() {
                           0
                         );
 
-                        // Cálculos de saldo vs. vencimento de hoje
                         const isBalanceSufficient = curBalance >= totalAmountDueToday && totalAmountDueToday > 0;
                         const sobraSaldo = curBalance - totalAmountDueToday;
                         const faltaCompletar = Math.max(0, totalAmountDueToday - Math.max(0, curBalance));
@@ -7049,40 +7337,28 @@ export default function App() {
                         const firstPending = allPendingDueToday[0];
 
                         return (
-                          <div className={`mt-3.5 p-3.5 sm:p-4 rounded-2xl border-2 transition-all shadow-md ${
-                            isBalanceSufficient
-                              ? isDark ? 'bg-[#0e1713] border-emerald-500 text-slate-100' : 'bg-white border-emerald-500 text-slate-900'
-                              : isDark ? 'bg-[#15121b] border-rose-500 text-slate-100' : 'bg-white border-rose-500 text-slate-900'
-                          }`}>
+                          <div className={`mt-4 pt-4 border-t ${dividerBorder} space-y-3`}>
                             {/* Header do Bloco */}
-                            <div className="flex items-center justify-between gap-2 flex-wrap mb-2.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
-                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
-                                  isBalanceSufficient
-                                    ? 'bg-emerald-600 text-white border border-emerald-700'
-                                    : 'bg-rose-600 text-white border border-rose-700 animate-pulse'
-                                }`}>
-                                  {firstPending?.type === 'moto' ? (
-                                    <Zap className="w-4 h-4 stroke-[2.5]" />
-                                  ) : (
-                                    <Home className="w-4 h-4 stroke-[2.5]" />
-                                  )}
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-xs sm:text-sm font-black tracking-tight">
-                                      Vencimento de Hoje (Dia {curDay})
+                                {firstPending?.type === 'moto' ? (
+                                  <Zap className={`w-4 h-4 shrink-0 ${isBalanceSufficient ? 'text-emerald-500' : 'text-rose-500 animate-pulse'}`} />
+                                ) : (
+                                  <Home className={`w-4 h-4 shrink-0 ${isBalanceSufficient ? 'text-emerald-500' : 'text-rose-500 animate-pulse'}`} />
+                                )}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={`text-xs sm:text-sm font-black tracking-tight ${primaryText}`}>
+                                    Vencimento de Hoje (Dia {curDay})
+                                  </span>
+                                  {isBalanceSufficient ? (
+                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-500/40">
+                                      ✅ Saldo Suficiente
                                     </span>
-                                    {isBalanceSufficient ? (
-                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs border border-emerald-700">
-                                        ✅ Saldo Suficiente
-                                      </span>
-                                    ) : (
-                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-xs border border-rose-700 animate-pulse">
-                                        🚨 Vence Hoje · Falta Completar
-                                      </span>
-                                    )}
-                                  </div>
+                                  ) : (
+                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent text-rose-600 dark:text-rose-400 border border-rose-500/40 animate-pulse">
+                                      🚨 Vence Hoje · Falta Completar
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
@@ -7096,203 +7372,163 @@ export default function App() {
                                     setBillingSubTab('despesas_casa');
                                   }
                                 }}
-                                className="text-[11px] font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
+                                className="text-[11px] font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1 bg-transparent"
                               >
                                 <span>Ver no Financeiro</span>
                                 <ArrowRight className="w-3.5 h-3.5" />
                               </button>
                             </div>
 
-                            {/* Conteúdo: Contas que Vencem Hoje */}
-                            <div className="space-y-3">
-                              {/* Lista de Contas que Vencem Hoje */}
-                              <div className="flex flex-wrap gap-2">
-                                {allPendingDueToday.map(item => (
-                                  <div
-                                    key={`${item.type}_${item.id}`}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-2 shadow-xs ${
-                                      isDark
-                                        ? 'bg-[#1e1319] border-rose-500/80 text-white'
-                                        : 'bg-rose-50 border-rose-500 text-slate-900'
-                                    }`}
-                                  >
-                                    <span className="text-base">{item.icon}</span>
-                                    <span className="font-black">{item.name}</span>
-                                    <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums bg-white dark:bg-black/50 px-1.5 py-0.5 rounded border border-rose-300 dark:border-rose-700">
-                                      {item.amount > 0 ? fmtMoney(item.amount) : 'A definir'}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-
-                              {/* Cards comparativos: Saldo Atual vs. Vencimento de Hoje vs. Sobra / Falta */}
-                              <div className="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
-                                {/* 1. Saldo Atual */}
-                                <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
-                                  isDark ? 'bg-[#090b12] border-slate-700' : 'bg-slate-100 border-slate-300'
-                                }`}>
-                                  <div className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-400">
-                                    1. Saldo Atual
-                                  </div>
-                                  <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
-                                    curBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                                  }`}>
-                                    {fmtMoney(curBalance)}
-                                  </div>
-                                </div>
-
-                                {/* 2. Vencimento de Hoje */}
-                                <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
-                                  isDark ? 'bg-[#090b12] border-rose-500/80' : 'bg-rose-50 border-rose-400'
-                                }`}>
-                                  <div className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400">
-                                    2. Vence Hoje
-                                  </div>
-                                  <div className="text-sm sm:text-base font-black text-rose-600 dark:text-rose-400 tabular-nums mt-1">
-                                    {totalAmountDueToday > 0 ? fmtMoney(totalAmountDueToday) : 'R$ 0,00'}
-                                  </div>
-                                </div>
-
-                                {/* 3. O Que Falta Pagar / O Que Vai Ficar */}
-                                <div className={`p-2.5 rounded-xl border-2 shadow-md ${
-                                  isBalanceSufficient
-                                    ? isDark
-                                      ? 'bg-[#0b2417] border-emerald-500 text-white'
-                                      : 'bg-emerald-100 border-emerald-600 text-emerald-950'
-                                    : isDark
-                                      ? 'bg-[#2b0d18] border-rose-500 text-white'
-                                      : 'bg-rose-100 border-rose-600 text-rose-950'
-                                }`}>
-                                  <div className={`text-[10px] font-black uppercase tracking-wider ${
-                                    isBalanceSufficient
-                                      ? 'text-emerald-700 dark:text-emerald-300'
-                                      : 'text-rose-700 dark:text-rose-300'
-                                  }`}>
-                                    {isBalanceSufficient ? '3. Vai Ficar (Sobra)' : '3. Falta Pagar'}
-                                  </div>
-                                  <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
-                                    isBalanceSufficient
-                                      ? 'text-emerald-600 dark:text-emerald-300'
-                                      : 'text-rose-600 dark:text-rose-300'
-                                  }`}>
-                                    {isBalanceSufficient ? fmtMoney(sobraSaldo) : fmtMoney(faltaCompletar)}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Barra de Progresso e Mensagem de Diagnóstico */}
-                              {totalAmountDueToday > 0 ? (
-                                <div className="space-y-2">
-                                  <div className="flex items-center justify-between text-[11px] font-black">
-                                    <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>
-                                      Cobertura da conta com o Saldo Atual:
-                                    </span>
-                                    <span className={`tabular-nums ${isBalanceSufficient ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                                      {coveragePct}% coberto
-                                    </span>
-                                  </div>
-                                  <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                                    <div
-                                      className={`h-full rounded-full transition-all duration-500 ${
-                                        isBalanceSufficient ? 'bg-emerald-500' : 'bg-rose-500'
-                                      }`}
-                                      style={{ width: `${coveragePct}%` }}
-                                    />
-                                  </div>
-
-                                  {/* Caixa de Alerta de Alto Contraste */}
-                                  <div className={`p-3 rounded-xl border-2 shadow-xs flex items-start gap-2.5 ${
-                                    isBalanceSufficient
-                                      ? isDark
-                                        ? 'bg-[#0c2216] border-emerald-500/80 text-white'
-                                        : 'bg-emerald-50 border-emerald-500 text-slate-900'
-                                      : isDark
-                                        ? 'bg-[#261019] border-rose-500 text-white'
-                                        : 'bg-rose-50 border-rose-500 text-slate-900'
-                                  }`}>
-                                    {isBalanceSufficient ? (
-                                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                                    ) : (
-                                      <AlertTriangle className="w-5 h-5 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
-                                    )}
-                                    <div className="text-xs leading-relaxed space-y-1">
-                                      {isBalanceSufficient ? (
-                                        <>
-                                          <div className="font-black text-emerald-400 uppercase tracking-wide">
-                                            Saldo Suficiente para Pagar
-                                          </div>
-                                          <p className={`font-medium ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                                            Excelente! O seu saldo atual cobre integralmente a conta de hoje. Após efetuar o pagamento, ainda{' '}
-                                            <strong className="text-emerald-300 bg-emerald-950/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-500/50">
-                                              vai ficar {fmtMoney(sobraSaldo)} limpo
-                                            </strong>{' '}
-                                            no seu bolso.
-                                          </p>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <div className="font-black text-rose-600 dark:text-rose-400 uppercase tracking-wide flex items-center gap-1.5">
-                                            <span>Atenção ao Vencimento de Hoje</span>
-                                          </div>
-                                          <p className="font-semibold text-slate-900 dark:text-slate-100">
-                                            Para que a conta do dia seja paga integralmente,{' '}
-                                            <strong className="text-rose-700 dark:text-rose-200 bg-rose-200 dark:bg-rose-950/90 px-1.5 py-0.5 rounded border border-rose-400 dark:border-rose-500/60 font-black">
-                                              falta completar {fmtMoney(faltaCompletar)}
-                                            </strong>{' '}
-                                            faturando nas próximas corridas.
-                                          </p>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-
-                              {/* Botão de Lançar Pagamento da Conta de Hoje */}
-                              <div className="flex items-center gap-2 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (firstPending) {
-                                      if (firstPending.type === 'casa') {
-                                        setSelectedHouseholdExpenseId(firstPending.id);
-                                        setBillingSubTab('despesas_casa');
-                                      } else {
-                                        setSelectedBikeExpenseId(firstPending.id);
-                                        setBillingSubTab('despesas_moto');
-                                      }
-                                      setSelectedCategory(firstPending.name);
-                                      if (firstPending.amount > 0) {
-                                        setExpenseAmount(String(firstPending.amount));
-                                      }
-                                    }
-                                    setActiveTab('billing');
-                                  }}
-                                  className="flex-1 py-2.5 px-4 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all"
+                            {/* Lista de Contas que Vencem Hoje */}
+                            <div className="flex flex-wrap gap-2">
+                              {allPendingDueToday.map(item => (
+                                <div
+                                  key={`${item.type}_${item.id}`}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 bg-transparent border ${dividerBorder} ${primaryText}`}
                                 >
-                                  <Zap className="w-4 h-4 stroke-[2.5]" />
-                                  <span>Registrar Pagamento da Conta ({firstPending?.name || 'Conta'})</span>
-                                </button>
+                                  <span className="text-base">{item.icon}</span>
+                                  <span className="font-black">{item.name}</span>
+                                  <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums">
+                                    {item.amount > 0 ? fmtMoney(item.amount) : 'A definir'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Comparativo Minimalista: Saldo Atual vs. Vencimento de Hoje vs. Sobra / Falta */}
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                              <div className={`p-2.5 rounded-xl bg-transparent border ${dividerBorder}`}>
+                                <div className={`text-[10px] font-bold uppercase ${mutedText}`}>
+                                  1. Saldo Atual
+                                </div>
+                                <div className={`text-xs sm:text-sm font-black tabular-nums mt-1 ${
+                                  curBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                }`}>
+                                  {fmtMoney(curBalance)}
+                                </div>
                               </div>
+
+                              <div className={`p-2.5 rounded-xl bg-transparent border ${dividerBorder}`}>
+                                <div className="text-[10px] font-bold uppercase text-rose-600 dark:text-rose-400">
+                                  2. Vence Hoje
+                                </div>
+                                <div className="text-xs sm:text-sm font-black text-rose-600 dark:text-rose-400 tabular-nums mt-1">
+                                  {totalAmountDueToday > 0 ? fmtMoney(totalAmountDueToday) : 'R$ 0,00'}
+                                </div>
+                              </div>
+
+                              <div className={`p-2.5 rounded-xl bg-transparent border ${
+                                isBalanceSufficient ? 'border-emerald-500/40' : 'border-rose-500/40'
+                              }`}>
+                                <div className={`text-[10px] font-bold uppercase tracking-wider ${
+                                  isBalanceSufficient
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-rose-600 dark:text-rose-400'
+                                }`}>
+                                  {isBalanceSufficient ? '3. Vai Ficar' : '3. Falta Pagar'}
+                                </div>
+                                <div className={`text-xs sm:text-sm font-black tabular-nums mt-1 ${
+                                  isBalanceSufficient
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-rose-600 dark:text-rose-400'
+                                }`}>
+                                  {isBalanceSufficient ? fmtMoney(sobraSaldo) : fmtMoney(faltaCompletar)}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Barra de Progresso e Diagnóstico */}
+                            {totalAmountDueToday > 0 ? (
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-[11px] font-bold">
+                                  <span className={secondaryText}>
+                                    Cobertura da conta com o Saldo Atual:
+                                  </span>
+                                  <span className={`tabular-nums font-black ${isBalanceSufficient ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                    {coveragePct}% coberto
+                                  </span>
+                                </div>
+                                <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
+                                  <div
+                                    className={`h-full rounded-full dashboard-progress-fill ${
+                                      isBalanceSufficient ? 'bg-emerald-500' : 'bg-rose-500'
+                                    }`}
+                                    style={{ width: `${coveragePct}%` }}
+                                  />
+                                </div>
+
+                                <div className={`pt-1 flex items-start gap-2 text-xs leading-relaxed ${secondaryText}`}>
+                                  {isBalanceSufficient ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
+                                  ) : (
+                                    <AlertTriangle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
+                                  )}
+                                  <div>
+                                    {isBalanceSufficient ? (
+                                      <span>
+                                        Seu saldo atual cobre integralmente a conta de hoje e ainda{' '}
+                                        <strong className="text-emerald-600 dark:text-emerald-400 font-black">
+                                          vai ficar {fmtMoney(sobraSaldo)} limpo
+                                        </strong>.
+                                      </span>
+                                    ) : (
+                                      <span>
+                                        Para quitar a conta do dia,{' '}
+                                        <strong className="text-rose-600 dark:text-rose-400 font-black">
+                                          falta completar {fmtMoney(faltaCompletar)}
+                                        </strong>{' '}
+                                        nas próximas corridas.
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* Botão de Lançar Pagamento da Conta de Hoje (Sem fundo) */}
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (firstPending) {
+                                    if (firstPending.type === 'casa') {
+                                      setSelectedHouseholdExpenseId(firstPending.id);
+                                      setBillingSubTab('despesas_casa');
+                                    } else {
+                                      setSelectedBikeExpenseId(firstPending.id);
+                                      setBillingSubTab('despesas_moto');
+                                    }
+                                    setSelectedCategory(firstPending.name);
+                                    if (firstPending.amount > 0) {
+                                      setExpenseAmount(String(firstPending.amount));
+                                    }
+                                  }
+                                  setActiveTab('billing');
+                                }}
+                                className="flex-1 py-2 px-4 rounded-xl bg-transparent border border-[#FF6A1A]/60 hover:border-[#FF6A1A] text-[#FF6A1A] text-xs font-black cursor-pointer flex items-center justify-center gap-2 transition-all"
+                              >
+                                <Zap className="w-3.5 h-3.5 stroke-[2.5]" />
+                                <span>Registrar Pagamento ({firstPending?.name || 'Conta'})</span>
+                              </button>
                             </div>
                           </div>
                         );
                       })()}
 
-                      {/* Barra de Cobertura das Obrigações do Mês */}
-                      <div className={`mt-4 p-3 rounded-xl ${surfaceSubtle} ${isDark ? 'border border-slate-700/40' : 'border border-slate-300 shadow-2xs'}`}>
+                      {/* Barra de Cobertura das Obrigações do Mês (Sem card com fundo, separado por linha sutil) */}
+                      <div className={`mt-4 pt-4 border-t ${dividerBorder}`}>
                         <div className="flex items-center justify-between text-[11px] font-bold mb-1.5 flex-wrap gap-1">
-                          <span className={`flex items-center gap-1.5 ${isDark ? 'text-slate-200' : 'text-slate-900 font-black'}`}>
+                          <span className={`flex items-center gap-1.5 ${primaryText} font-black`}>
                             <Shield className="w-3.5 h-3.5 text-[#FF6A1A]" />
                             <span>Cobertura das Reservas do Mês</span>
                           </span>
                           <span className="text-[#FF6A1A] font-black tabular-nums">
-                            {reserveProgress}% coberto
+                            <AnimatedNumber value={reserveProgress} formatter={v => `${Math.round(v)}% coberto`} />
                           </span>
                         </div>
-                        <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                        <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
                           <div
-                            className={`h-full rounded-full transition-all duration-500 ${
+                            className={`h-full rounded-full dashboard-progress-fill ${
                               reserveProgress >= 100
                                 ? 'bg-emerald-500'
                                 : reserveProgress >= 50
@@ -7302,16 +7538,16 @@ export default function App() {
                             style={{ width: `${reserveProgress}%` }}
                           />
                         </div>
-                        <div className={`flex items-center justify-between text-[10px] font-bold mt-1.5 tabular-nums ${mutedText}`}>
+                        <div className={`flex items-center justify-between text-[10px] font-bold mt-2 tabular-nums ${mutedText}`}>
                           <span>Saldo: {fmtMoney(Math.max(0, curBalance))}</span>
                           <button
                             type="button"
                             onClick={() => setShowReserveBreakdown(prev => !prev)}
-                            className="text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1 font-black"
+                            className="text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1 font-black bg-transparent"
                             title="Ver detalhes de como esta meta de reservas foi calculada"
                           >
                             <span>Meta Reservas: {fmtMoney(monthlyObligations)}</span>
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-[#FF6A1A]/15 text-[#FF6A1A]">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A]">
                               {showReserveBreakdown ? '▲ fechar' : '▼ de onde vem?'}
                             </span>
                           </button>
@@ -7319,48 +7555,48 @@ export default function App() {
 
                         {/* Breakdown Explicativo das 3 Caixinhas de Blindagem */}
                         {showReserveBreakdown && (
-                          <div className={`mt-2.5 pt-2 border-t border-slate-700/40 text-[10px] space-y-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                          <div className={`mt-2.5 pt-2.5 border-t ${dividerBorder} text-[10px] space-y-1.5 ${secondaryText}`}>
                             <div className="font-black text-[#FF6A1A] flex items-center justify-between">
                               <span>Composição da Meta de Blindagem do Mês:</span>
-                              <span className="text-[9px] font-normal text-slate-400">3 Caixinhas</span>
+                              <span className={`text-[9px] font-normal ${mutedText}`}>3 Caixinhas</span>
                             </div>
                             <div className="flex justify-between items-center py-0.5">
                               <span className="flex items-center gap-1">
                                 <span>🏍️</span>
                                 <span>Moto & Operação:</span>
                               </span>
-                              <span className="font-extrabold text-orange-400 tabular-nums">
+                              <span className="font-extrabold text-orange-500 dark:text-orange-400 tabular-nums">
                                 {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}
                               </span>
                             </div>
-                            <div className="text-[9px] text-slate-400 pl-4 pb-0.5">
+                            <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
                               Peças ({fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}) + Gasolina ({fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}) + IPVA/Docs ({fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}) + Marmita ({fmtCurrencyExact(financialIntelligence.monthlyFoodCost)})
                             </div>
 
-                            <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40">
+                            <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
                               <span className="flex items-center gap-1">
                                 <span>🏠</span>
                                 <span>Despesas da Casa & Família:</span>
                               </span>
-                              <span className="font-extrabold text-blue-400 tabular-nums">
+                              <span className="font-extrabold text-blue-600 dark:text-blue-400 tabular-nums">
                                 {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}
                               </span>
                             </div>
-                            <div className="text-[9px] text-slate-400 pl-4 pb-0.5">
+                            <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
                               Aluguel, Luz, Água, Mercado, Internet e Gás
                             </div>
 
-                            <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40">
+                            <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
                               <span className="flex items-center gap-1">
                                 <span>🛡️</span>
                                 <span>Reserva de Emergência ({financialIntelligence.emergencyPct}%):</span>
                               </span>
-                              <span className="font-extrabold text-purple-400 tabular-nums">
+                              <span className="font-extrabold text-purple-600 dark:text-purple-400 tabular-nums">
                                 {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}
                               </span>
                             </div>
 
-                            <div className="pt-1.5 border-t border-slate-700/60 flex justify-between items-center font-black text-xs text-[#FF6A1A]">
+                            <div className={`pt-1.5 border-t ${dividerBorder} flex justify-between items-center font-black text-xs text-[#FF6A1A]`}>
                               <span>= Meta Total para o Mês:</span>
                               <span className="tabular-nums">{fmtCurrencyExact(monthlyObligations)}</span>
                             </div>
@@ -7369,7 +7605,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => setActiveTab('billing')}
-                                className="text-[9px] text-[#FF6A1A] hover:underline font-bold cursor-pointer"
+                                className="text-[9px] text-[#FF6A1A] hover:underline font-bold cursor-pointer bg-transparent"
                               >
                                 Personalizar contas na Central de Finanças ➔
                               </button>
@@ -7379,12 +7615,12 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Botões de Ação Rápida */}
-                    <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-700/40">
+                    {/* Botões de Ação Rápida (Sem fundo, borda fina e suave) */}
+                    <div className={`flex items-center gap-2 mt-4 pt-3 border-t ${dividerBorder}`}>
                       <button
                         type="button"
-                        onClick={openNewEntryModal}
-                        className="flex-1 py-2 sm:py-2.5 px-3 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                        onClick={() => openNewEntryModal('ganho', false)}
+                        className="flex-1 py-2 sm:py-2.5 px-3 rounded-xl text-xs font-black bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/60 hover:border-[#FF6A1A] transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5 stroke-[3]" />
                         <span>+ Corrida / Gasto</span>
@@ -7396,10 +7632,10 @@ export default function App() {
                           setActiveTab('billing');
                           setBillingSubTab('ganhos');
                         }}
-                        className={`py-2 sm:py-2.5 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                        className={`py-2 sm:py-2.5 px-3 rounded-xl text-xs font-bold bg-transparent border transition-all flex items-center justify-center gap-1 cursor-pointer ${
                           isDark
-                            ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
-                            : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-800'
+                            ? 'border-slate-800 hover:border-slate-600 text-slate-200'
+                            : 'border-slate-300 hover:border-slate-400 text-slate-800'
                         }`}
                       >
                         <span>Extrato</span>
@@ -7411,18 +7647,17 @@ export default function App() {
               })()}
             </div>
 
-            <div className={`rounded-2xl sm:rounded-3xl p-3 sm:p-4 ${surfaceCard} border border-[#FF6A1A]/30 shadow-sm`}>
-              <div className="flex flex-row items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-800/50">
+            {/* RESERVAS FINANCEIRAS OBRIGATÓRIAS (SEÇÃO MINIMALISTA SEM CARD DE FUNDO) */}
+            <div className={`pb-6 border-b ${dividerBorder}`}>
+              <div className={`flex flex-row items-center justify-between gap-2 pb-3 mb-4 border-b ${dividerBorder}`}>
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-7 h-7 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center text-sm shrink-0">
-                    🛡️
-                  </span>
+                  <span className="text-base shrink-0">🛡️</span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <h2 className="text-xs sm:text-sm font-black truncate">
+                      <h2 className={`text-xs sm:text-sm font-black truncate ${primaryText}`}>
                         Reservas Financeiras Obrigatórias
                       </h2>
-                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40">
                         Blindagem
                       </span>
                     </div>
@@ -7437,14 +7672,14 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('planejamento');
                   }}
-                  className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer shrink-0 flex items-center gap-1"
+                  className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 hover:border-[#FF6A1A] transition-colors cursor-pointer shrink-0 flex items-center gap-1"
                 >
                   <SlidersHorizontal className="w-3 h-3" />
                   <span className="hidden xs:inline">Ajustar</span>
                 </button>
               </div>
 
-              {/* Grid Compacto Lado a Lado das 6 Reservas Individuais (2 colunas no celular, 3 no tablet, 6 no desktop) */}
+              {/* Grid Compacto Lado a Lado das 6 Reservas Individuais (Sem fundo, apenas borda fina e suave) */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5">
                 {/* 1. Reserva Combustível */}
                 <div
@@ -7452,21 +7687,21 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('despesas_moto');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-rose-500 ${surfaceSubtle} hover:border-rose-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-rose-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ajustar o gasto com combustível"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-rose-400 font-black min-w-0">
+                    <span className="flex items-center gap-1 text-rose-500 dark:text-rose-400 font-black min-w-0">
                       <span className="shrink-0">⛽</span>
                       <span className="truncate">Combustível</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-rose-500/15 text-rose-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-rose-500/30 text-rose-500 dark:text-rose-400 shrink-0">
                       {financialIntelligence.fuelPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyFuelCost)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyFuelCost} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}/mês
@@ -7479,21 +7714,21 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('despesas_moto');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-amber-500 ${surfaceSubtle} hover:border-amber-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-amber-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ver as peças e manutenções da moto"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-amber-400 font-black min-w-0">
+                    <span className="flex items-center gap-1 text-amber-500 dark:text-amber-400 font-black min-w-0">
                       <span className="shrink-0">🛠️</span>
                       <span className="truncate">Manutenção</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-amber-400/15 text-amber-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-amber-500/30 text-amber-500 dark:text-amber-400 shrink-0">
                       {financialIntelligence.maintPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-amber-500 dark:text-amber-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyMaintReserve} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
@@ -7506,21 +7741,21 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('despesas_moto');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-sky-400 ${surfaceSubtle} hover:border-sky-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-sky-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ver IPVA, licenciamento e seguro"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-sky-400 font-black min-w-0">
+                    <span className="flex items-center gap-1 text-sky-600 dark:text-sky-400 font-black min-w-0">
                       <span className="shrink-0">📄</span>
                       <span className="truncate">Docs & IPVA</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-sky-400/15 text-sky-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-sky-500/30 text-sky-600 dark:text-sky-400 shrink-0">
                       {financialIntelligence.docsPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-sky-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-sky-600 dark:text-sky-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyDocsReserve} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
@@ -7533,21 +7768,21 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('planejamento');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-orange-400 ${surfaceSubtle} hover:border-orange-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-orange-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ajustar o orçamento de alimentação na rua"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-orange-400 font-black min-w-0">
+                    <span className="flex items-center gap-1 text-orange-500 dark:text-orange-400 font-black min-w-0">
                       <span className="shrink-0">🍱</span>
                       <span className="truncate">Alimentação</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-orange-400/15 text-orange-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-orange-500/30 text-orange-500 dark:text-orange-400 shrink-0">
                       {financialIntelligence.foodPctOfGross}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-orange-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyFoodCost)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-orange-500 dark:text-orange-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyFoodCost} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
@@ -7560,23 +7795,23 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('despesas_casa');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-blue-500 ${surfaceSubtle} hover:border-blue-400 transition-all cursor-pointer group flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-blue-500/50 transition-all cursor-pointer group flex flex-col justify-between`}
                   title="Clique para gerenciar suas contas de casa"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-blue-400 font-black group-hover:text-blue-300 min-w-0">
+                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400 font-black min-w-0">
                       <span className="shrink-0">🏠</span>
                       <span className="truncate">Contas Casa</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-blue-500/15 text-blue-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-blue-500/30 text-blue-600 dark:text-blue-400 shrink-0">
                       {financialIntelligence.housePctOfGross}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
-                  <div className="text-[10px] mt-0.5 font-semibold text-blue-300 truncate">
+                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês ↗
                   </div>
                 </div>
@@ -7587,21 +7822,21 @@ export default function App() {
                     setActiveTab('billing');
                     setBillingSubTab('planejamento');
                   }}
-                  className={`rounded-xl p-2.5 border-l-3 border-l-purple-500 ${surfaceSubtle} hover:border-purple-400 transition-all cursor-pointer flex flex-col justify-between`}
+                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-purple-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ajustar a reserva de emergência"
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-purple-400 font-black min-w-0">
+                    <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-black min-w-0">
                       <span className="shrink-0">🛡️</span>
                       <span className="truncate">Emergência</span>
                     </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-purple-500/15 text-purple-400 shrink-0">
+                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-purple-500/30 text-purple-600 dark:text-purple-400 shrink-0">
                       {financialIntelligence.emergencyPct}%
                     </span>
                   </div>
-                  <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-1 leading-tight">
-                    {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                    <span className="text-[10px] font-semibold ml-0.5 text-slate-400">/dia</span>
+                  <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1.5 leading-tight">
+                    <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
+                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
                     {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
@@ -7609,11 +7844,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* CARD ORGANIZADO DA DIVISÃO POR CAIXINHA (4 BLOCOS ALINHADOS E SEM CONFUSÃO) */}
-              <div className={`mt-3 p-3 rounded-2xl border ${
-                isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-100/90 border-slate-200/90'
-              }`}>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              {/* RESUMO DA DIVISÃO POR CAIXINHA (MINIMALISTA SEM FUNDO, APENAS LINHAS E BORDAS FINAS) */}
+              <div className={`mt-5 pt-4 border-t ${dividerBorder}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs">📊</span>
                     <span className="text-[11px] sm:text-xs font-black uppercase tracking-wide text-[#FF6A1A]">
@@ -7621,35 +7854,31 @@ export default function App() {
                     </span>
                   </div>
                   <span className={`text-[10px] font-bold ${mutedText}`}>
-                    Cálculo para <strong className={isDark ? 'text-slate-200' : 'text-slate-900 font-black'}>{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
+                    Cálculo para <strong className={`${primaryText} font-black`}>{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
                   {/* Caixinha 1: Giro da Moto + Rua */}
                   <div
                     onClick={() => {
                       setActiveTab('billing');
                       setBillingSubTab('despesas_moto');
                     }}
-                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                      isDark
-                        ? 'bg-slate-950/60 border-rose-500/25 hover:border-rose-500/50'
-                        : 'bg-white border-rose-200 hover:border-rose-400'
-                    }`}
+                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-rose-500/50 cursor-pointer transition-colors`}
                   >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-rose-400">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-rose-500 dark:text-rose-400">
                       <span className="truncate">🏍️ 1. Moto & Rua</span>
                       <span className="text-[9px] opacity-80">↗</span>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-0.5">
-                      {fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}
-                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1">
+                      <AnimatedNumber value={financialIntelligence.dailyBikeCostsTotal} formatter={fmtCurrencyExact} />
+                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                     </div>
                     <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
                       {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}/mês
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                       Gasolina + Manut. + Docs + Marmita
                     </div>
                   </div>
@@ -7660,24 +7889,20 @@ export default function App() {
                       setActiveTab('billing');
                       setBillingSubTab('despesas_casa');
                     }}
-                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                      isDark
-                        ? 'bg-slate-950/60 border-blue-500/25 hover:border-blue-500/50'
-                        : 'bg-white border-blue-200 hover:border-blue-400'
-                    }`}
+                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-blue-500/50 cursor-pointer transition-colors`}
                   >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-blue-400">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-blue-600 dark:text-blue-400">
                       <span className="truncate">🏠 2. Contas Casa</span>
                       <span className="text-[9px] opacity-80">↗</span>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-0.5">
-                      {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}
-                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1">
+                      <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
+                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                     </div>
                     <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
                       {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                       Aluguel, luz, água e mercado
                     </div>
                   </div>
@@ -7688,77 +7913,67 @@ export default function App() {
                       setActiveTab('billing');
                       setBillingSubTab('planejamento');
                     }}
-                    className={`p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                      isDark
-                        ? 'bg-slate-950/60 border-purple-500/25 hover:border-purple-500/50'
-                        : 'bg-white border-purple-200 hover:border-purple-400'
-                    }`}
+                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-purple-500/50 cursor-pointer transition-colors`}
                   >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-400">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-600 dark:text-purple-400">
                       <span className="truncate">🛡️ 3. Emergência</span>
                       <span className="text-[9px] opacity-80">{financialIntelligence.emergencyPct}%</span>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-purple-400 tabular-nums mt-0.5">
-                      {fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}
-                      <span className="text-[10px] font-semibold text-slate-400 ml-0.5">/dia</span>
+                    <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1">
+                      <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
+                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                     </div>
                     <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
                       {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
                     </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                       Fundo de imprevistos pessoal
                     </div>
                   </div>
 
                   {/* Caixinha 4: Total Diário a Separar (Soma das 3 Caixinhas) */}
-                  <div
-                    className={`p-2.5 rounded-xl border ${
-                      isDark
-                        ? 'bg-emerald-950/25 border-emerald-500/40'
-                        : 'bg-emerald-50 border-emerald-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-400">
+                  <div className="p-3 rounded-xl bg-transparent border border-emerald-500/40">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
                       <span className="truncate">🔒 Total a Guardar</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400">
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-transparent border border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
                         1+2+3
                       </span>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-emerald-400 tabular-nums mt-0.5">
-                      {fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}
-                      <span className="text-[10px] font-semibold text-emerald-300 ml-0.5">/dia</span>
+                    <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
+                      <AnimatedNumber value={financialIntelligence.totalDailyCostsAndReserves} formatter={fmtCurrencyExact} />
+                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                     </div>
-                    <div className="text-[10px] font-bold text-emerald-400/90 tabular-nums mt-0.5">
+                    <div className="text-[10px] font-bold text-emerald-600/90 dark:text-emerald-400/90 tabular-nums mt-0.5">
                       {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês
                     </div>
-                    <div className="text-[9px] text-emerald-300/80 mt-0.5 truncate">
+                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                       Meta p/ cobrir Moto + Casa + Emerg.
                     </div>
                   </div>
                 </div>
 
                 {/* Barra Inferior Explicativa: Piso Mínimo vs Saldo Livre */}
-                <div className="mt-2.5 pt-2 border-t border-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[10px]">
+                <div className={`mt-3 pt-2.5 border-t ${dividerBorder} flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[10px]`}>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`font-bold ${mutedText}`}>
                       🎯 Piso Mínimo (só Moto + Casa):
                     </span>
-                    <strong className="text-amber-400 font-black tabular-nums">
+                    <strong className="text-amber-500 dark:text-amber-400 font-black tabular-nums">
                       {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia
                     </strong>
-                    <span className="text-slate-600 hidden sm:inline">•</span>
-                    <span className={`${mutedText}`}>
-                      Sua base atual: <strong className={`tabular-nums ${isDark ? 'text-slate-300' : 'text-slate-900 font-black'}`}>{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
+                    <span className={`${mutedText} hidden sm:inline`}>•</span>
+                    <span className={mutedText}>
+                      Sua base atual: <strong className={`tabular-nums ${primaryText} font-black`}>{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
                     </span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
                     {financialIntelligence.dailyNetProfit >= 0 ? (
-                      <span className="text-emerald-400 font-black tabular-nums">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
                         💵 Sobra Livre: +{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia ({financialIntelligence.netMarginPct}%)
                       </span>
                     ) : (
-                      <span className="text-amber-400 font-bold tabular-nums">
+                      <span className="text-amber-500 dark:text-amber-400 font-bold tabular-nums">
                         💡 Para cobrir tudo, fature <strong>{fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}/dia</strong> (+{fmtCurrencyExact(Math.abs(financialIntelligence.dailyNetProfit))}/dia na base)
                       </span>
                     )}
@@ -7767,606 +7982,617 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
-            {/* Left Column: Hero Odometer, Level Road & Main Financials */}
-            <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6">
-              {/* LIVE ACTIVE SHIFT BANNER */}
-              {/* Period Earnings + Real-Time Productivity */}
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-                  <h2 className="text-sm sm:text-base font-extrabold">Ganhos por Período & Produtividade</h2>
-                  <button
-                    onClick={() => setActiveTab('billing')}
-                    className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer shrink-0"
-                  >
-                    Ver completo
-                  </button>
-                </div>
-
-                {/* Card de Meta Diária */}
-                {(() => {
-                  const dailyTarget = Math.max(0, Number(dbState.dailyGoal) || 0);
-                  const dailyEarned = progressAnalytics.revToday;
-                  const dailyRawPct = dailyTarget > 0 ? Math.round((dailyEarned / dailyTarget) * 100) : 0;
-                  const dailyBarPct = Math.min(100, Math.max(0, dailyRawPct));
-                  const dailyRemaining = Math.max(0, dailyTarget - dailyEarned);
-                  const isDailyGoalReached = dailyTarget > 0 && dailyEarned >= dailyTarget;
-
-                  return (
-                    <div
-                      className={`rounded-xl sm:rounded-2xl p-3.5 sm:p-4 border transition-colors ${
-                        isDailyGoalReached
-                          ? isDark
-                            ? 'bg-emerald-950/20 border-emerald-500/40'
-                            : 'bg-emerald-50/70 border-emerald-300'
-                          : surfaceSubtle
-                      }`}
+            {/* GRID INFERIOR MINIMALISTA (SEM CARDS PRINCIPAIS PESADOS, SEPARADO POR LINHAS SUTIS) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+              {/* Coluna Esquerda: Metas, Produtividade & Gráfico dos Últimos 7 Dias */}
+              <div className={`lg:col-span-7 flex flex-col gap-6 pb-6 lg:pb-0 border-b lg:border-b-0 lg:border-r lg:pr-8 ${dividerBorder}`}>
+                {/* Ganhos por Período & Produtividade (Minimalista) */}
+                <div className={`pb-6 border-b ${dividerBorder}`}>
+                  <div className={`flex items-center justify-between gap-2 pb-3 mb-2 border-b ${dividerBorder}`}>
+                    <h2 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>Ganhos por Período & Produtividade</h2>
+                    <button
+                      onClick={() => setActiveTab('billing')}
+                      className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer shrink-0 bg-transparent"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Target
-                            className={`w-4 h-4 shrink-0 ${
-                              isDailyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
-                            }`}
-                          />
-                          <span className="text-xs sm:text-sm font-extrabold">Meta Diária de Hoje</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs sm:text-sm font-black tabular-nums ${
-                              isDailyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
-                            }`}
-                          >
-                            {fmtMoney(dailyEarned)} / {fmtMoney(dailyTarget)} ({dailyRawPct}%)
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('settings')}
-                            title="Ajustar Meta Diária nas Configurações"
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                              isDark
-                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
-                            }`}
-                          >
-                            Ajustar
-                          </button>
-                        </div>
-                      </div>
+                      Ver completo
+                    </button>
+                  </div>
 
-                      <div
-                        className={`mt-2.5 h-2.5 sm:h-3 rounded-full overflow-hidden ${
-                          isDark ? 'bg-slate-800' : 'bg-slate-200'
-                        }`}
-                      >
+                  {/* 1. Meta Diária de Hoje (Minimalista sem fundo) */}
+                  {(() => {
+                    const dailyTarget = Math.max(0, Number(dbState.dailyGoal) || 0);
+                    const dailyEarned = progressAnalytics.revToday;
+                    const dailyRawPct = dailyTarget > 0 ? Math.round((dailyEarned / dailyTarget) * 100) : 0;
+                    const dailyBarPct = Math.min(100, Math.max(0, dailyRawPct));
+                    const dailyRemaining = Math.max(0, dailyTarget - dailyEarned);
+                    const isDailyGoalReached = dailyTarget > 0 && dailyEarned >= dailyTarget;
+
+                    return (
+                      <div className={`py-3.5 border-b ${dividerBorder}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Target
+                              className={`w-4 h-4 shrink-0 ${
+                                isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}
+                            />
+                            <span className={`text-xs sm:text-sm font-extrabold ${primaryText}`}>Meta Diária de Hoje</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs sm:text-sm font-black tabular-nums ${
+                                isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}
+                            >
+                              <AnimatedNumber value={dailyEarned} formatter={fmtMoney} /> / {fmtMoney(dailyTarget)} ({dailyRawPct}%)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('settings')}
+                              title="Ajustar Meta Diária nas Configurações"
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
+                            >
+                              Ajustar
+                            </button>
+                          </div>
+                        </div>
+
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isDailyGoalReached
-                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                              : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
+                          className={`mt-2.5 h-2 rounded-full overflow-hidden ${
+                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
                           }`}
-                          style={{ width: `${dailyBarPct}%` }}
-                        />
-                      </div>
-
-                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
-                        <span className={isDailyGoalReached ? 'text-emerald-400 font-bold' : mutedText}>
-                          {isDailyGoalReached
-                            ? `🎉 Meta diária batida! (+${fmtMoney(dailyEarned - dailyTarget)} acima da meta)`
-                            : `Faltam ${fmtMoney(dailyRemaining)} para atingir o objetivo de hoje`}
-                        </span>
-                        <span className={isDailyGoalReached ? 'text-emerald-400 font-extrabold' : mutedText}>
-                          {dailyRawPct}% concluído
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Meta de Faturamento Semanal Progress Bar */}
-                {(() => {
-                  const weeklyTarget = Math.max(0, Number(dbState.weeklyGoal) || 0);
-                  const weeklyEarned = periodTotals.revWeek;
-                  const weeklyRawPct = weeklyTarget > 0 ? Math.round((weeklyEarned / weeklyTarget) * 100) : 0;
-                  const weeklyBarPct = Math.min(100, Math.max(0, weeklyRawPct));
-                  const weeklyRemaining = Math.max(0, weeklyTarget - weeklyEarned);
-                  const isWeeklyGoalReached = weeklyTarget > 0 && weeklyEarned >= weeklyTarget;
-
-                  return (
-                    <div className={`mt-2.5 sm:mt-3 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 ${surfaceSubtle}`}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Trophy
-                            className={`w-4 h-4 shrink-0 ${
-                              isWeeklyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
-                            }`}
-                          />
-                          <span className="text-xs sm:text-sm font-extrabold">
-                            Meta de Faturamento Semanal
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs sm:text-sm font-black tabular-nums ${
-                              isWeeklyGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
-                            }`}
-                          >
-                            {fmtMoney(weeklyEarned)} / {fmtMoney(weeklyTarget)} ({weeklyRawPct}%)
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('settings')}
-                            title="Ajustar Meta Semanal nas Configurações"
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                              isDark
-                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
-                            }`}
-                          >
-                            Ajustar
-                          </button>
-                        </div>
-                      </div>
-
-                      <div
-                        className={`mt-2.5 h-2.5 sm:h-3 rounded-full overflow-hidden ${
-                          isDark ? 'bg-slate-800' : 'bg-slate-200'
-                        }`}
-                      >
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isWeeklyGoalReached
-                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                              : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
-                          }`}
-                          style={{ width: `${weeklyBarPct}%` }}
-                        />
-                      </div>
-
-                      <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
-                        <span className={mutedText}>
-                          {isWeeklyGoalReached
-                            ? `🎉 Meta semanal batida! (+${fmtMoney(weeklyEarned - weeklyTarget)} acima da meta)`
-                            : `Faltam ${fmtMoney(weeklyRemaining)} para atingir a meta da semana`}
-                        </span>
-                        <span className={isWeeklyGoalReached ? 'text-emerald-400 font-extrabold' : mutedText}>
-                          {weeklyRawPct}% concluído
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Meta Personalizada de Ganhos: Acompanha o Saldo Atual do Usuário */}
-                {(() => {
-                  const customTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
-                  const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
-                  const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
-                  const customDays = Math.max(1, countdown.effectiveDays);
-                  const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Saldo';
-                  // Acompanha o SALDO ATUAL do usuário (Lucro Líquido Real = Ganhos - Gastos)
-                  const currentBalance = periodTotals.saldoMonth;
-                  const currentGross = periodTotals.revMonth;
-                  const currentExpenses = periodTotals.expMonth;
-                  const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
-                  const barPct = Math.min(100, Math.max(0, rawPct));
-                  const remainingToGoal = Math.max(0, customTarget - currentBalance);
-                  const isGoalReached = customTarget > 0 && currentBalance >= customTarget;
-                  const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
-
-                  return (
-                    <div
-                      className={`mt-2.5 sm:mt-3 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 border transition-colors ${
-                        isGoalReached
-                          ? isDark
-                            ? 'bg-emerald-950/20 border-emerald-500/40'
-                            : 'bg-emerald-50/70 border-emerald-300'
-                          : surfaceSubtle
-                      }`}
-                    >
-                      {/* Header */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                        <div className="flex items-center gap-2">
+                        >
                           <div
-                            className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${
-                              isGoalReached
-                                ? 'bg-emerald-500/20 text-emerald-400'
-                                : 'bg-[#FF6A1A]/15 text-[#FF6A1A]'
+                            className={`h-full rounded-full dashboard-progress-fill ${
+                              isDailyGoalReached
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
                             }`}
-                          >
-                            <Trophy className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <span className="text-xs sm:text-sm font-extrabold block leading-tight">
-                              {customTitle}
-                            </span>
-                            <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
-                              Acompanhando seu Saldo Atual (Lucro Líquido = Ganhos - Gastos)
-                            </span>
-                          </div>
+                            style={{ width: `${dailyBarPct}%` }}
+                          />
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs sm:text-sm font-black tabular-nums ${
-                              isGoalReached ? 'text-emerald-400' : currentBalance < 0 ? 'text-rose-400' : 'text-[#FF6A1A]'
-                            }`}
-                          >
-                            Saldo: {fmtMoney(currentBalance)} / {fmtMoney(customTarget)} ({rawPct}%)
+                        <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
+                          <span className={isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-bold' : mutedText}>
+                            {isDailyGoalReached
+                              ? `🎉 Meta diária batida! (+${fmtMoney(dailyEarned - dailyTarget)} acima da meta)`
+                              : `Faltam ${fmtMoney(dailyRemaining)} para atingir o objetivo de hoje`}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('settings')}
-                            title="Ajustar Meta e Data Término nas Configurações"
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                              isDark
-                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-700'
-                            }`}
-                          >
-                            Ajustar
-                          </button>
+                          <span className={isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : mutedText}>
+                            {dailyRawPct}% concluído
+                          </span>
                         </div>
                       </div>
+                    );
+                  })()}
 
-                      {/* Informações Definidas na Configuração: Data Término, Meta Diária e Falta para o Objetivo */}
-                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceCard}`}>
-                          <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                            Data Término
-                          </span>
-                          <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
-                            <span className="text-xs sm:text-sm font-black tabular-nums">
-                              {formatPtBrDate(countdown.targetDateStr)}
+                  {/* 2. Meta de Faturamento Semanal (Minimalista sem fundo) */}
+                  {(() => {
+                    const weeklyTarget = Math.max(0, Number(dbState.weeklyGoal) || 0);
+                    const weeklyEarned = periodTotals.revWeek;
+                    const weeklyRawPct = weeklyTarget > 0 ? Math.round((weeklyEarned / weeklyTarget) * 100) : 0;
+                    const weeklyBarPct = Math.min(100, Math.max(0, weeklyRawPct));
+                    const weeklyRemaining = Math.max(0, weeklyTarget - weeklyEarned);
+                    const isWeeklyGoalReached = weeklyTarget > 0 && weeklyEarned >= weeklyTarget;
+
+                    return (
+                      <div className={`py-3.5 border-b ${dividerBorder}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Trophy
+                              className={`w-4 h-4 shrink-0 ${
+                                isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}
+                            />
+                            <span className={`text-xs sm:text-sm font-extrabold ${primaryText}`}>
+                              Meta de Faturamento Semanal
                             </span>
-                            <span className="text-[10px] font-black text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/20">
-                              ⏳ {countdown.countdownBadgeText}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-xs sm:text-sm font-black tabular-nums ${
+                                isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}
+                            >
+                              <AnimatedNumber value={weeklyEarned} formatter={fmtMoney} /> / {fmtMoney(weeklyTarget)} ({weeklyRawPct}%)
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('settings')}
+                              title="Ajustar Meta Semanal nas Configurações"
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
+                            >
+                              Ajustar
+                            </button>
                           </div>
                         </div>
 
                         <div
-                          className={`rounded-xl p-2.5 flex flex-col justify-between border ${
-                            isGoalReached
-                              ? 'bg-emerald-500/10 border-emerald-500/30'
-                              : 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30'
+                          className={`mt-2.5 h-2 rounded-full overflow-hidden ${
+                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
                           }`}
                         >
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                            Saldo Diário Necessário
+                          <div
+                            className={`h-full rounded-full dashboard-progress-fill ${
+                              isWeeklyGoalReached
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
+                            }`}
+                            style={{ width: `${weeklyBarPct}%` }}
+                          />
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
+                          <span className={mutedText}>
+                            {isWeeklyGoalReached
+                              ? `🎉 Meta semanal batida! (+${fmtMoney(weeklyEarned - weeklyTarget)} acima da meta)`
+                              : `Faltam ${fmtMoney(weeklyRemaining)} para atingir a meta da semana`}
                           </span>
-                          <div className="mt-1 flex items-baseline justify-between gap-1">
-                            <span
-                              className={`text-sm sm:text-base font-black tabular-nums ${
-                                isGoalReached ? 'text-emerald-400' : 'text-[#FF6A1A]'
-                              }`}
-                            >
-                              {isGoalReached
-                                ? 'Objetivo Batido!'
-                                : `${fmtCurrencyExact(requiredDailyToReachGoal)}/dia`}
-                            </span>
-                            {!isGoalReached && (
-                              <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
-                                {countdown.isToday ? 'hoje' : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
+                          <span className={isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : mutedText}>
+                            {weeklyRawPct}% concluído
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* 3. Meta Personalizada de Ganhos (Minimalista sem fundo) */}
+                  {(() => {
+                    const customTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
+                    const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
+                    const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
+                    const customDays = Math.max(1, countdown.effectiveDays);
+                    const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Saldo';
+                    const currentBalance = periodTotals.saldoMonth;
+                    const currentGross = periodTotals.revMonth;
+                    const currentExpenses = periodTotals.expMonth;
+                    const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
+                    const barPct = Math.min(100, Math.max(0, rawPct));
+                    const remainingToGoal = Math.max(0, customTarget - currentBalance);
+                    const isGoalReached = customTarget > 0 && currentBalance >= customTarget;
+                    const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
+
+                    return (
+                      <div className={`py-3.5 border-b ${dividerBorder}`}>
+                        {/* Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2">
+                            <Trophy className={`w-4 h-4 shrink-0 ${
+                              isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                            }`} />
+                            <div>
+                              <span className={`text-xs sm:text-sm font-extrabold block leading-tight ${primaryText}`}>
+                                {customTitle}
                               </span>
-                            )}
+                              <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
+                                Acompanhando seu Saldo Atual (Lucro Líquido = Ganhos - Gastos)
+                              </span>
+                            </div>
                           </div>
-                        </div>
 
-                        <div
-                          className={`rounded-xl p-2.5 flex flex-col justify-between border ${
-                            isGoalReached
-                              ? 'bg-emerald-500/10 border-emerald-500/30'
-                              : 'bg-rose-500/10 border-rose-500/30'
-                          }`}
-                        >
-                          <span
-                            className={`text-[10px] font-extrabold uppercase tracking-wider ${
-                              isGoalReached ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'
-                            }`}
-                          >
-                            Falta de Saldo Líquido
-                          </span>
-                          <div className="mt-1 flex items-baseline justify-between gap-1">
+                          <div className="flex items-center gap-2">
                             <span
-                              className={`text-sm sm:text-base font-black tabular-nums ${
-                                isGoalReached ? 'text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                              className={`text-xs sm:text-sm font-black tabular-nums ${
+                                isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : currentBalance < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-[#FF6A1A]'
                               }`}
                             >
-                              {isGoalReached ? '100% Batida!' : fmtMoney(remainingToGoal)}
+                              Saldo: <AnimatedNumber value={currentBalance} formatter={fmtMoney} /> / {fmtMoney(customTarget)} ({rawPct}%)
                             </span>
-                            <span className={`text-[10px] font-bold ${mutedText}`}>
-                              {isGoalReached ? 'Sucesso' : `${Math.max(0, 100 - rawPct)}% restante`}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('settings')}
+                              title="Ajustar Meta e Data Término nas Configurações"
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
+                            >
+                              Ajustar
+                            </button>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Progress Bar */}
-                      <div
-                        className={`mt-3 h-2.5 sm:h-3 rounded-full overflow-hidden ${
-                          isDark ? 'bg-slate-800' : 'bg-slate-200'
-                        }`}
-                      >
+                        {/* Sub-itens Minimalistas Sem Fundo, Apenas Borda Fina e Suave */}
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
+                              Data Término
+                            </span>
+                            <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
+                              <span className={`text-xs sm:text-sm font-black tabular-nums ${primaryText}`}>
+                                {formatPtBrDate(countdown.targetDateStr)}
+                              </span>
+                              <span className="text-[10px] font-black text-[#FF6A1A] bg-transparent px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/30">
+                                ⏳ {countdown.countdownBadgeText}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
+                              Saldo Diário Necessário
+                            </span>
+                            <div className="mt-1 flex items-baseline justify-between gap-1">
+                              <span
+                                className={`text-sm sm:text-base font-black tabular-nums ${
+                                  isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                                }`}
+                              >
+                                {isGoalReached ? (
+                                  'Objetivo Batido!'
+                                ) : (
+                                  <>
+                                    <AnimatedNumber value={requiredDailyToReachGoal} formatter={fmtCurrencyExact} />/dia
+                                  </>
+                                )}
+                              </span>
+                              {!isGoalReached && (
+                                <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
+                                  {countdown.isToday ? 'hoje' : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
+                            <span
+                              className={`text-[10px] font-extrabold uppercase tracking-wider ${
+                                isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
+                              }`}
+                            >
+                              Falta de Saldo Líquido
+                            </span>
+                            <div className="mt-1 flex items-baseline justify-between gap-1">
+                              <span
+                                className={`text-sm sm:text-base font-black tabular-nums ${
+                                  isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                }`}
+                              >
+                                {isGoalReached ? (
+                                  '100% Batida!'
+                                ) : (
+                                  <AnimatedNumber value={remainingToGoal} formatter={fmtMoney} />
+                                )}
+                              </span>
+                              <span className={`text-[10px] font-bold ${mutedText}`}>
+                                {isGoalReached ? 'Sucesso' : `${Math.max(0, 100 - rawPct)}% restante`}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar Animada */}
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isGoalReached
-                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                              : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
+                          className={`mt-3 h-2 rounded-full overflow-hidden ${
+                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
                           }`}
-                          style={{ width: `${barPct}%` }}
+                        >
+                          <div
+                            className={`h-full rounded-full dashboard-progress-fill ${
+                              isGoalReached
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
+                            }`}
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+
+                        {/* Feedback Visual Direto */}
+                        <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
+                          <span className={mutedText}>
+                            Saldo no bolso: <span className={currentBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400 font-bold' : 'text-rose-500 dark:text-rose-400 font-bold'}>{fmtMoney(currentBalance)}</span> <span className="opacity-75">(Ganhos: {fmtMoney(currentGross)} · Gastos: {fmtMoney(currentExpenses)})</span>
+                          </span>
+                          <span className={isGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : `${primaryText} font-bold`}>
+                            {isGoalReached ? (
+                              `🎉 Meta atingida (+${fmtMoney(currentBalance - customTarget)} de sobra)`
+                            ) : (
+                              <>
+                                Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong> de saldo
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* 4 Métricas de Produtividade (Sem fundo, apenas borda fina e suave) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
+                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / Hora</div>
+                      <div className={`text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate ${primaryText}`}>
+                        <AnimatedNumber
+                          value={totals.totalHours > 0 ? totals.totalRevenue / totals.totalHours : 0}
+                          formatter={v => `${fmtCurrencyExact(v)}/h`}
                         />
                       </div>
-
-                      {/* Feedback Visual Direto: Saldo Atual (Ganhos - Gastos) e o Quanto Falta */}
-                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
-                        <span className={mutedText}>
-                          Saldo no bolso: <span className={currentBalance >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{fmtMoney(currentBalance)}</span> <span className="opacity-75">(Ganhos: {fmtMoney(currentGross)} · Gastos: {fmtMoney(currentExpenses)})</span>
-                        </span>
-                        <span className={isGoalReached ? 'text-emerald-400 font-extrabold' : 'text-slate-800 dark:text-slate-200 font-bold'}>
-                          {isGoalReached ? (
-                            `🎉 Meta atingida (+${fmtMoney(currentBalance - customTarget)} de sobra)`
-                          ) : (
-                            <>
-                              Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong> de saldo
-                            </>
-                          )}
-                        </span>
+                    </div>
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
+                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Lucro / Hora</div>
+                      <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-emerald-500 dark:text-emerald-400 truncate">
+                        <AnimatedNumber
+                          value={totals.totalHours > 0 ? totals.lucro / totals.totalHours : 0}
+                          formatter={v => `${fmtCurrencyExact(v)}/h`}
+                        />
                       </div>
                     </div>
-                  );
-                })()}
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mt-2.5 sm:mt-3">
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / Hora</div>
-                    <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate">
-                      {fmtCurrencyExact(totals.totalHours > 0 ? totals.totalRevenue / totals.totalHours : 0)}/h
-                    </div>
-                  </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Lucro / Hora</div>
-                    <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-emerald-400 truncate">
-                      {fmtCurrencyExact(totals.totalHours > 0 ? totals.lucro / totals.totalHours : 0)}/h
-                    </div>
-                  </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / KM</div>
-                    <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-[#FF6A1A] truncate">
-                      {fmtCurrencyExact(totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : 0)}/km
-                    </div>
-                  </div>
-                  <div className={`rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 ${surfaceSubtle}`}>
-                    <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Horas Rodadas</div>
-                    <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate">
-                      {totals.totalHours.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 7-Day Trend Chart */}
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-                  <div>
-                    <h2 className="text-sm sm:text-base font-extrabold">Desempenho nos Últimos 7 Dias</h2>
-                    <p className={`text-[11px] sm:text-xs ${mutedText}`}>Faturamento diário e quilometragem</p>
-                  </div>
-                  <span className="text-xs sm:text-sm font-black text-[#FF6A1A] tabular-nums shrink-0">
-                    {fmtMoney(chart7Days.reduce((a, b) => a + b.rev, 0))}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1 sm:gap-2 items-end h-36 sm:h-40 pt-2 sm:pt-4">
-                  {chart7Days.map(day => {
-                    const maxRev = Math.max(100, ...chart7Days.map(d => d.rev));
-                    const barHeightPct = Math.max(8, Math.round((day.rev / maxRev) * 100));
-                    return (
-                      <div key={day.date} className="flex flex-col items-center gap-1 sm:gap-1.5 h-full justify-end">
-                        <span className={`text-[9px] sm:text-[10px] font-bold tabular-nums truncate max-w-full ${day.rev > 0 ? 'text-[#FF6A1A]' : mutedText}`}>
-                          {day.rev > 0 ? `R$${Math.round(day.rev)}` : '—'}
-                        </span>
-                        <div className={`w-full max-w-[36px] rounded-t-lg sm:rounded-t-xl transition-all ${
-                          day.rev > 0 ? 'bg-gradient-to-t from-[#FF5000] to-[#FF8533]' : isDark ? 'bg-slate-800' : 'bg-slate-200'
-                        }`} style={{ height: `${barHeightPct}%` }} />
-                        <span className={`text-[10px] sm:text-[11px] font-bold tabular-nums ${mutedText}`}>{day.label}</span>
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
+                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / KM</div>
+                      <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-[#FF6A1A] truncate">
+                        <AnimatedNumber
+                          value={totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : 0}
+                          formatter={v => `${fmtCurrencyExact(v)}/km`}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Mochilinha Decision, Quick Maintenance Status & App Ranking */}
-            <div className="lg:col-span-5 flex flex-col gap-4 sm:gap-6">
-              {/* Mochilinha Shift Evaluation Card */}
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                    Análise de Turno · {shiftEval.badge}
-                  </span>
-                  <button
-                    onClick={() => setShowCopilotModal(true)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 transition-colors cursor-pointer flex items-center justify-center gap-1.5 self-start sm:self-auto"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Perguntar à Mochilinha</span>
-                  </button>
-                </div>
-                <h3 className="text-sm sm:text-base font-extrabold">{shiftEval.title}</h3>
-                <p className={`text-xs sm:text-sm mt-1.5 sm:mt-2 leading-relaxed ${mutedText}`}>{shiftEval.summary}</p>
-                <p className="text-xs sm:text-sm mt-1.5 sm:mt-2 font-medium leading-relaxed">{shiftEval.recommendation}</p>
-                <div className={`mt-3 sm:mt-4 pt-3 border-t border-slate-800/40 text-xs font-bold text-[#FF6A1A]`}>
-                  {shiftEval.projectedExtra}
-                </div>
-              </div>
-
-              {/* Bike Health Quick Summary */}
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-                  <h2 className="text-sm sm:text-base font-extrabold">Saúde da Moto & Manutenção</h2>
-                  <button
-                    onClick={() => setActiveTab('maintenance')}
-                    className="text-xs font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer shrink-0"
-                  >
-                    <span>Ver na aba Moto</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2.5 sm:gap-3">
-                  {dbState.maintenanceItems.slice(0, 3).map(item => {
-                    const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
-                    const rawPct = Math.round((kmUsed / (item.intervalKm || 1000)) * 100);
-                    const pct = Math.min(100, rawPct);
-                    const alertThreshold = Math.min(99, Math.max(50, item.alertThresholdPct ?? 85));
-                    const isDanger = rawPct >= 100;
-                    const isWarn = rawPct >= alertThreshold && rawPct < 100;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => {
-                          setActiveTab('maintenance');
-                          startEditMaintenanceCard(item);
-                        }}
-                        className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3 cursor-pointer transition-all ${
-                          isDanger
-                            ? `border-l-4 border-l-rose-500 border border-rose-500/40 ${
-                                isDark ? 'bg-slate-900/60' : 'bg-white shadow-xs'
-                              }`
-                            : isWarn
-                            ? `border-l-4 border-l-amber-500 border border-amber-500/40 ${
-                                isDark ? 'bg-slate-900/60' : 'bg-white shadow-xs'
-                              }`
-                            : `${surfaceSubtle} hover:border-[#FF6A1A]/50`
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-                          <span className="text-2xl shrink-0">{item.icon}</span>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-xs sm:text-sm font-bold truncate flex items-center gap-1.5">
-                              <span className="truncate">{item.name}</span>
-                              {isDanger ? (
-                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-300 border border-rose-500/30 shrink-0">
-                                  Vencido
-                                </span>
-                              ) : isWarn ? (
-                                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 shrink-0">
-                                  Alerta {alertThreshold}%
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className={`text-[11px] sm:text-xs tabular-nums ${mutedText}`}>
-                              {kmUsed.toLocaleString('pt-BR')} / {item.intervalKm.toLocaleString('pt-BR')} km ({rawPct}%)
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              openMaintenanceHistoryModal(item);
-                            }}
-                            title={`Ver histórico de trocas de ${item.name}`}
-                            className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors ${surfaceCard} hover:border-[#FF6A1A] text-[#FF6A1A]`}
-                          >
-                            <History className="w-3.5 h-3.5 shrink-0" />
-                            {(item.history?.length || 0) > 0 && (
-                              <span className="tabular-nums text-[10px] font-black">{item.history?.length}</span>
-                            )}
-                          </button>
-                          <span
-                            className={`text-[11px] sm:text-xs font-black whitespace-nowrap shrink-0 ${
-                              isDanger
-                                ? 'text-rose-400 animate-pulse'
-                                : isWarn
-                                ? 'text-amber-400 animate-pulse'
-                                : 'text-emerald-400'
-                            }`}
-                          >
-                            {isDanger ? '⚠️ Trocar Já' : isWarn ? `⚠️ Alerta (${rawPct}%)` : 'Em Dia'}
-                          </span>
-                        </div>
+                    </div>
+                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
+                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Horas Rodadas</div>
+                      <div className={`text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate ${primaryText}`}>
+                        <AnimatedNumber
+                          value={totals.totalHours}
+                          formatter={v => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* App Revenue Ranking */}
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-                  <h2 className="text-sm sm:text-base font-extrabold">Faturamento por Aplicativo</h2>
-                  <button
-                    onClick={() => setActiveTab('billing')}
-                    className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer shrink-0"
-                  >
-                    Ver todos
-                  </button>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-2.5 sm:gap-3">
-                  {allApps
-                    .map(a => ({ ...a, val: totals.revenueByApp[a.id] || 0 }))
-                    .sort((a, b) => b.val - a.val)
-                    .slice(0, 4)
-                    .map(app => {
-                      const pct = totals.totalRevenue > 0 ? Math.round((app.val / totals.totalRevenue) * 100) : 0;
+                {/* Desempenho nos Últimos 7 Dias (Gráfico Minimalista Animado) */}
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
+                    <div>
+                      <h2 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>Desempenho nos Últimos 7 Dias</h2>
+                      <p className={`text-[11px] sm:text-xs ${mutedText}`}>Faturamento diário e evolução na semana</p>
+                    </div>
+                    <span className="text-xs sm:text-sm font-black text-[#FF6A1A] tabular-nums shrink-0">
+                      <AnimatedNumber
+                        value={chart7Days.reduce((a, b) => a + b.rev, 0)}
+                        formatter={fmtMoney}
+                      />
+                    </span>
+                  </div>
+
+                  <div className={`grid grid-cols-7 gap-1.5 sm:gap-2.5 items-end h-40 sm:h-44 pt-4 pb-2 border-b ${dividerBorder}`}>
+                    {chart7Days.map((day, idx) => {
+                      const maxRev = Math.max(100, ...chart7Days.map(d => d.rev));
+                      const barHeightPct = Math.max(8, Math.round((day.rev / maxRev) * 100));
+                      const isPeak = day.rev > 0 && day.rev === maxRev;
                       return (
-                        <div key={app.id} className={`rounded-xl sm:rounded-2xl p-3 sm:p-3.5 ${surfaceSubtle}`}>
-                          <div className="flex items-center justify-between text-xs sm:text-sm font-bold mb-1.5 sm:mb-2">
-                            <span className="flex items-center gap-2">
-                              <span>{app.icon}</span>
-                              <span className="truncate">{app.name}</span>
-                            </span>
-                            <span className="tabular-nums whitespace-nowrap">
-                              {fmtMoney(app.val)} <span className={`text-[11px] font-normal ${mutedText}`}>· {pct}%</span>
-                            </span>
+                        <div key={day.date} className="flex flex-col items-center gap-1 sm:gap-1.5 h-full justify-end group">
+                          <span className={`text-[9px] sm:text-[10px] font-bold tabular-nums truncate max-w-full transition-transform group-hover:-translate-y-0.5 ${
+                            day.rev > 0 ? 'text-[#FF6A1A]' : mutedText
+                          }`}>
+                            {day.rev > 0 ? `R$${Math.round(day.rev)}` : '—'}
+                          </span>
+                          <div
+                            className={`w-full max-w-[32px] rounded-t-lg dashboard-chart-bar relative ${
+                              day.rev > 0
+                                ? isPeak
+                                  ? 'bg-gradient-to-t from-[#FF5000] via-[#FF6A1A] to-amber-400 shadow-[0_0_12px_rgba(255,106,26,0.3)]'
+                                  : 'bg-gradient-to-t from-[#FF5000]/80 to-[#FF8533]'
+                                : isDark
+                                ? 'bg-neutral-800/70'
+                                : 'bg-slate-200/80'
+                            }`}
+                            style={{
+                              height: `${barHeightPct}%`,
+                              animationDelay: `${idx * 75}ms`,
+                            }}
+                          />
+                          <span className={`text-[10px] sm:text-[11px] font-bold tabular-nums ${mutedText}`}>{day.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Coluna Direita: Análise de Turno (Mochilinha), Saúde da Moto & Ranking por Aplicativo */}
+              <div className="lg:col-span-5 flex flex-col gap-6">
+                {/* 1. Análise de Turno · Mochilinha (Minimalista sem card de fundo) */}
+                <div className={`pb-6 border-b ${dividerBorder}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[#FF6A1A]">
+                      Análise de Turno · {shiftEval.badge}
+                    </span>
+                    <button
+                      onClick={() => setShowCopilotModal(true)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/50 hover:border-[#FF6A1A] transition-colors cursor-pointer flex items-center justify-center gap-1.5 self-start sm:self-auto"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Perguntar à Mochilinha</span>
+                    </button>
+                  </div>
+                  <h3 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>{shiftEval.title}</h3>
+                  <p className={`text-xs sm:text-sm mt-1.5 leading-relaxed ${mutedText}`}>{shiftEval.summary}</p>
+                  <p className={`text-xs sm:text-sm mt-1.5 font-medium leading-relaxed ${secondaryText}`}>{shiftEval.recommendation}</p>
+                  <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-xs font-bold text-[#FF6A1A]`}>
+                    {shiftEval.projectedExtra}
+                  </div>
+                </div>
+
+                {/* 2. Saúde da Moto & Manutenção (Minimalista sem fundo) */}
+                <div className={`pb-6 border-b ${dividerBorder}`}>
+                  <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
+                    <h2 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>Saúde da Moto & Manutenção</h2>
+                    <button
+                      onClick={() => setActiveTab('maintenance')}
+                      className="text-xs font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer shrink-0 bg-transparent"
+                    >
+                      <span>Ver na aba Moto</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    {dbState.maintenanceItems.slice(0, 3).map((item, idx) => {
+                      const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
+                      const rawPct = Math.round((kmUsed / (item.intervalKm || 1000)) * 100);
+                      const pct = Math.min(100, Math.max(0, rawPct));
+                      const alertThreshold = Math.min(99, Math.max(50, item.alertThresholdPct ?? 85));
+                      const isDanger = rawPct >= 100;
+                      const isWarn = rawPct >= alertThreshold && rawPct < 100;
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setActiveTab('maintenance');
+                            startEditMaintenanceCard(item);
+                          }}
+                          className={`rounded-xl p-3 bg-transparent border cursor-pointer transition-all ${
+                            isDanger
+                              ? 'border-rose-500/50 hover:border-rose-500'
+                              : isWarn
+                              ? 'border-amber-500/50 hover:border-amber-500'
+                              : `${dividerBorder} hover:border-[#FF6A1A]/50`
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <span className="text-xl shrink-0">{item.icon}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className={`text-xs sm:text-sm font-bold truncate flex items-center gap-1.5 ${primaryText}`}>
+                                  <span className="truncate">{item.name}</span>
+                                  {isDanger ? (
+                                    <span className="text-[9px] uppercase font-black px-1.5 py-0.2 rounded bg-transparent text-rose-500 dark:text-rose-400 border border-rose-500/40 shrink-0">
+                                      Vencido
+                                    </span>
+                                  ) : isWarn ? (
+                                    <span className="text-[9px] uppercase font-black px-1.5 py-0.2 rounded bg-transparent text-amber-500 dark:text-amber-400 border border-amber-500/40 shrink-0">
+                                      Alerta {alertThreshold}%
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className={`text-[11px] tabular-nums ${mutedText}`}>
+                                  {kmUsed.toLocaleString('pt-BR')} / {item.intervalKm.toLocaleString('pt-BR')} km ({rawPct}%)
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  openMaintenanceHistoryModal(item);
+                                }}
+                                title={`Ver histórico de trocas de ${item.name}`}
+                                className={`p-1.5 sm:px-2 sm:py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                              >
+                                <History className="w-3.5 h-3.5 shrink-0" />
+                                {(item.history?.length || 0) > 0 && (
+                                  <span className="tabular-nums text-[10px] font-black">{item.history?.length}</span>
+                                )}
+                              </button>
+                              <span
+                                className={`text-[11px] sm:text-xs font-black whitespace-nowrap shrink-0 ${
+                                  isDanger
+                                    ? 'text-rose-500 dark:text-rose-400 animate-pulse'
+                                    : isWarn
+                                    ? 'text-amber-500 dark:text-amber-400 animate-pulse'
+                                    : 'text-emerald-500 dark:text-emerald-400'
+                                }`}
+                              >
+                                {isDanger ? '⚠️ Trocar Já' : isWarn ? `⚠️ Alerta` : 'Em Dia'}
+                              </span>
+                            </div>
                           </div>
-                          <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+
+                          {/* Mini Barra de Desgaste Animada */}
+                          <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
                             <div
-                              className="h-full bg-[#FF6A1A] rounded-full transition-all duration-500"
-                              style={{ width: `${pct}%` }}
+                              className={`h-full rounded-full dashboard-progress-fill ${
+                                isDanger
+                                  ? 'bg-rose-500'
+                                  : isWarn
+                                  ? 'bg-amber-500'
+                                  : 'bg-emerald-500'
+                              }`}
+                              style={{
+                                width: `${pct}%`,
+                                animationDelay: `${idx * 80}ms`,
+                              }}
                             />
                           </div>
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* 3. Faturamento por Aplicativo (Minimalista com barras animadas) */}
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h2 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>Faturamento por Aplicativo</h2>
+                    <button
+                      onClick={() => setActiveTab('billing')}
+                      className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer shrink-0 bg-transparent"
+                    >
+                      Ver todos
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col">
+                    {allApps
+                      .map(a => ({ ...a, val: totals.revenueByApp[a.id] || 0 }))
+                      .sort((a, b) => b.val - a.val)
+                      .slice(0, 4)
+                      .map((app, idx) => {
+                        const pct = totals.totalRevenue > 0 ? Math.round((app.val / totals.totalRevenue) * 100) : 0;
+                        return (
+                          <div key={app.id} className={`py-2.5 border-b last:border-b-0 ${dividerBorder}`}>
+                            <div className={`flex items-center justify-between text-xs sm:text-sm font-bold mb-1.5 ${primaryText}`}>
+                              <span className="flex items-center gap-2">
+                                <span>{app.icon}</span>
+                                <span className="truncate">{app.name}</span>
+                              </span>
+                              <span className="tabular-nums whitespace-nowrap">
+                                <AnimatedNumber value={app.val} formatter={fmtMoney} />{' '}
+                                <span className={`text-[11px] font-normal ${mutedText}`}>· {pct}%</span>
+                              </span>
+                            </div>
+                            <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
+                              <div
+                                className="h-full bg-gradient-to-r from-[#FF6A1A] to-amber-400 rounded-full dashboard-progress-fill"
+                                style={{
+                                  width: `${pct}%`,
+                                  animationDelay: `${idx * 90}ms`,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-        {/* ================= ABA 2: MOTO (100% EDITABLE CARDS) ================= */}
+        {/* ================= ABA 2: MOTO (100% EDITABLE MINIMALIST) ================= */}
         {activeTab === 'maintenance' && (
-          <div className="flex flex-col gap-4 sm:gap-6">
-            {/* Header & Action Bar */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} flex flex-col gap-3.5 sm:gap-4`}>
+          <div className="flex flex-col gap-5 sm:gap-6">
+            {/* Header & Action Bar (Minimalista sem card de fundo) */}
+            <div className={`pb-5 border-b ${dividerBorder} flex flex-col gap-3.5 sm:gap-4`}>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
                 <div className="py-1">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#FF6A1A]/15 text-[#FF6A1A] flex items-center justify-center shrink-0">
-                      <Wrench className="w-5 h-5 stroke-[2.5]" />
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center shrink-0">
+                      <Wrench className="w-5 h-5 stroke-[2.2]" />
                     </div>
                     <h1 className="text-lg sm:text-2xl font-black tracking-tight">
-                      Garagem & Manutenção da Moto (100% Editável)
+                      Garagem & Manutenção da Moto
                     </h1>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
                   <button
                     onClick={startEditFuelCard}
-                    className={`flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                    className={`flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[44px] bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                   >
                     <SlidersHorizontal className="w-4 h-4 text-[#FF6A1A]" />
                     <span>Dados da Moto</span>
                   </button>
                   <button
                     onClick={() => startCreateMaintenanceCard()}
-                    className="flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                    className="flex-1 sm:flex-initial justify-center px-3.5 py-2.5 rounded-xl text-xs font-bold bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[44px]"
                   >
                     <Plus className="w-4 h-4 stroke-[2.5]" />
                     <span>Nova Manutenção</span>
@@ -8387,14 +8613,14 @@ export default function App() {
                 />
                 {maintSearchQuery.trim() !== '' && (
                   <div className="absolute right-2.5 flex items-center gap-1.5">
-                    <span className="text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30 tabular-nums">
+                    <span className="text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-lg bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 tabular-nums">
                       {sortedMaintenanceItems.length}/{dbState.maintenanceItems.length}
                     </span>
                     <button
                       type="button"
                       onClick={() => setMaintSearchQuery('')}
                       title="Limpar busca"
-                      className={`p-1.5 rounded-lg cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                      className={`p-1.5 rounded-lg cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -8411,15 +8637,13 @@ export default function App() {
               });
               if (overdueItems.length === 0) return null;
               return (
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-l-4 border-l-rose-500 border border-rose-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 ${
-                  isDark ? 'bg-rose-950/20 text-slate-100' : 'bg-rose-50/90 text-slate-900 shadow-xs'
-                }`}>
+                <div className="rounded-2xl p-4 sm:p-5 bg-transparent border border-rose-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
                   <div className="flex items-center gap-3 sm:gap-3.5">
-                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-500 shrink-0">
-                      <AlertTriangle className="w-5 h-5 animate-bounce" />
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-transparent border border-rose-500/35 flex items-center justify-center text-rose-500 shrink-0">
+                      <AlertTriangle className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs sm:text-sm font-black text-rose-600 dark:text-rose-300">
+                      <h4 className={`text-xs sm:text-sm font-black ${isDark ? 'text-rose-400' : 'text-rose-600'}`}>
                         {overdueItems.length === 1
                           ? `Atenção: 1 manutenção atingiu 100% ou mais do intervalo!`
                           : `Atenção: ${overdueItems.length} manutenções atingiram 100% ou mais do intervalo!`}
@@ -8429,7 +8653,7 @@ export default function App() {
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-700 dark:text-rose-200 shrink-0 self-start sm:self-auto">
+                  <span className={`text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-transparent border border-rose-500/40 shrink-0 self-start sm:self-auto ${isDark ? 'text-rose-300' : 'text-rose-700'}`}>
                     Troca Obrigatória
                   </span>
                 </div>
@@ -8447,15 +8671,13 @@ export default function App() {
               });
               if (warningItems.length === 0) return null;
               return (
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border-l-4 border-l-amber-500 border border-amber-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 ${
-                  isDark ? 'bg-amber-950/20 text-slate-100' : 'bg-amber-50/90 text-slate-900 shadow-xs'
-                }`}>
+                <div className="rounded-2xl p-4 sm:p-5 bg-transparent border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
                   <div className="flex items-center gap-3 sm:gap-3.5">
-                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-500 shrink-0">
-                      <AlertTriangle className="w-5 h-5 animate-pulse" />
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-transparent border border-amber-500/30 flex items-center justify-center text-amber-500 shrink-0">
+                      <AlertTriangle className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs sm:text-sm font-black text-amber-700 dark:text-amber-300">
+                      <h4 className={`text-xs sm:text-sm font-black ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
                         {warningItems.length === 1
                           ? `Aviso Preventivo: 1 manutenção atingiu a porcentagem de alerta configurada!`
                           : `Aviso Preventivo: ${warningItems.length} manutenções atingiram a porcentagem de alerta configurada!`}
@@ -8465,201 +8687,16 @@ export default function App() {
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-800 dark:text-amber-200 shrink-0 self-start sm:self-auto">
+                  <span className={`text-[11px] sm:text-xs font-black uppercase tracking-wider px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-transparent border border-amber-500/40 shrink-0 self-start sm:self-auto ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
                     Alerta Preventivo
                   </span>
                 </div>
               );
             })()}
 
-            {/* Inline Editor Modal / Card when adding a brand new Maintenance Card */}
-            {isAddingNewMaint && maintDraft && (
-              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border-2 border-[#FF6A1A] ${isDark ? 'bg-[#141722]' : 'bg-orange-50/40'}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="text-sm sm:text-base font-extrabold text-[#FF6A1A]">
-                      Adicionar Nova Manutenção Preventiva
-                    </h3>
-                    <p className={`text-[11px] sm:text-xs mt-0.5 ${mutedText}`}>
-                      Escolha uma sugestão rápida ou digite uma peça/serviço personalizado:
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setIsAddingNewMaint(false);
-                      setEditingMaintId(null);
-                      setMaintDraft(null);
-                    }}
-                    className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Sugestões Rápidas para Motoboys */}
-                <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
-                  {[
-                    { name: 'Vela de Ignição', icon: '⚡', intervalKm: 12000, costEstimate: 45, notes: 'Vela NGK Iridium / Standard' },
-                    { name: 'Filtro de Ar', icon: '🌬️', intervalKm: 10000, costEstimate: 35, notes: 'Troca preventiva do elemento filtrante' },
-                    { name: 'Fluido de Freio', icon: '💧', intervalKm: 15000, costEstimate: 40, notes: 'Fluido DOT 4' },
-                    { name: 'Cabos (Embreagem / Acelerador)', icon: '🔌', intervalKm: 15000, costEstimate: 55, notes: 'Lubrificação e regulagem de folga' },
-                    { name: 'Bateria', icon: '🔋', intervalKm: 25000, costEstimate: 220, notes: 'Verificar tensão (12.6V - 14.4V)' },
-                    { name: 'Rolamentos de Roda', icon: '⭕', intervalKm: 20000, costEstimate: 90, notes: 'Conferir folga dianteira e traseira' },
-                    { name: 'Regulagem de Válvulas', icon: '🔩', intervalKm: 12000, costEstimate: 120, notes: 'Folga de admissão e escape' },
-                  ].map(preset => (
-                    <button
-                      key={preset.name}
-                      type="button"
-                      onClick={() =>
-                        setMaintDraft({
-                          ...maintDraft,
-                          name: preset.name,
-                          icon: preset.icon,
-                          intervalKm: preset.intervalKm,
-                          costEstimate: preset.costEstimate,
-                          notes: preset.notes,
-                        })
-                      }
-                      className={`px-2.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
-                    >
-                      {preset.icon} {preset.name}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Nome do Componente</label>
-                    <input
-                      type="text"
-                      value={maintDraft.name}
-                      onChange={e => setMaintDraft({ ...maintDraft, name: e.target.value })}
-                      placeholder="Ex: Vela de Ignição, Filtro de Ar"
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Ícone (Emoji)</label>
-                    <input
-                      type="text"
-                      value={maintDraft.icon}
-                      onChange={e => setMaintDraft({ ...maintDraft, icon: e.target.value })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Intervalo de Troca (KM)</label>
-                    <FreeNumberInput
-                      step="100"
-                      value={maintDraft.intervalKm}
-                      onValueChange={val => setMaintDraft({ ...maintDraft, intervalKm: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM da Última Troca</label>
-                    <FreeNumberInput
-                      step="10"
-                      value={maintDraft.lastChangeKm}
-                      onValueChange={val => setMaintDraft({ ...maintDraft, lastChangeKm: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Custo Estimado (R$)</label>
-                    <FreeNumberInput
-                      step="5"
-                      value={maintDraft.costEstimate}
-                      onValueChange={val => setMaintDraft({ ...maintDraft, costEstimate: Math.max(0, val) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Observação / Especificação</label>
-                    <input
-                      type="text"
-                      value={maintDraft.notes || ''}
-                      onChange={e => setMaintDraft({ ...maintDraft, notes: e.target.value })}
-                      placeholder="Ex: Marca, viscosidade, calibragem"
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                  </div>
-
-                  {/* Configuração de Porcentagem de Alerta (Room DB) */}
-                  <div className="col-span-1 sm:col-span-2 lg:col-span-3 rounded-2xl p-3.5 sm:p-4 bg-amber-500/10 border border-amber-500/30">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-2">
-                      <div>
-                        <label className="block text-xs font-black text-amber-300">
-                          🔔 Porcentagem de Alerta Preventivo (% do intervalo)
-                        </label>
-                        <p className={`text-[11px] mt-0.5 ${mutedText}`}>
-                          O app exibirá um alerta visual no card quando atingir essa porcentagem.
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 self-start sm:self-auto">
-                        <FreeNumberInput
-                          step="1"
-                          value={maintDraft.alertThresholdPct ?? 85}
-                          onValueChange={val =>
-                            setMaintDraft({
-                              ...maintDraft,
-                              alertThresholdPct: Math.max(0, val),
-                            })
-                          }
-                          className={`w-20 px-3 py-1.5 rounded-xl text-center text-sm font-black tabular-nums outline-none text-amber-300 ${inputSurface}`}
-                        />
-                        <span className="text-xs font-black text-amber-400">%</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                      <span className={`text-[11px] font-bold mr-1 ${mutedText}`}>Atalhos rápidos:</span>
-                      {[75, 80, 85, 90, 95].map(pctVal => {
-                        const isSelected = (maintDraft.alertThresholdPct ?? 85) === pctVal;
-                        return (
-                          <button
-                            key={pctVal}
-                            type="button"
-                            onClick={() => setMaintDraft({ ...maintDraft, alertThresholdPct: pctVal })}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-amber-500 text-black shadow-xs'
-                                : `${surfaceSubtle} hover:border-amber-400 text-amber-300`
-                            }`}
-                          >
-                            {pctVal}%
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 sm:gap-3 mt-4 sm:mt-5">
-                  <button
-                    onClick={() => {
-                      setIsAddingNewMaint(false);
-                      setEditingMaintId(null);
-                      setMaintDraft(null);
-                    }}
-                    className={`px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer text-center ${surfaceSubtle}`}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={saveMaintenanceCardEdit}
-                    className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer flex items-center justify-center gap-1.5 min-h-[44px]"
-                  >
-                    <Check className="w-4 h-4 stroke-[2.5]" />
-                    <span>Salvar Novo Card no Room DB</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ALL MAINTENANCE CARDS GRID (100% EDITABLE INLINE) */}
+            {/* ALL MAINTENANCE CARDS GRID (100% EDITABLE INLINE MINIMALIST) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
-              {sortedMaintenanceItems.map(item => {
+              {sortedMaintenanceItems.map((item, idx) => {
                 const isEditingThis = editingMaintId === item.id && !isAddingNewMaint && maintDraft !== null;
                 const kmUsed = Math.max(0, totals.totalKm - (item.lastChangeKm || 0));
                 const interval = Math.max(100, item.intervalKm || 1000);
@@ -8674,18 +8711,18 @@ export default function App() {
                 return (
                   <div
                     key={item.id}
-                    className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 transition-all relative overflow-hidden ${surfaceCard} ${
+                    className={`rounded-2xl p-4 sm:p-5 transition-all relative overflow-hidden bg-transparent border ${
                       isDanger && !isEditingThis
-                        ? 'border-l-[6px] border-l-rose-500 border-rose-500/60 dark:border-rose-500/70 maint-card-danger-glow'
+                        ? 'border-rose-500/45'
                         : isWarn && !isEditingThis
-                        ? 'border-l-[6px] border-l-amber-500 border-amber-500/60 dark:border-amber-500/70 maint-card-warn-glow'
-                        : ''
-                    } ${isEditingThis ? 'ring-2 ring-[#FF6A1A]' : ''}`}
+                        ? 'border-amber-500/30'
+                        : dividerBorder
+                    } ${isEditingThis ? 'border-[#FF6A1A]' : ''}`}
                   >
                     {isEditingThis && maintDraft ? (
                       /* 100% EDITABLE FORM MODE FOR THIS CARD */
                       <div className="flex flex-col gap-3.5 sm:gap-4">
-                        <div className="flex items-center justify-between border-b border-slate-800/50 pb-2.5">
+                        <div className={`flex items-center justify-between border-b ${dividerBorder} pb-2.5`}>
                           <span className="text-xs font-extrabold uppercase tracking-wider text-[#FF6A1A] truncate">
                             Editando · {item.name}
                           </span>
@@ -8694,7 +8731,7 @@ export default function App() {
                               setEditingMaintId(null);
                               setMaintDraft(null);
                             }}
-                            className={`p-1.5 rounded-lg ${surfaceSubtle} cursor-pointer`}
+                            className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder} cursor-pointer`}
                           >
                             <X className="w-4 h-4" />
                           </button>
@@ -8777,10 +8814,10 @@ export default function App() {
                         </div>
 
                         {/* Configuração de Porcentagem de Alerta (Room DB) */}
-                        <div className="rounded-xl sm:rounded-2xl p-3 bg-amber-500/10 border border-amber-500/30">
+                        <div className="rounded-xl p-3 bg-transparent border border-amber-500/35">
                           <div className="flex items-center justify-between gap-2.5 mb-1.5">
                             <div>
-                              <label className="block text-[11px] font-black text-amber-300">
+                              <label className={`block text-[11px] font-black ${isDark ? 'text-amber-300' : 'text-amber-700'}`}>
                                 🔔 Porcentagem de Alerta Preventivo (% do intervalo)
                               </label>
                               <p className={`text-[10px] mt-0.5 ${mutedText}`}>
@@ -8797,9 +8834,9 @@ export default function App() {
                                     alertThresholdPct: Math.max(0, val),
                                   })
                                 }
-                                className={`w-16 px-2 py-1 rounded-lg text-center text-xs font-black tabular-nums outline-none text-amber-300 ${inputSurface}`}
+                                className={`w-16 px-2 py-1 rounded-lg text-center text-xs font-black tabular-nums outline-none ${isDark ? 'text-amber-300' : 'text-amber-700'} ${inputSurface}`}
                               />
-                              <span className="text-xs font-black text-amber-400">%</span>
+                              <span className={`text-xs font-black ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>%</span>
                             </div>
                           </div>
 
@@ -8811,10 +8848,10 @@ export default function App() {
                                   key={pctVal}
                                   type="button"
                                   onClick={() => setMaintDraft({ ...maintDraft, alertThresholdPct: pctVal })}
-                                  className={`px-2 py-0.5 rounded-md text-[11px] font-black cursor-pointer transition-colors ${
+                                  className={`px-2 py-0.5 rounded-md text-[11px] font-black cursor-pointer transition-colors bg-transparent border ${
                                     isSelected
-                                      ? 'bg-amber-500 text-black shadow-xs'
-                                      : `${surfaceSubtle} hover:border-amber-400 text-amber-300`
+                                      ? 'border-amber-500 text-amber-500'
+                                      : `${dividerBorder} hover:border-amber-400 ${isDark ? 'text-amber-300' : 'text-amber-700'}`
                                   }`}
                                 >
                                   {pctVal}%
@@ -8825,14 +8862,30 @@ export default function App() {
                         </div>
 
                         <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-2">
-                          <button
-                            type="button"
-                            onClick={() => deleteMaintenanceCard(item.id)}
-                            className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px]"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Excluir Card</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => deleteMaintenanceCard(item.id)}
+                              className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold text-rose-500 bg-transparent border border-rose-500/40 hover:bg-rose-500/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px]"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Excluir Card</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => duplicateMaintenanceCard(item)}
+                              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold bg-transparent border transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px] ${
+                                isDark
+                                  ? 'border-sky-500/40 text-sky-400 hover:bg-sky-500/10'
+                                  : 'border-sky-300 text-sky-700 hover:bg-sky-50'
+                              }`}
+                              title="Duplicar esta manutenção para criar uma cópia independente"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Duplicar</span>
+                            </button>
+                          </div>
 
                           <div className="flex items-center gap-2">
                             <button
@@ -8841,14 +8894,14 @@ export default function App() {
                                 setEditingMaintId(null);
                                 setMaintDraft(null);
                               }}
-                              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer min-h-[40px] text-center ${surfaceSubtle}`}
+                              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer min-h-[40px] text-center bg-transparent border ${dividerBorder}`}
                             >
                               Cancelar
                             </button>
                             <button
                               type="button"
                               onClick={saveMaintenanceCardEdit}
-                              className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px]"
+                              className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer min-h-[40px]"
                             >
                               <Check className="w-4 h-4 stroke-[2.5]" />
                               <span>Salvar</span>
@@ -8874,10 +8927,10 @@ export default function App() {
                                   Troca Obrigatória ({rawPct}%)
                                 </span>
                               </div>
-                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 ${
+                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 bg-transparent border ${
                                 isDark
-                                  ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
-                                  : 'bg-rose-100 text-rose-700 border border-rose-300'
+                                  ? 'text-rose-300 border-rose-500/40'
+                                  : 'text-rose-700 border-rose-300'
                               }`}>
                                 {kmOverdue > 0 ? `+${kmOverdue.toLocaleString('pt-BR')} km além` : '100% atingido'}
                               </span>
@@ -8897,10 +8950,10 @@ export default function App() {
                                   Alerta Preventivo ({rawPct}%)
                                 </span>
                               </div>
-                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 ${
+                              <span className={`text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md tabular-nums shrink-0 bg-transparent border ${
                                 isDark
-                                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                  ? 'text-amber-300 border-amber-500/40'
+                                  : 'text-amber-800 border-amber-300'
                               }`}>
                                 Gatilho {alertThreshold}% atingido
                               </span>
@@ -8914,18 +8967,18 @@ export default function App() {
                                 <h3 className="text-sm sm:text-base font-extrabold leading-snug flex items-center gap-1.5 flex-wrap">
                                   <span className="break-words">{item.name}</span>
                                   {isDanger ? (
-                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 bg-transparent border ${
                                       isDark
-                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                                        : 'bg-rose-100 text-rose-700 border border-rose-200'
+                                        ? 'text-rose-300 border-rose-500/40'
+                                        : 'text-rose-700 border-rose-300'
                                     }`}>
                                       {rawPct}%
                                     </span>
                                   ) : isWarn ? (
-                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                                    <span className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 bg-transparent border ${
                                       isDark
-                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                        ? 'text-amber-300 border-amber-500/40'
+                                        : 'text-amber-800 border-amber-300'
                                     }`}>
                                       {rawPct}% ({alertThreshold}%)
                                     </span>
@@ -8952,12 +9005,12 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => openMaintenanceHistoryModal(item)}
-                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-slate-700 dark:text-slate-200`}
+                                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] ${secondaryText}`}
                                 title={`Ver histórico de datas e valores pagos de ${item.name}`}
                               >
                                 <History className="w-3.5 h-3.5 text-[#FF6A1A] shrink-0" />
                                 <span className="hidden sm:inline">Histórico</span>
-                                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40">
                                   {(item.history || []).length}
                                 </span>
                               </button>
@@ -8965,7 +9018,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => startEditMaintenanceCard(item)}
-                                className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] min-w-[38px] sm:min-w-[40px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                                className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center cursor-pointer transition-colors shrink-0 min-h-[38px] sm:min-h-[40px] min-w-[38px] sm:min-w-[40px] bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] text-[#FF6A1A]`}
                                 title="Editar dados deste card"
                                 aria-label="Editar card de manutenção"
                               >
@@ -8977,7 +9030,7 @@ export default function App() {
                           {/* Metadata Line */}
                           <div className={`mt-3 sm:mt-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs tabular-nums ${mutedText}`}>
                             <span>
-                              Desgaste: <strong className="text-current">{kmUsed.toLocaleString('pt-BR')}</strong> /{' '}
+                              Desgaste: <strong className="text-current dashboard-number-anim">{kmUsed.toLocaleString('pt-BR')}</strong> /{' '}
                               {interval.toLocaleString('pt-BR')} km ({rawPct}%)
                             </span>
                             <span aria-hidden="true">·</span>
@@ -9024,8 +9077,8 @@ export default function App() {
                             </p>
                           )}
 
-                          {/* Wear Progress Bar with Threshold Marker */}
-                          <div className={`mt-3 sm:mt-4 h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'} relative`}>
+                          {/* Wear Progress Bar with Threshold Marker (Animada) */}
+                          <div className={`mt-3 sm:mt-4 h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-900' : 'bg-slate-200'} relative`}>
                             {/* Marcador visual da porcentagem de alerta configurada */}
                             <div
                               className="absolute top-0 bottom-0 w-0.5 bg-amber-400/90 z-10 shadow-[0_0_4px_rgba(245,158,11,0.8)]"
@@ -9033,31 +9086,32 @@ export default function App() {
                               title={`Ponto de Alerta Configurado: ${alertThreshold}%`}
                             />
                             <div
-                              className={`h-full rounded-full transition-all duration-500 ${
+                              className={`h-full rounded-full dashboard-progress-fill ${
                                 isDanger
-                                  ? 'bg-gradient-to-r from-rose-600 via-red-500 to-rose-600 shadow-sm'
+                                  ? 'bg-gradient-to-r from-rose-600 via-red-500 to-rose-600'
                                   : isWarn
-                                  ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 shadow-sm'
+                                  ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500'
                                   : 'bg-gradient-to-r from-emerald-500 to-teal-400'
                               }`}
-                              style={{ width: `${pct}%` }}
+                              style={{
+                                width: `${pct}%`,
+                                animationDelay: `${idx * 70}ms`,
+                              }}
                             />
                           </div>
                         </div>
 
-                        {/* Card Footer Actions */}
-                        <div className={`mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t ${
-                          isDark ? 'border-slate-800/40' : 'border-slate-200'
-                        } flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5`}>
+                        {/* Card Footer Actions (Botões sem fundo, borda fina) */}
+                        <div className={`mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t ${dividerBorder} flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5`}>
                           <button
                             type="button"
                             onClick={() => quickResetMaintenanceCard(item.id)}
-                            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] text-center ${
+                            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] text-center bg-transparent border ${
                               isDanger
                                 ? isDark
-                                  ? 'bg-rose-500/20 border-2 border-rose-500/70 text-rose-300 hover:bg-rose-500/30'
-                                  : 'bg-rose-50 border-2 border-rose-500/60 text-rose-700 hover:bg-rose-100 shadow-xs'
-                                : `${surfaceSubtle} hover:border-emerald-500/60`
+                                  ? 'border-rose-500/70 text-rose-300 hover:bg-rose-500/10'
+                                  : 'border-rose-500/60 text-rose-700 hover:bg-rose-50'
+                                : `${dividerBorder} hover:border-emerald-500/60`
                             }`}
                           >
                             <RotateCcw className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -9067,7 +9121,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => openMaintenanceHistoryModal(item)}
-                            className={`py-2.5 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] shrink-0 ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A]`}
+                            className={`py-2.5 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] shrink-0 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] text-[#FF6A1A]`}
                             title="Abrir pop-up com histórico de datas e valores pagos"
                           >
                             <History className="w-3.5 h-3.5 shrink-0" />
@@ -9084,7 +9138,7 @@ export default function App() {
 
               {sortedMaintenanceItems.length === 0 && maintSearchQuery.trim() !== '' && (
                 <div
-                  className={`col-span-1 md:col-span-2 rounded-2xl sm:rounded-3xl p-6 sm:p-8 text-center flex flex-col items-center justify-center gap-3 ${surfaceCard}`}
+                  className={`col-span-1 md:col-span-2 rounded-2xl p-6 sm:p-8 text-center flex flex-col items-center justify-center gap-3 bg-transparent border ${dividerBorder}`}
                 >
                   <Search className="w-8 h-8 text-[#FF6A1A] opacity-80" />
                   <div>
@@ -9098,44 +9152,17 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setMaintSearchQuery('')}
-                    className="mt-1 px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer"
+                    className="mt-1 px-4 py-2 rounded-xl text-xs font-bold bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors cursor-pointer"
                   >
                     Limpar filtro de busca
                   </button>
                 </div>
               )}
-
-              {/* BOTÃO / CARD DEDICADO PARA ADICIONAR OUTRAS NOVAS MANUTENÇÕES */}
-              <button
-                type="button"
-                onClick={() => {
-                  startCreateMaintenanceCard();
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className={`rounded-2xl sm:rounded-3xl p-5 sm:p-6 border-2 border-dashed transition-all flex flex-col items-center justify-center text-center gap-2.5 sm:gap-3 min-h-[180px] sm:min-h-[210px] cursor-pointer group ${
-                  isDark
-                    ? 'border-slate-800 hover:border-[#FF6A1A] bg-[#12141C]/50 hover:bg-[#12141C]'
-                    : 'border-slate-300 hover:border-[#FF6A1A] bg-white/60 hover:bg-white'
-                }`}
-              >
-                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] group-hover:scale-105 transition-transform">
-                  <Plus className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
-                </div>
-                <div>
-                  <div className="text-sm sm:text-base font-extrabold text-[#FF6A1A]">
-                    + Adicionar Outra Manutenção
-                  </div>
-                  <p className={`text-[11px] sm:text-xs mt-1 max-w-xs ${mutedText}`}>
-                    Cadastre novos itens como Vela de Ignição, Filtro de Ar, Fluido de Freio, Bateria, Cabos ou Revisão Geral.
-                  </p>
-                </div>
-              </button>
             </div>
 
-            {/* 100% EDITABLE FUEL & DIAGNOSTICS CARD */}
-            {/* 100% EDITABLE FUEL & DIAGNOSTICS CARD */}
-            <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-7 ${surfaceCard}`}>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 sm:pb-5 border-b border-slate-800/50">
+            {/* 100% EDITABLE FUEL & DIAGNOSTICS SECTION (Minimalista sem card pesado externo) */}
+            <div className={`pt-5 border-t ${dividerBorder}`}>
+              <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
                 <div className="flex items-center gap-3">
                   <Fuel className="w-5 h-5 sm:w-6 sm:h-6 text-[#FF6A1A] shrink-0" />
                   <div>
@@ -9152,51 +9179,61 @@ export default function App() {
                 <button
                   type="button"
                   onClick={startEditFuelCard}
-                  className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[40px] sm:min-h-[44px] ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] self-start sm:self-auto`}
+                  className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors min-h-[40px] sm:min-h-[44px] bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] text-[#FF6A1A] self-start sm:self-auto`}
                 >
                   <Edit3 className="w-3.5 h-3.5" />
                   <span>Editar Dados da Moto</span>
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4 mt-4 sm:mt-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5 mt-4">
                 <div
                   onClick={startEditFuelCard}
-                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                  className={`rounded-xl p-3 sm:p-4 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50`}
                 >
                   <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Consumo Total</div>
                   <div className="text-base sm:text-xl font-black mt-1 tabular-nums truncate">
-                    {(totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)).toLocaleString('pt-BR', {
-                      minimumFractionDigits: 1,
-                      maximumFractionDigits: 1,
-                    })}{' '}
-                    L
+                    <AnimatedNumber
+                      value={totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)}
+                      formatter={v =>
+                        `${v.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })} L`
+                      }
+                    />
                   </div>
                 </div>
                 <div
                   onClick={startEditFuelCard}
-                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                  className={`rounded-xl p-3 sm:p-4 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50`}
                 >
                   <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Gasto Estimado</div>
                   <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-[#FF6A1A] truncate">
-                    {fmtCurrencyExact(
-                      (totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)) *
+                    <AnimatedNumber
+                      value={
+                        (totals.totalKm / (dbState.fuelConfig.kmPerLiter || 35)) *
                         (dbState.fuelConfig.fuelPrice || 5.8)
-                    )}
+                      }
+                      formatter={fmtCurrencyExact}
+                    />
                   </div>
                 </div>
                 <div
                   onClick={startEditFuelCard}
-                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                  className={`rounded-xl p-3 sm:p-4 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50`}
                 >
                   <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Custo / KM</div>
-                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-emerald-400 truncate">
-                    R$ {bikeDiagnostics.costPerKm.toFixed(2)}/km
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-emerald-500 dark:text-emerald-400 truncate">
+                    <AnimatedNumber
+                      value={bikeDiagnostics.costPerKm}
+                      formatter={v => `R$ ${v.toFixed(2)}/km`}
+                    />
                   </div>
                 </div>
                 <div
                   onClick={startEditFuelCard}
-                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50`}
+                  className={`rounded-xl p-3 sm:p-4 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50`}
                 >
                   <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Média & Preço</div>
                   <div className="text-xs sm:text-base font-black mt-1 tabular-nums truncate">
@@ -9205,18 +9242,21 @@ export default function App() {
                 </div>
                 <div
                   onClick={startEditFuelCard}
-                  className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 cursor-pointer transition-colors ${surfaceSubtle} hover:border-[#FF6A1A]/50 col-span-2 sm:col-span-1`}
+                  className={`rounded-xl p-3 sm:p-4 cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50 col-span-2 sm:col-span-1`}
                 >
                   <div className={`text-[11px] sm:text-xs font-semibold ${mutedText}`}>Autonomia / Tanque</div>
-                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-sky-400 truncate">
-                    ~{bikeDiagnostics.autonomyKm} km
+                  <div className="text-base sm:text-xl font-black mt-1 tabular-nums text-sky-500 dark:text-sky-400 truncate">
+                    <AnimatedNumber
+                      value={bikeDiagnostics.autonomyKm}
+                      formatter={v => `~${Math.round(v)} km`}
+                    />
                   </div>
                 </div>
               </div>
 
-              <div className="mt-4 sm:mt-5 flex flex-col gap-2">
+              <div className="mt-4 flex flex-col gap-2">
                 {bikeDiagnostics.tips.map((tip, idx) => (
-                  <div key={idx} className={`rounded-xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium leading-relaxed ${surfaceSubtle}`}>
+                  <div key={idx} className={`rounded-xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium leading-relaxed bg-transparent border ${dividerBorder}`}>
                     {tip}
                   </div>
                 ))}
@@ -9227,9 +9267,9 @@ export default function App() {
 
         {/* ================= ABA 3: FINANCEIRO (INTELIGÊNCIA FINANCEIRA COM IA, RESERVAS & DOCUMENTAÇÃO) ================= */}
         {activeTab === 'billing' && (
-          <div className="flex flex-col gap-4 sm:gap-6">
-            {/* TOP HEADER + SUB-NAVIGATION (Sem Resumo e Sem Produtividade) */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col gap-5 sm:gap-6">
+            {/* TOP HEADER + SUB-NAVIGATION (Minimalista sem fundo nos botões) */}
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div>
                 <h1 className="text-xl sm:text-2xl font-black">
                   Central de Finanças
@@ -9238,7 +9278,7 @@ export default function App() {
                   Planejamento de reservas diárias, custos e lucro real que sobra no seu bolso
                 </p>
               </div>
-              <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
+              <div className="flex items-center gap-1.5 overflow-x-auto max-w-full no-scrollbar py-0.5">
                 {[
                   { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
                   { id: 'projecao', label: '🔮 Faturamento Previsto' },
@@ -9251,8 +9291,10 @@ export default function App() {
                   <button
                     key={tab.id}
                     onClick={() => setBillingSubTab(tab.id as any)}
-                    className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      billingSubTab === tab.id ? 'bg-[#FF6A1A] text-black' : `${mutedText} hover:text-current`
+                    className={`px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-transparent border ${
+                      billingSubTab === tab.id
+                        ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                        : `${dividerBorder} ${mutedText} hover:text-current hover:border-[#FF6A1A]/50`
                     }`}
                   >
                     {tab.label}
@@ -9262,9 +9304,9 @@ export default function App() {
             </div>
 
             {billingSubTab === 'mensal' && (
-              <div className="flex flex-col gap-4 sm:gap-6">
-                {/* 1. BARRA DE CONTROLE: SELETOR DE MÊS, FILTRO DE MESES ANTERIORES & ATALHOS */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} shadow-sm border`}>
+              <div className="flex flex-col gap-5 sm:gap-6">
+                {/* 1. BARRA DE CONTROLE: SELETOR DE MÊS, FILTRO DE MESES ANTERIORES & ATALHOS (Sem card externo) */}
+                <div className={`pb-5 border-b ${dividerBorder}`}>
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -9273,10 +9315,10 @@ export default function App() {
                           <span>Extrato Mensal & Filtro de Meses</span>
                         </span>
                         <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent border ${
                             selectedMonthFinancials.isCurrentMonth
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                              : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                              ? 'text-emerald-500 dark:text-emerald-400 border-emerald-500/40'
+                              : 'text-sky-500 dark:text-sky-400 border-sky-500/40'
                           }`}
                         >
                           {selectedMonthFinancials.isCurrentMonth
@@ -9298,7 +9340,7 @@ export default function App() {
                           const d = new Date(y, m - 2, 1);
                           setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                         }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                         title="Mês Anterior"
                       >
                         <ChevronRight className="w-4 h-4 rotate-180" />
@@ -9333,7 +9375,7 @@ export default function App() {
                           const d = new Date(y, m, 1);
                           setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                         }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                         title="Próximo Mês"
                       >
                         <span className="hidden sm:inline">Próximo</span>
@@ -9347,7 +9389,7 @@ export default function App() {
                             const now = new Date();
                             setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
                           }}
-                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 cursor-pointer transition-colors"
+                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-transparent text-[#FF6A1A] hover:bg-[#FF6A1A]/10 border border-[#FF6A1A]/50 cursor-pointer transition-colors"
                         >
                           Ir p/ Mês Atual
                         </button>
@@ -9356,49 +9398,49 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 2. OS 4 CARDS PRINCIPAIS: GANHOS TOTAIS, GASTOS, SALDO ATUAL E META PERSONALIZADA */}
+                {/* 2. OS 4 CARDS PRINCIPAIS: GANHOS TOTAIS, GASTOS, SALDO ATUAL E META PERSONALIZADA (Sem fundo, apenas bordas finas) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                   {/* Card 1: Ganhos Totais do Mês */}
-                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                           1. Ganhos Totais
                         </span>
-                        <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-sky-500 dark:text-sky-400 bg-transparent border border-sky-500/35 px-1.5 py-0.5 rounded">
                           {selectedMonthFinancials.entries.length} corridas
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] mt-1">
-                        {fmtMoney(selectedMonthFinancials.totalRevenue)}
+                        <AnimatedNumber value={selectedMonthFinancials.totalRevenue} formatter={fmtMoney} />
                       </div>
                     </div>
-                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                    <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Média/corrida:</span>
-                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-200">
+                      <span className={`font-bold tabular-nums ${secondaryText}`}>
                         {fmtMoney(selectedMonthFinancials.avgPerRide)}
                       </span>
                     </div>
                   </div>
 
                   {/* Card 2: Gastos do Mês */}
-                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                           2. Gastos do Mês
                         </span>
-                        <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-rose-500 dark:text-rose-400 bg-transparent border border-rose-500/35 px-1.5 py-0.5 rounded">
                           {selectedMonthFinancials.expenses.length} lançamentos
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black tabular-nums text-rose-500 dark:text-rose-400 mt-1">
-                        - {fmtMoney(selectedMonthFinancials.totalExpenses)}
+                        <AnimatedNumber value={selectedMonthFinancials.totalExpenses} formatter={v => `- ${fmtMoney(v)}`} />
                       </div>
                     </div>
-                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                    <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Custos operacionais:</span>
-                      <span className="font-bold tabular-nums text-rose-400">
+                      <span className="font-bold tabular-nums text-rose-500 dark:text-rose-400">
                         Gasolina + Manutenção
                       </span>
                     </div>
@@ -9406,32 +9448,32 @@ export default function App() {
 
                   {/* Card 3: Saldo Atual / Lucro Líquido Real */}
                   <div
-                    className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                    className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${
                       selectedMonthFinancials.currentBalance >= 0
-                        ? 'bg-emerald-500/5 border-emerald-500/30'
-                        : 'bg-rose-500/5 border-rose-500/30'
+                        ? 'border-emerald-500/40'
+                        : 'border-rose-500/40'
                     }`}
                   >
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-1">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                           3. Saldo Atual (Lucro Real)
                         </span>
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => handleOpenAdjustBalance(selectedMonthFinancials.currentBalance)}
-                            className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
+                            className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A]/40 transition-colors cursor-pointer flex items-center gap-1 active:scale-95"
                             title="Ajustar Saldo Atual e Gerar Transação Automática"
                           >
                             <SlidersHorizontal className="w-3 h-3" />
                             <span>Ajustar Saldo</span>
                           </button>
                           <span
-                            className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                            className={`text-[10px] font-black px-1.5 py-0.5 rounded bg-transparent border ${
                               selectedMonthFinancials.currentBalance >= 0
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : 'bg-rose-500/20 text-rose-300'
+                                ? 'border-emerald-500/40 text-emerald-500 dark:text-emerald-300'
+                                : 'border-rose-500/40 text-rose-500 dark:text-rose-300'
                             }`}
                           >
                             {selectedMonthFinancials.netMarginPct}% livre
@@ -9441,19 +9483,19 @@ export default function App() {
                       <div
                         className={`text-xl sm:text-2xl font-black tabular-nums mt-1 ${
                           selectedMonthFinancials.currentBalance >= 0
-                            ? 'text-emerald-400'
-                            : 'text-rose-400'
+                            ? 'text-emerald-500 dark:text-emerald-400'
+                            : 'text-rose-500 dark:text-rose-400'
                         }`}
                       >
-                        {fmtMoney(selectedMonthFinancials.currentBalance)}
+                        <AnimatedNumber value={selectedMonthFinancials.currentBalance} formatter={fmtMoney} />
                       </div>
                     </div>
-                    <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                    <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Dinheiro limpo:</span>
                       <button
                         type="button"
                         onClick={() => handleOpenAdjustBalance(selectedMonthFinancials.currentBalance)}
-                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer bg-transparent"
                       >
                         <span>Ajustar Saldo Real</span>
                         <ArrowRight className="w-3 h-3" />
@@ -9478,7 +9520,7 @@ export default function App() {
                     const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
 
                     return (
-                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
                         <div>
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A] truncate">
@@ -9491,10 +9533,10 @@ export default function App() {
                                 setTempFinanceGoalDate(targetDate);
                                 setIsEditingCustomGoalInFinance(prev => !prev);
                               }}
-                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-lg cursor-pointer transition-colors bg-transparent border ${
                                 isEditingCustomGoalInFinance
-                                  ? 'bg-emerald-500 text-black font-black'
-                                  : 'bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25'
+                                  ? 'border-emerald-500 text-emerald-500 font-black'
+                                  : 'border-[#FF6A1A]/40 text-[#FF6A1A] hover:border-[#FF6A1A]'
                               }`}
                             >
                               {isEditingCustomGoalInFinance ? 'Fechar' : 'Ajustar'}
@@ -9502,18 +9544,18 @@ export default function App() {
                           </div>
 
                           <div className="flex items-baseline justify-between gap-1 mt-1">
-                            <div className={`text-base sm:text-lg font-black tabular-nums ${currentBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {fmtMoney(currentBalance)}
+                            <div className={`text-base sm:text-lg font-black tabular-nums ${currentBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                              <AnimatedNumber value={currentBalance} formatter={fmtMoney} />
                             </div>
                             <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
                               de {fmtMoney(customTarget)} ({rawPct}%)
                             </div>
                           </div>
 
-                          {/* Barra de Progresso da Meta com Saldo Atual */}
-                          <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden mt-2">
+                          {/* Barra de Progresso da Meta com Saldo Atual (Animada) */}
+                          <div className={`w-full h-2 rounded-full overflow-hidden mt-2 ${isDark ? 'bg-neutral-900' : 'bg-slate-200'}`}>
                             <div
-                              className={`h-full rounded-full transition-all duration-500 ${
+                              className={`h-full rounded-full dashboard-progress-fill ${
                                 isGoalReached
                                   ? 'bg-emerald-400'
                                   : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
@@ -9525,7 +9567,7 @@ export default function App() {
 
                         {/* Editor Rápido Inline se acionado */}
                         {isEditingCustomGoalInFinance ? (
-                          <div className="mt-2.5 pt-2 border-t border-slate-800/40 flex flex-col gap-2">
+                          <div className={`mt-2.5 pt-2 border-t ${dividerBorder} flex flex-col gap-2`}>
                             <div>
                               <label className={`text-[10px] font-bold ${mutedText}`}>Valor da Meta (R$):</label>
                               <FreeNumberInput
@@ -9556,13 +9598,13 @@ export default function App() {
                                 });
                                 setIsEditingCustomGoalInFinance(false);
                               }}
-                              className="w-full py-1.5 rounded-lg text-xs font-black bg-emerald-500 text-black cursor-pointer shadow-xs"
+                              className="w-full py-1.5 rounded-lg text-xs font-black bg-transparent border border-emerald-500 text-emerald-500 hover:bg-emerald-500/10 cursor-pointer"
                             >
                               Salvar Meta
                             </button>
                           </div>
                         ) : (
-                          <div className={`mt-2.5 pt-2 border-t border-slate-800/40 text-[10px] font-semibold ${mutedText} flex items-center justify-between`}>
+                          <div className={`mt-2.5 pt-2 border-t ${dividerBorder} text-[10px] font-semibold ${mutedText} flex items-center justify-between`}>
                             <span>
                               {isGoalReached
                                 ? '🎉 Meta batida com saldo positivo!'
@@ -9580,29 +9622,38 @@ export default function App() {
                   })()}
                 </div>
 
-                {/* CARD DE PROJEÇÃO / FATURAMENTO FUTURO PREVISTO DO MÊS */}
-                <div className={`rounded-2xl p-4 sm:p-5 border transition-all ${
-                  isDark ? 'bg-[#131622] border-sky-500/30' : 'bg-sky-50/80 border-sky-300'
-                }`}>
+                {/* SEÇÃO DE PROJEÇÃO / FATURAMENTO FUTURO PREVISTO DO MÊS (Minimalista sem fundo) */}
+                <div className="rounded-2xl p-4 sm:p-5 bg-transparent border border-sky-500/35 transition-all">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400 shrink-0">
+                      <div className="w-10 h-10 rounded-xl bg-transparent border border-sky-500/40 flex items-center justify-center text-sky-400 shrink-0">
                         <Sparkles className="w-5 h-5" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100">
+                          <span className={`text-xs sm:text-sm font-black ${primaryText}`}>
                             Faturamento Futuro Previsto ({selectedMonthFinancials.formattedLabel})
                           </span>
-                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-400 border border-sky-500/40">
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent text-sky-500 dark:text-sky-400 border border-sky-500/40">
                             {selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length} agendado{selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length === 1 ? '' : 's'}
                           </span>
                         </div>
                         <p className={`text-xs mt-0.5 ${mutedText}`}>
                           Ganhos reais ({fmtMoney(selectedMonthFinancials.totalRevenue)}) + Previsto ({fmtMoney(selectedMonthFinancials.projectedPendingRevenue)}) ={' '}
-                          <strong className="text-sky-400 font-black">
+                          <strong className="text-sky-500 dark:text-sky-400 font-black">
                             Projeção Total: {fmtMoney(selectedMonthFinancials.projectedTotalRevenue)}
                           </strong>
+                          {selectedMonthFinancials.projectedDebitedRevenue > 0 && (
+                            <span className="block text-[11px] mt-0.5 text-amber-500 dark:text-amber-300">
+                              Já debitado pelos dias passados: -{fmtMoney(selectedMonthFinancials.projectedDebitedRevenue)} (de {fmtMoney(selectedMonthFinancials.projectedInitialRevenue)} criados)
+                            </span>
+                          )}
+                          {selectedMonthFinancials.projectedPendingRevenue === 0 &&
+                            selectedMonthFinancials.allProjectedPendingCount > 0 && (
+                              <span className="block text-[11px] mt-0.5 text-sky-500 dark:text-sky-300">
+                                Saldo futuro ativo em outros meses: {fmtMoney(selectedMonthFinancials.allProjectedPendingRevenue)} ({selectedMonthFinancials.allProjectedPendingCount} agendado{selectedMonthFinancials.allProjectedPendingCount === 1 ? '' : 's'})
+                              </span>
+                            )}
                         </p>
                       </div>
                     </div>
@@ -9611,7 +9662,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => openNewProjectedRevenueModal()}
-                        className="px-3 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black cursor-pointer transition-all flex items-center gap-1.5 shadow-sm"
+                        className="px-3 py-2 rounded-xl text-xs font-black bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] hover:bg-[#FF6A1A]/10 cursor-pointer transition-all flex items-center gap-1.5"
                       >
                         <Plus className="w-4 h-4 stroke-[2.5]" />
                         <span>Lançar Faturamento Futuro</span>
@@ -9619,7 +9670,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setBillingSubTab('projecao')}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold ${surfaceSubtle} hover:border-sky-500 text-sky-400 cursor-pointer transition-all flex items-center gap-1`}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold bg-transparent border ${dividerBorder} hover:border-sky-500 text-sky-500 dark:text-sky-400 cursor-pointer transition-all flex items-center gap-1`}
                       >
                         <span>Ver Previsões</span>
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -9629,18 +9680,18 @@ export default function App() {
                 </div>
 
                 {/* 3. FAIXA OPERACIONAL RESUMIDA DO MÊS */}
-                <div className={`rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-around gap-2 text-xs border ${surfaceSubtle}`}>
+                <div className={`rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-around gap-2 text-xs bg-transparent border ${dividerBorder}`}>
                   <div className="flex items-center gap-1.5">
                     <span className={mutedText}>Dias Trabalhados:</span>
-                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.activeDays} dias</strong>
+                    <strong className={`${primaryText} font-black`}>{selectedMonthFinancials.activeDays} dias</strong>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={mutedText}>Total Rodado:</span>
-                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.totalKm.toLocaleString('pt-BR')} km</strong>
+                    <strong className={`${primaryText} font-black`}>{selectedMonthFinancials.totalKm.toLocaleString('pt-BR')} km</strong>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={mutedText}>Horas em Rota:</span>
-                    <strong className="text-slate-900 dark:text-white font-black">{selectedMonthFinancials.totalHours.toFixed(1)}h</strong>
+                    <strong className={`${primaryText} font-black`}>{selectedMonthFinancials.totalHours.toFixed(1)}h</strong>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={mutedText}>Rendimento/KM:</span>
@@ -9648,18 +9699,17 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={mutedText}>Rendimento/Hora:</span>
-                    <strong className="text-emerald-400 font-black">{fmtMoney(selectedMonthFinancials.avgPerHour)}/h</strong>
+                    <strong className="text-emerald-500 dark:text-emerald-400 font-black">{fmtMoney(selectedMonthFinancials.avgPerHour)}/h</strong>
                   </div>
                 </div>
 
-                {/* CARD DETALHADO DE RECONCILIAÇÃO FINANCEIRA: SALDO DO MÊS VS. PROVISÃO DA CASA E MOTO */}
+                {/* SEÇÃO DETALHADA DE RECONCILIAÇÃO FINANCEIRA: SALDO DO MÊS VS. PROVISÃO DA CASA E MOTO (Sem card pesado externo) */}
                 {(() => {
                   const houseMonthly = financialIntelligence.monthlyHouseholdCost;
                   const houseRemaining = financialIntelligence.monthlyHouseholdRemaining;
                   const housePaid = financialIntelligence.monthlyHouseholdPaid;
                   const bikeMonthly = financialIntelligence.monthlyBikeExpensesTotal;
                   const curBal = selectedMonthFinancials.currentBalance;
-                  // O saldo livre deduz apenas o orçamento que ainda resta quitar no mês (sem duplicar gastos já lançados)
                   const netAfterHouse = curBal - houseRemaining;
                   const isCovered = netAfterHouse >= 0;
                   const missingForHouse = Math.max(0, houseRemaining - curBal);
@@ -9673,24 +9723,22 @@ export default function App() {
                   const dailyNeededToCoverHouse = missingForHouse > 0 ? missingForHouse / remainingWorkDays : 0;
 
                   return (
-                    <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border text-xs flex flex-col gap-3.5 shadow-xs ${
-                      isDark ? 'bg-slate-900/70 border-slate-800' : 'bg-slate-50 border-slate-200'
-                    }`}>
-                      {/* Topo do Card: Título, Status e Botões de Atalho */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-800/50">
+                    <div className={`py-5 border-y ${dividerBorder} text-xs flex flex-col gap-4`}>
+                      {/* Topo da Seção: Título, Status e Botões de Atalho */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="flex items-start sm:items-center gap-2.5 flex-wrap">
-                          <span className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center text-base shrink-0">
+                          <span className="w-8 h-8 rounded-xl bg-transparent text-blue-400 border border-blue-500/40 flex items-center justify-center text-base shrink-0">
                             🏠
                           </span>
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-blue-400">
+                              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-blue-500 dark:text-blue-400">
                                 Provisão das Contas da Casa & Saldo 100% Livre
                               </h3>
-                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md bg-transparent border ${
                                 isCovered
-                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                  ? 'text-emerald-500 dark:text-emerald-400 border-emerald-500/40'
+                                  : 'text-amber-500 dark:text-amber-400 border-amber-500/40'
                               }`}>
                                 {isCovered
                                   ? (houseRemaining === 0 ? '✅ Contas da Casa 100% Quitadas no Mês!' : '✅ Contas Restantes da Casa Cobertas!')
@@ -9707,31 +9755,31 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setBillingSubTab('despesas_casa')}
-                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/30 transition-colors cursor-pointer"
+                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-transparent text-blue-500 dark:text-blue-400 hover:bg-blue-500/10 border border-blue-500/40 transition-colors cursor-pointer"
                           >
                             🏠 Editar Contas da Casa ↗
                           </button>
                           <button
                             type="button"
                             onClick={() => setBillingSubTab('despesas_moto')}
-                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 transition-colors cursor-pointer"
+                            className="px-2.5 py-1.5 rounded-xl text-[10px] font-black bg-transparent text-[#FF6A1A] hover:bg-[#FF6A1A]/10 border border-[#FF6A1A]/40 transition-colors cursor-pointer"
                           >
                             🏍️ Despesas da Moto ↗
                           </button>
                         </div>
                       </div>
 
-                      {/* Grid da Equação Matemática Passo a Passo */}
+                      {/* Grid da Equação Matemática Passo a Passo (Sub-cards sem fundo) */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
                         {/* Bloco 1: Saldo Atual do Mês */}
-                        <div className={`rounded-xl p-3 border ${surfaceSubtle}`}>
+                        <div className={`rounded-xl p-3 bg-transparent border ${dividerBorder}`}>
                           <div className={`text-[10px] font-bold uppercase ${mutedText}`}>
                             1. Saldo Atual em {selectedMonthFinancials.formattedLabel}
                           </div>
                           <div className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
-                            curBal >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            curBal >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                           }`}>
-                            {fmtMoney(curBal)}
+                            <AnimatedNumber value={curBal} formatter={fmtMoney} />
                           </div>
                           <div className={`text-[10px] mt-1 ${mutedText}`}>
                             Ganhos ({fmtMoney(selectedMonthFinancials.totalRevenue)}) − Gastos lançados ({fmtMoney(selectedMonthFinancials.totalExpenses)})
@@ -9739,13 +9787,13 @@ export default function App() {
                         </div>
 
                         {/* Bloco 2: Provisão Mensal das Contas da Casa Restantes */}
-                        <div className={`rounded-xl p-3 border border-blue-500/25 bg-blue-500/5`}>
-                          <div className="text-[10px] font-bold uppercase text-blue-400 flex items-center justify-between">
+                        <div className="rounded-xl p-3 bg-transparent border border-blue-500/35">
+                          <div className="text-[10px] font-bold uppercase text-blue-500 dark:text-blue-400 flex items-center justify-between">
                             <span>2. (−) Contas da Casa a Pagar</span>
                             <span>{financialIntelligence.householdPaidCount}/{financialIntelligence.activeHouseholdExpenses.length} quitadas</span>
                           </div>
-                          <div className="text-base sm:text-lg font-black tabular-nums text-blue-400 mt-0.5">
-                            - {fmtCurrencyExact(houseRemaining)}
+                          <div className="text-base sm:text-lg font-black tabular-nums text-blue-500 dark:text-blue-400 mt-0.5">
+                            <AnimatedNumber value={houseRemaining} formatter={v => `- ${fmtCurrencyExact(v)}`} />
                           </div>
                           <div className={`text-[10px] mt-1 ${mutedText}`}>
                             {housePaid > 0
@@ -9755,23 +9803,23 @@ export default function App() {
                         </div>
 
                         {/* Bloco 3: Resultado = Saldo 100% Livre (Após Moto + Casa) */}
-                        <div className={`rounded-xl p-3 border ${
+                        <div className={`rounded-xl p-3 bg-transparent border ${
                           isCovered
-                            ? 'bg-emerald-500/10 border-emerald-500/30'
-                            : 'bg-rose-500/10 border-rose-500/30'
+                            ? 'border-emerald-500/40'
+                            : 'border-rose-500/40'
                         }`}>
                           <div className={`text-[10px] font-black uppercase ${
-                            isCovered ? 'text-emerald-400' : 'text-rose-400'
+                            isCovered ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                           }`}>
                             3. (=) Saldo 100% Livre no Bolso
                           </div>
                           <div className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
-                            isCovered ? 'text-emerald-400' : 'text-rose-400'
+                            isCovered ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                           }`}>
-                            {fmtMoney(netAfterHouse)}
+                            <AnimatedNumber value={netAfterHouse} formatter={fmtMoney} />
                           </div>
                           <div className={`text-[10px] mt-1 font-semibold ${
-                            isCovered ? 'text-emerald-300/90' : 'text-rose-300/90'
+                            isCovered ? 'text-emerald-600 dark:text-emerald-300/90' : 'text-rose-600 dark:text-rose-300/90'
                           }`}>
                             {isCovered
                               ? (houseRemaining === 0
@@ -9782,7 +9830,7 @@ export default function App() {
                         </div>
 
                         {/* Bloco 4: Ritmo Necessário & Reserva da Moto */}
-                        <div className={`rounded-xl p-3 border ${surfaceSubtle}`}>
+                        <div className={`rounded-xl p-3 bg-transparent border ${dividerBorder}`}>
                           <div className={`text-[10px] font-bold uppercase ${mutedText}`}>
                             4. Meta p/ Quitar Casa no Mês
                           </div>
@@ -9797,19 +9845,19 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Barra de Progresso da Cobertura das Contas da Casa */}
+                      {/* Barra de Progresso da Cobertura das Contas da Casa (Animada) */}
                       <div>
                         <div className="flex items-center justify-between text-[10px] font-bold mb-1">
                           <span className={mutedText}>
                             Progresso para cobrir o custo de vida da casa ({fmtMoney(Math.max(0, curBal))} de {fmtMoney(houseMonthly)})
                           </span>
-                          <span className={isCovered ? 'text-emerald-400 font-black' : 'text-blue-400 font-black'}>
+                          <span className={isCovered ? 'text-emerald-500 dark:text-emerald-400 font-black' : 'text-blue-500 dark:text-blue-400 font-black'}>
                             {houseCoveragePct}%
                           </span>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                        <div className={`w-full h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-900' : 'bg-slate-200'}`}>
                           <div
-                            className={`h-full rounded-full transition-all duration-500 ${
+                            className={`h-full rounded-full dashboard-progress-fill ${
                               isCovered ? 'bg-emerald-400' : 'bg-gradient-to-r from-blue-500 to-sky-400'
                             }`}
                             style={{ width: `${houseCoveragePct}%` }}
@@ -9818,7 +9866,7 @@ export default function App() {
                       </div>
 
                       {/* Lista Rápida das Contas da Casa que compõem a Provisão + Explicação do Valor */}
-                      <div className="pt-2 border-t border-slate-800/40 flex flex-col gap-2">
+                      <div className={`pt-2 border-t ${dividerBorder} flex flex-col gap-2`}>
                         <div className="flex items-center justify-between flex-wrap gap-1">
                           <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                             Contas da Casa incluídas nesta provisão ({fmtCurrencyExact(houseMonthly)}/mês · + Reserva Moto {fmtCurrencyExact(bikeMonthly)}/mês):
@@ -9834,21 +9882,19 @@ export default function App() {
                                 setBillingSubTab('despesas_casa');
                                 openEditHouseholdExpenseModal(item);
                               }}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1.5 cursor-pointer transition-colors hover:border-blue-400 ${
-                                isDark ? 'bg-slate-800/70 border-slate-700/70 text-slate-200' : 'bg-white border-slate-200 text-slate-700'
-                              }`}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold bg-transparent border flex items-center gap-1.5 cursor-pointer transition-colors hover:border-blue-400 ${dividerBorder} ${secondaryText}`}
                               title="Clique para editar o valor desta conta da casa"
                             >
                               <span>{item.icon || '🏠'}</span>
                               <span>{item.name}:</span>
-                              <strong className="text-blue-400 tabular-nums">{fmtMoney(item.monthlyAmount)}</strong>
+                              <strong className="text-blue-500 dark:text-blue-400 tabular-nums">{fmtMoney(item.monthlyAmount)}</strong>
                             </button>
                           ))}
                         </div>
 
                         {!isCovered && (
-                          <div className={`p-2.5 rounded-xl border text-[11px] leading-relaxed ${
-                            isDark ? 'bg-amber-500/5 border-amber-500/20 text-amber-200/90' : 'bg-amber-50 border-amber-200 text-amber-900'
+                          <div className={`p-2.5 rounded-xl bg-transparent border text-[11px] leading-relaxed ${
+                            isDark ? 'border-amber-500/30 text-amber-200/90' : 'border-amber-300 text-amber-900'
                           }`}>
                             💡 <strong>Por que o Saldo 100% Livre está em {fmtMoney(netAfterHouse)}?</strong> Porque o aplicativo já abate antecipadamente todas as suas contas fixas da casa do mês inteiro (<strong>{fmtMoney(houseMonthly)}</strong>) sobre o seu Saldo Atual acumulado até hoje (<strong>{fmtMoney(curBal)}</strong>). À medida que você lançar novas corridas ao longo do mês, esse valor negativo vai subindo até zerar e virar lucro positivo 100% livre!
                           </div>
@@ -9858,16 +9904,16 @@ export default function App() {
                   );
                 })()}
 
-                {/* 4. CAMPO PRINCIPAL: TODOS OS GANHOS DO MÊS (LISTA COM FILTROS) */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
+                {/* 4. CAMPO PRINCIPAL: TODOS OS GANHOS DO MÊS (LISTA ABERTA COM FILTROS SEM CARD PESADO) */}
+                <div>
                   {/* Cabeçalho da Lista */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/40">
+                  <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
                           <span>Todos os Ganhos de {selectedMonthFinancials.formattedLabel}</span>
                         </h2>
-                        <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30 tabular-nums">
+                        <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 tabular-nums">
                           {selectedMonthFinancials.entries.length} registro(s)
                         </span>
                       </div>
@@ -9879,8 +9925,8 @@ export default function App() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
-                        onClick={openNewEntryModal}
-                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        onClick={() => openNewEntryModal('ganho', true)}
+                        className="px-3.5 py-2 rounded-xl text-xs font-black bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5 stroke-[3]" />
                         <span>Novo Ganho</span>
@@ -9889,9 +9935,9 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setShowRelatorioMeiModal(true)}
-                        className="px-3 py-2 rounded-xl text-xs font-bold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-3 py-2 rounded-xl text-xs font-bold bg-transparent text-purple-500 dark:text-purple-300 border border-purple-500/40 hover:bg-purple-500/10 transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Printer className="w-3.5 h-3.5 text-purple-400" />
+                        <Printer className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
                         <span>PDF / MEI</span>
                       </button>
                     </div>
@@ -9904,10 +9950,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setFinanceAppFilter('all')}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 bg-transparent border ${
                           financeAppFilter === 'all'
-                            ? 'bg-[#FF6A1A] text-black'
-                            : `${surfaceSubtle} ${mutedText} hover:text-current`
+                            ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                            : `${dividerBorder} ${mutedText} hover:text-current`
                         }`}
                       >
                         Todos ({selectedMonthFinancials.entries.length})
@@ -9922,10 +9968,10 @@ export default function App() {
                             key={app.id}
                             type="button"
                             onClick={() => setFinanceAppFilter(app.id)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 bg-transparent border ${
                               financeAppFilter === app.id
-                                ? 'bg-[#FF6A1A] text-black'
-                                : `${surfaceSubtle} ${mutedText} hover:text-current`
+                                ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                                : `${dividerBorder} ${mutedText} hover:text-current`
                             }`}
                           >
                             <span>{app.icon}</span>
@@ -9965,14 +10011,13 @@ export default function App() {
                       if (financeSortOrder === 'val_asc') {
                         return (Number(a.revenue) || 0) - (Number(b.revenue) || 0);
                       }
-                      // date_desc
                       return (b.date || '').localeCompare(a.date || '') || Number(b.id) - Number(a.id);
                     });
 
                     if (sorted.length === 0) {
                       return (
-                        <div className={`p-8 rounded-2xl border border-dashed border-slate-700/60 text-center flex flex-col items-center justify-center gap-3 my-2 ${surfaceSubtle}`}>
-                          <div className="w-12 h-12 rounded-2xl bg-[#FF6A1A]/10 text-[#FF6A1A] flex items-center justify-center">
+                        <div className={`p-8 rounded-2xl bg-transparent border border-dashed ${dividerBorder} text-center flex flex-col items-center justify-center gap-3 my-2`}>
+                          <div className="w-12 h-12 rounded-2xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center">
                             <Fuel className="w-6 h-6" />
                           </div>
                           <div>
@@ -9987,8 +10032,8 @@ export default function App() {
                           </div>
                           <button
                             type="button"
-                            onClick={openNewEntryModal}
-                            className="px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                            onClick={() => openNewEntryModal('ganho', true)}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors cursor-pointer flex items-center gap-1.5"
                           >
                             <Plus className="w-4 h-4" />
                             <span>Lançar Corrida Neste Mês</span>
@@ -10029,11 +10074,11 @@ export default function App() {
                           return (
                             <div
                               key={entry.id}
-                              className={`rounded-2xl p-3 sm:p-4 border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${surfaceSubtle} hover:border-[#FF6A1A]/40`}
+                              className={`rounded-2xl p-3 sm:p-4 bg-transparent border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${dividerBorder} hover:border-[#FF6A1A]/50`}
                             >
                               {/* Lado Esquerdo: App, Data, Turno */}
                               <div className="flex items-center gap-3 min-w-0">
-                                <div className="w-10 h-10 rounded-2xl bg-black/10 dark:bg-white/10 flex items-center justify-center text-xl shrink-0">
+                                <div className={`w-10 h-10 rounded-xl bg-transparent border ${dividerBorder} flex items-center justify-center text-xl shrink-0`}>
                                   {appInfo.icon}
                                 </div>
                                 <div className="min-w-0">
@@ -10042,7 +10087,7 @@ export default function App() {
                                       {appInfo.name}
                                     </span>
                                     {shiftInfo && (
-                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400">
+                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-transparent border ${dividerBorder} ${mutedText}`}>
                                         {shiftInfo.name.split(' ')[0]}
                                       </span>
                                     )}
@@ -10055,14 +10100,14 @@ export default function App() {
                                   </div>
                                   {km > 0 && (
                                     <div className="flex items-center gap-2 flex-wrap mt-1 text-[10px] font-bold">
-                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 tabular-nums">
+                                      <span className="px-1.5 py-0.5 rounded bg-transparent border border-amber-500/35 text-amber-500 dark:text-amber-400 tabular-nums">
                                         🏍️ Após Moto: {fmtCurrencyExact(netAfterBike)}
                                       </span>
                                       <span
-                                        className={`px-1.5 py-0.5 rounded tabular-nums ${
+                                        className={`px-1.5 py-0.5 rounded bg-transparent border tabular-nums ${
                                           netAfterBikeAndHouse >= 0
-                                            ? 'bg-emerald-500/15 text-emerald-400'
-                                            : 'bg-rose-500/15 text-rose-400'
+                                            ? 'border-emerald-500/35 text-emerald-500 dark:text-emerald-400'
+                                            : 'border-rose-500/35 text-rose-500 dark:text-rose-400'
                                         }`}
                                       >
                                         🏠 Livre (após Moto + Casa/Pessoal): {fmtCurrencyExact(netAfterBikeAndHouse)}
@@ -10073,9 +10118,9 @@ export default function App() {
                               </div>
 
                               {/* Lado Direito: Valor e Ações */}
-                              <div className="flex items-center justify-between sm:justify-end gap-3 self-stretch sm:self-auto shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
+                              <div className={`flex items-center justify-between sm:justify-end gap-3 self-stretch sm:self-auto shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 ${dividerBorder}`}>
                                 <div className="text-right">
-                                  <div className="text-base sm:text-lg font-black text-emerald-400 tabular-nums">
+                                  <div className="text-base sm:text-lg font-black text-emerald-500 dark:text-emerald-400 tabular-nums dashboard-number-anim">
                                     + {fmtMoney(rev)}
                                   </div>
                                   <span className={`text-[10px] block ${mutedText}`}>Faturamento bruto</span>
@@ -10085,7 +10130,7 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => openEditHistoryItem(entry, 'ganho')}
-                                    className={`p-2 rounded-xl text-slate-400 hover:text-white cursor-pointer transition-colors ${surfaceCard}`}
+                                    className={`p-2 rounded-xl ${mutedText} hover:text-current cursor-pointer transition-colors bg-transparent border ${dividerBorder}`}
                                     title="Editar corrida"
                                   >
                                     <Edit3 className="w-3.5 h-3.5" />
@@ -10101,7 +10146,7 @@ export default function App() {
                                         ),
                                       });
                                     }}
-                                    className={`p-2 rounded-xl text-rose-400 hover:text-rose-300 cursor-pointer transition-colors ${surfaceCard}`}
+                                    className={`p-2 rounded-xl text-rose-500 dark:text-rose-400 hover:text-rose-300 cursor-pointer transition-colors bg-transparent border ${dividerBorder}`}
                                     title="Excluir corrida"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -10118,42 +10163,11 @@ export default function App() {
               </div>
             )}
 
-            {/* ================= SUB-ABA: FATURAMENTO FUTURO PREVISTO & PROJEÇÃO ================= */}
+            {/* ================= SUB-ABA: FATURAMENTO FUTURO PREVISTO & PROJEÇÃO (Minimalista AllBlack) ================= */}
             {billingSubTab === 'projecao' && (
-              <div className="flex flex-col gap-4 sm:gap-6">
-                {/* 1. TOPO: APRESENTAÇÃO & BOTÃO DE LANÇAMENTO */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-xl shrink-0 text-sky-400">
-                          🔮
-                        </span>
-                        <h2 className="text-base sm:text-xl font-black">
-                          Faturamento Futuro Previsto & Projeção
-                        </h2>
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/30">
-                          Corridas Agendadas, Metas & Fixos
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-1 max-w-2xl ${mutedText}`}>
-                        Lance suas corridas particulares agendadas, fretes programados, metas de dias específicos ou fixos semanais. Ao concluir o serviço, converta em ganho real com 1 clique!
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => openNewProjectedRevenueModal()}
-                      className="px-4 py-2.5 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all shrink-0 active:scale-95"
-                    >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
-                      <span>+ Lançar Faturamento Previsto</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. BARRA DE NAVEGAÇÃO DE MÊS DA PROJEÇÃO */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} shadow-sm border`}>
+              <div className="flex flex-col gap-5 sm:gap-6">
+                {/* 1. BARRA DE NAVEGAÇÃO DE MÊS DA PROJEÇÃO (Sem card pesado) */}
+                <div className={`pb-5 border-b ${dividerBorder}`}>
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -10162,10 +10176,10 @@ export default function App() {
                           <span>Mês de Projeção: {selectedMonthFinancials.formattedLabel}</span>
                         </span>
                         <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent border ${
                             selectedMonthFinancials.isCurrentMonth
-                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                              : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                              ? 'text-emerald-500 dark:text-emerald-400 border-emerald-500/40'
+                              : 'text-sky-500 dark:text-sky-400 border-sky-500/40'
                           }`}
                         >
                           {selectedMonthFinancials.isCurrentMonth ? 'Mês Atual' : 'Competência Selecionada'}
@@ -10185,7 +10199,7 @@ export default function App() {
                           const d = new Date(y, m - 2, 1);
                           setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                         }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                         title="Mês Anterior"
                       >
                         <ChevronRight className="w-4 h-4 rotate-180" />
@@ -10220,7 +10234,7 @@ export default function App() {
                           const d = new Date(y, m, 1);
                           setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                         }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
                         title="Próximo Mês"
                       >
                         <span className="hidden sm:inline">Próximo</span>
@@ -10234,7 +10248,7 @@ export default function App() {
                             const now = new Date();
                             setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
                           }}
-                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 cursor-pointer transition-colors"
+                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-transparent text-[#FF6A1A] hover:bg-[#FF6A1A]/10 border border-[#FF6A1A]/50 cursor-pointer transition-colors"
                         >
                           Ir p/ Mês Atual
                         </button>
@@ -10243,7 +10257,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 3. OS 4 CARDS DE MÉTRICAS DA PROJEÇÃO */}
+                {/* 3. OS 4 CARDS DE MÉTRICAS DA PROJEÇÃO (Sem fundo, apenas bordas finas e números animados) */}
                 {(() => {
                   const totalExpensesMonth = (financialIntelligence.monthlyBikeCostsTotal || 0) + (financialIntelligence.monthlyHouseholdCost || 0);
                   const lucroProjetado = selectedMonthFinancials.projectedTotalRevenue - totalExpensesMonth;
@@ -10252,93 +10266,100 @@ export default function App() {
                   return (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                       {/* Card 1: Previsto a Receber */}
-                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
-                        isDark ? 'bg-[#101422] border-sky-500/40' : 'bg-sky-50 border-sky-300'
-                      }`}>
+                      <div className="rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border border-sky-500/40">
                         <div>
                           <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-sky-400">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-sky-500 dark:text-sky-400">
                               1. Previsto a Receber
                             </span>
-                            <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                            <span className="text-[10px] font-bold text-sky-500 dark:text-sky-400 bg-transparent border border-sky-500/35 px-1.5 py-0.5 rounded">
                               {selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length} agendados
                             </span>
                           </div>
-                          <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-400 mt-1">
-                            {fmtMoney(selectedMonthFinancials.projectedPendingRevenue)}
+                          <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-500 dark:text-sky-400 mt-1">
+                            <AnimatedNumber value={selectedMonthFinancials.projectedPendingRevenue} formatter={fmtMoney} />
                           </div>
                         </div>
-                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
-                          Ganhos futuros aguardando realização
+                        <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText}`}>
+                          {selectedMonthFinancials.projectedDebitedRevenue > 0 ? (
+                            <span>
+                              Criado: {fmtMoney(selectedMonthFinancials.projectedInitialRevenue)} · Debitado: -{fmtMoney(selectedMonthFinancials.projectedDebitedRevenue)}
+                            </span>
+                          ) : selectedMonthFinancials.projectedPendingRevenue === 0 &&
+                            selectedMonthFinancials.allProjectedPendingCount > 0 ? (
+                            <span className="text-sky-500 dark:text-sky-300">
+                              Total geral pendente: {fmtMoney(selectedMonthFinancials.allProjectedPendingRevenue)} ({selectedMonthFinancials.allProjectedPendingCount} em outros meses)
+                            </span>
+                          ) : (
+                            <span>Saldo futuro aguardando realização</span>
+                          )}
                         </div>
                       </div>
 
                       {/* Card 2: Faturamento Já Realizado */}
-                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
                         <div>
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                               2. Já Realizado no Mês
                             </span>
-                            <span className="text-[10px] font-bold text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded">
+                            <span className="text-[10px] font-bold text-[#FF6A1A] bg-transparent border border-[#FF6A1A]/35 px-1.5 py-0.5 rounded">
                               {selectedMonthFinancials.entries.length} corridas
                             </span>
                           </div>
                           <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] mt-1">
-                            {fmtMoney(selectedMonthFinancials.totalRevenue)}
+                            <AnimatedNumber value={selectedMonthFinancials.totalRevenue} formatter={fmtMoney} />
                           </div>
                         </div>
-                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                        <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText}`}>
                           Corridas e ganhos confirmados
                         </div>
                       </div>
 
                       {/* Card 3: Projeção Total do Mês (Real + Previsto) */}
-                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
-                        isDark ? 'bg-[#0f1b16] border-emerald-500/40' : 'bg-emerald-50 border-emerald-300'
-                      }`}>
+                      <div className="rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border border-emerald-500/40">
                         <div>
                           <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                               3. Projeção Total
                             </span>
-                            <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                            <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-transparent border border-emerald-500/40 text-emerald-500 dark:text-emerald-300">
                               Real + Previsto
                             </span>
                           </div>
-                          <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-400 mt-1">
-                            {fmtMoney(selectedMonthFinancials.projectedTotalRevenue)}
+                          <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-500 dark:text-emerald-400 mt-1">
+                            <AnimatedNumber value={selectedMonthFinancials.projectedTotalRevenue} formatter={fmtMoney} />
                           </div>
                         </div>
-                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                        <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText}`}>
                           Potencial de faturamento do mês
                         </div>
                       </div>
 
                       {/* Card 4: Balanço Projetado vs. Despesas do Mês */}
-                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${
                         lucroProjetado >= 0
-                          ? isDark ? 'bg-emerald-950/20 border-emerald-500/40' : 'bg-emerald-100/50 border-emerald-300'
-                          : isDark ? 'bg-rose-950/20 border-rose-500/40' : 'bg-rose-100/50 border-rose-300'
+                          ? 'border-emerald-500/40'
+                          : 'border-rose-500/40'
                       }`}>
                         <div>
                           <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                               4. Lucro Limpo Projetado
                             </span>
-                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
-                              cobriuDespesas ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded bg-transparent border ${
+                              cobriuDespesas ? 'border-emerald-500/40 text-emerald-500 dark:text-emerald-300' : 'border-amber-500/40 text-amber-500 dark:text-amber-300'
                             }`}>
                               {cobriuDespesas ? '✅ Cobre Contas' : '⏳ A Cobrir'}
                             </span>
                           </div>
                           <div className={`text-xl sm:text-2xl font-black tabular-nums mt-1 ${
-                            lucroProjetado >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            lucroProjetado >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                           }`}>
-                            {fmtMoney(lucroProjetado)}
+                            <AnimatedNumber value={lucroProjetado} formatter={fmtMoney} />
                           </div>
                         </div>
-                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                        <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText}`}>
                           Após pagar R$ {fmtMoney(totalExpensesMonth).replace('R$', '').trim()} (Casa + Moto)
                         </div>
                       </div>
@@ -10352,14 +10373,22 @@ export default function App() {
                     ? dbState.projectedRevenues
                     : [];
 
-                  // Previsões da competência do mês selecionado
-                  const monthList = rawList.filter(p => p.date && p.date.startsWith(selectedFinanceMonth));
+                  const monthList = rawList.filter(p => {
+                    if (Array.isArray(p.selectedDates) && p.selectedDates.length > 0) {
+                      return p.selectedDates.some(d => d && d.startsWith(selectedFinanceMonth));
+                    }
+                    if (p.date && p.date.startsWith(selectedFinanceMonth)) return true;
+                    if (p.startDate && p.startDate.startsWith(selectedFinanceMonth)) return true;
+                    if (p.startDate && p.date && p.startDate.length >= 7 && p.date.length >= 7) {
+                      return p.startDate.slice(0, 7) <= selectedFinanceMonth && p.date.slice(0, 7) >= selectedFinanceMonth;
+                    }
+                    return false;
+                  });
 
                   const pendingCount = monthList.filter(p => p.status === 'pending').length;
                   const realizedCount = monthList.filter(p => p.status === 'realized').length;
                   const cancelledCount = monthList.filter(p => p.status === 'cancelled').length;
 
-                  // Filtra conforme status selecionado
                   const displayedList = monthList.filter(p => {
                     if (projectedStatusFilter === 'all') return true;
                     return p.status === projectedStatusFilter;
@@ -10369,7 +10398,7 @@ export default function App() {
 
                   return (
                     <div className="space-y-3">
-                      {/* Filtros em Pílulas */}
+                      {/* Filtros em Pílulas Sem Fundo */}
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {[
@@ -10382,10 +10411,10 @@ export default function App() {
                               key={f.id}
                               type="button"
                               onClick={() => setProjectedStatusFilter(f.id as any)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer bg-transparent border ${
                                 projectedStatusFilter === f.id
-                                  ? 'bg-sky-500 text-black font-black border-sky-400 shadow-xs'
-                                  : `${surfaceSubtle} ${mutedText} hover:text-white border-transparent`
+                                  ? 'border-sky-400 text-sky-500 dark:text-sky-400 font-black'
+                                  : `${dividerBorder} ${mutedText} hover:text-current`
                               }`}
                             >
                               <span>{f.label}</span>
@@ -10397,31 +10426,47 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => openNewProjectedRevenueModal()}
-                          className="px-3 py-1.5 rounded-xl text-xs font-black bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/40 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="px-3 py-1.5 rounded-xl text-xs font-black bg-transparent hover:bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A]/50 transition-colors flex items-center gap-1 cursor-pointer"
                         >
                           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                           <span>Nova Previsão</span>
                         </button>
                       </div>
 
-                      {/* 5. LISTA DE CARDS DE FATURAMENTO PREVISTO */}
+                      {/* 5. LISTA DE CARDS DE FATURAMENTO PREVISTO (Minimalista sem fundo) */}
                       {displayedList.length === 0 ? (
-                        <div className={`p-8 text-center rounded-2xl border-2 border-dashed ${
-                          isDark ? 'border-slate-800 bg-slate-900/30' : 'border-slate-300 bg-slate-50'
-                        }`}>
-                          <div className="w-12 h-12 rounded-2xl bg-sky-500/10 text-sky-400 mx-auto flex items-center justify-center text-2xl mb-3">
+                        <div className={`p-8 text-center rounded-2xl bg-transparent border border-dashed ${dividerBorder}`}>
+                          <div className="w-12 h-12 rounded-2xl bg-transparent border border-sky-500/40 text-sky-400 mx-auto flex items-center justify-center text-2xl mb-3">
                             🔮
                           </div>
-                          <div className="text-sm font-black text-slate-800 dark:text-slate-200">
+                          <div className={`text-sm font-black ${secondaryText}`}>
                             Nenhum faturamento futuro previsto encontrado para {selectedMonthFinancials.formattedLabel}
                           </div>
-                          <p className={`text-xs mt-1 max-w-md mx-auto ${mutedText}`}>
-                            Tem uma corrida particular agendada? Um frete programado? Ou quer estipular uma meta de faturamento para um dia específico? Lance agora para calcular seu lucro projetado!
-                          </p>
+                          {selectedMonthFinancials.allProjectedPendingCount > 0 && selectedMonthFinancials.firstOtherProjectedMonth ? (
+                            <div className="mt-2 space-y-2">
+                              <p className={`text-xs max-w-md mx-auto ${mutedText}`}>
+                                Você possui {selectedMonthFinancials.allProjectedPendingCount} lançamento(s) futuro(s) somando{' '}
+                                <strong className="text-sky-400">{fmtMoney(selectedMonthFinancials.allProjectedPendingRevenue)}</strong>{' '}
+                                programado(s) em outro mês.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedFinanceMonth(selectedMonthFinancials.firstOtherProjectedMonth!)}
+                                className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-transparent border border-sky-500/50 text-sky-400 hover:bg-sky-500/10 cursor-pointer inline-flex items-center gap-1.5"
+                              >
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span>Ir para mês com lançamentos ({selectedMonthFinancials.firstOtherProjectedMonth})</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <p className={`text-xs mt-1 max-w-md mx-auto ${mutedText}`}>
+                              Defina quantos dias vai trabalhar e o valor da diária prevista para acompanhar o saldo futuro sendo debitado automaticamente a cada dia que passa!
+                            </p>
+                          )}
                           <button
                             type="button"
                             onClick={() => openNewProjectedRevenueModal()}
-                            className="mt-4 px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black cursor-pointer shadow-md inline-flex items-center gap-1.5"
+                            className="mt-4 px-4 py-2 rounded-xl text-xs font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 cursor-pointer inline-flex items-center gap-1.5"
                           >
                             <Plus className="w-4 h-4 stroke-[2.5]" />
                             <span>Lançar Primeiro Faturamento Previsto</span>
@@ -10430,44 +10475,38 @@ export default function App() {
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                           {displayedList.map(item => {
+                            const bal = computeProjectedRevenueBalance(item, today);
                             const daysDiff = calculateDaysDifference(today, item.date);
                             const isToday = item.date === today;
                             const isPast = item.date < today;
                             const isCancelled = item.status === 'cancelled';
                             const isRealized = item.status === 'realized';
                             const isPending = item.status === 'pending';
+                            const headlineAmount = isPending ? bal.remainingAmount : bal.totalAmount;
 
                             return (
                               <div
                                 key={item.id}
-                                className={`rounded-2xl p-4 sm:p-5 border-2 transition-all flex flex-col justify-between gap-3 shadow-xs ${
+                                className={`rounded-2xl p-4 sm:p-5 bg-transparent border transition-all flex flex-col justify-between gap-3 ${
                                   isRealized
-                                    ? isDark
-                                      ? 'bg-emerald-950/20 border-emerald-500/40 text-slate-100'
-                                      : 'bg-emerald-50 border-emerald-400 text-slate-900'
+                                    ? 'border-emerald-500/40'
                                     : isCancelled
-                                    ? isDark
-                                      ? 'bg-slate-900/40 border-slate-800 opacity-60 text-slate-400'
-                                      : 'bg-slate-100 border-slate-300 opacity-60 text-slate-500'
+                                    ? `${dividerBorder} opacity-60`
                                     : isToday
-                                    ? isDark
-                                      ? 'bg-amber-950/20 border-amber-500/80 text-white'
-                                      : 'bg-amber-50 border-amber-400 text-slate-900'
-                                    : isDark
-                                    ? 'bg-[#121522] border-sky-500/30 text-white'
-                                    : 'bg-white border-sky-200 text-slate-900'
+                                    ? 'border-amber-500/70'
+                                    : 'border-sky-500/35'
                                 }`}
                               >
                                 {/* Header do Card: App, Descrição, Data & Status */}
                                 <div>
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="flex items-center gap-2.5 min-w-0">
-                                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-base font-black border ${
+                                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-base font-black bg-transparent border ${
                                         isRealized
-                                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                                          ? 'border-emerald-500/40 text-emerald-400'
                                           : isCancelled
-                                          ? 'bg-slate-800 border-slate-700 text-slate-400'
-                                          : 'bg-sky-500/20 border-sky-500/40 text-sky-400'
+                                          ? `${dividerBorder} text-slate-400`
+                                          : 'border-sky-500/40 text-sky-400'
                                       }`}>
                                         {item.app === 'iFood'
                                           ? '🔴'
@@ -10487,32 +10526,34 @@ export default function App() {
                                             {item.description}
                                           </span>
                                           {item.app && (
-                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-700/40">
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-transparent border ${dividerBorder} ${mutedText}`}>
                                               {item.app}
                                             </span>
                                           )}
                                         </div>
                                         <div className="flex items-center gap-2 mt-1 text-[11px] font-bold flex-wrap">
-                                          <span className="text-slate-400">
-                                            📅 {formatPtBrDate(item.date)}
+                                          <span className={mutedText}>
+                                            📅 {bal.selectedDates.length > 1
+                                              ? `${bal.selectedDates.length} dias (${bal.selectedDates.slice(0, 3).map(d => d.slice(8, 10) + '/' + d.slice(5, 7)).join(', ')}${bal.selectedDates.length > 3 ? ` +${bal.selectedDates.length - 3}` : ''})`
+                                              : bal.hasDailySchedule && bal.startDate !== item.date
+                                              ? `${formatPtBrDate(bal.startDate)} → ${formatPtBrDate(item.date)}`
+                                              : formatPtBrDate(item.date)}
                                           </span>
                                           {isPending && (
                                             isToday ? (
-                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-transparent text-amber-500 dark:text-amber-300 border border-amber-500/40 animate-pulse">
                                                 🚨 Hoje
                                               </span>
                                             ) : daysDiff === 1 ? (
-                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-transparent text-sky-500 dark:text-sky-300 border border-sky-500/40">
                                                 📅 Amanhã
                                               </span>
                                             ) : daysDiff > 1 ? (
-                                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                                isDark ? 'bg-slate-500/15 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'
-                                              }`}>
+                                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold bg-transparent border ${dividerBorder} ${secondaryText}`}>
                                                 em {daysDiff} dias
                                               </span>
                                             ) : isPast ? (
-                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-transparent text-rose-500 dark:text-rose-300 border border-rose-500/40">
                                                 ⚠️ Data passou
                                               </span>
                                             ) : null
@@ -10521,48 +10562,79 @@ export default function App() {
                                       </div>
                                     </div>
 
-                                    {/* Status Badge */}
+                                    {/* Status Badge & Saldo */}
                                     <div className="shrink-0 text-right">
                                       {isRealized ? (
-                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-transparent text-emerald-500 dark:text-emerald-400 border border-emerald-500/40">
                                           ✅ Recebido
                                         </span>
                                       ) : isCancelled ? (
-                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-slate-800 text-slate-400 border border-slate-700">
+                                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-transparent ${mutedText} border ${dividerBorder}`}>
                                           🚫 Cancelado
                                         </span>
                                       ) : (
-                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-sky-500/20 text-sky-400 border border-sky-500/40">
-                                          ⏳ Previsto
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-transparent text-sky-500 dark:text-sky-400 border border-sky-500/40">
+                                          {bal.hasDailySchedule ? `⏳ Restam ${bal.remainingDays}d` : '⏳ Previsto'}
                                         </span>
                                       )}
-                                      <div className={`text-base sm:text-lg font-black tabular-nums mt-1 ${
+                                      <div className={`text-base sm:text-lg font-black tabular-nums mt-1 dashboard-number-anim ${
                                         isCancelled
                                           ? 'line-through text-slate-500'
                                           : isRealized
-                                          ? 'text-emerald-400'
+                                          ? 'text-emerald-500 dark:text-emerald-400'
                                           : 'text-[#FF6A1A]'
                                       }`}>
-                                        {fmtMoney(item.amount)}
+                                        {fmtMoney(headlineAmount)}
                                       </div>
+                                      {isPending && bal.hasDailySchedule && bal.debitedAmount > 0 && (
+                                        <div className={`text-[10px] font-bold ${mutedText}`}>
+                                          de {fmtMoney(bal.totalAmount)}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
 
+                                  {bal.hasDailySchedule && (
+                                    <div className={`mt-2.5 p-2.5 rounded-xl bg-transparent border ${dividerBorder} space-y-1.5`}>
+                                      <div className="flex items-center justify-between gap-2 text-[11px] font-bold flex-wrap">
+                                        <span className={secondaryText}>
+                                          {bal.workDays} dias × {fmtMoney(bal.dailyRate)}/dia ={' '}
+                                          <strong className={primaryText}>{fmtMoney(bal.totalAmount)}</strong>
+                                        </span>
+                                        {isPending && (
+                                          <span className={bal.debitedAmount > 0 ? 'text-amber-500 dark:text-amber-300 font-black' : mutedText}>
+                                            {bal.debitedAmount > 0
+                                              ? `Debitado (${bal.elapsedDays}d): -${fmtMoney(bal.debitedAmount)}`
+                                              : 'Débito diário automático ativo'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {isPending && (
+                                        <div className="w-full h-1.5 rounded-full bg-neutral-800 overflow-hidden">
+                                          <div
+                                            className="h-full rounded-full bg-sky-500 dashboard-progress-fill"
+                                            style={{ width: `${Math.max(4, 100 - bal.progressPct)}%` }}
+                                          />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {item.notes && (
-                                    <div className={`mt-2 p-2 rounded-xl text-xs font-medium ${surfaceSubtle}`}>
+                                    <div className={`mt-2 p-2 rounded-xl text-xs font-medium bg-transparent border ${dividerBorder}`}>
                                       <span className={mutedText}>Obs: </span>
                                       <span>{item.notes}</span>
                                     </div>
                                   )}
                                 </div>
 
-                                {/* Rodapé com Ações Rápidas */}
-                                <div className="pt-2.5 border-t border-slate-800/40 flex items-center justify-between gap-2 flex-wrap">
+                                {/* Rodapé com Ações Rápidas (Botões sem fundo) */}
+                                <div className={`pt-2.5 border-t ${dividerBorder} flex items-center justify-between gap-2 flex-wrap`}>
                                   {isPending && (
                                     <button
                                       type="button"
                                       onClick={() => handleConvertProjectedToReal(item)}
-                                      className="py-1.5 px-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer transition-colors flex items-center gap-1.5 shadow-xs"
+                                      className="py-1.5 px-3 rounded-xl text-xs font-black bg-transparent border border-emerald-500/60 text-emerald-500 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer transition-colors flex items-center gap-1.5"
                                       title="Confirmar que o ganho foi recebido e lançar nos seus ganhos reais do mês"
                                     >
                                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -10571,7 +10643,7 @@ export default function App() {
                                   )}
 
                                   {isRealized && (
-                                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                                    <span className="text-[11px] font-bold text-emerald-500 dark:text-emerald-400 flex items-center gap-1">
                                       <Check className="w-3.5 h-3.5" />
                                       <span>Já computado no seu faturamento real</span>
                                     </span>
@@ -10581,7 +10653,7 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => openEditProjectedRevenueModal(item)}
-                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:text-white cursor-pointer transition-colors`}
+                                      className={`p-1.5 rounded-lg text-xs font-bold bg-transparent border ${dividerBorder} hover:text-current cursor-pointer transition-colors`}
                                       title="Editar previsão"
                                     >
                                       <Edit3 className="w-3.5 h-3.5" />
@@ -10590,8 +10662,8 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => handleToggleProjectedCancelled(item.id)}
-                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} ${
-                                        isCancelled ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-400 hover:text-white'
+                                      className={`p-1.5 rounded-lg text-xs font-bold bg-transparent border ${dividerBorder} ${
+                                        isCancelled ? 'text-emerald-500 dark:text-emerald-400' : `${mutedText} hover:text-current`
                                       } cursor-pointer transition-colors`}
                                       title={isCancelled ? 'Reativar previsão' : 'Anular previsão'}
                                     >
@@ -10601,7 +10673,7 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => handleDeleteProjectedRevenue(item.id)}
-                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-rose-400 hover:text-rose-300 cursor-pointer transition-colors`}
+                                      className={`p-1.5 rounded-lg text-xs font-bold bg-transparent border ${dividerBorder} text-rose-500 dark:text-rose-400 hover:text-rose-300 cursor-pointer transition-colors`}
                                       title="Excluir previsão"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
@@ -10750,9 +10822,7 @@ export default function App() {
                   </div>
 
                   {/* Banner Explicativo */}
-                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
-                    isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100/80 border-slate-200'
-                  }`}>
+                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-transparent ${dividerBorder}`}>
                     <div className="flex items-start gap-2.5">
                       <span className="text-xl shrink-0 mt-0.5">💡</span>
                       <div>
@@ -10775,7 +10845,7 @@ export default function App() {
                         <h3 className="text-sm sm:text-base font-black">
                           Suas Contas e Despesas da Moto
                         </h3>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-transparent border ${dividerBorder} ${secondaryText}`}>
                           {financialIntelligence.rawBikeExpenses.length} cadastradas
                         </span>
                       </div>
@@ -10965,22 +11035,22 @@ export default function App() {
                           return (
                             <div
                               key={item.id}
-                              className={`rounded-2xl p-4 border transition-all ${
+                              className={`rounded-2xl p-4 border transition-all bg-transparent ${
                                 !item.isActive
-                                  ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  ? `opacity-50 grayscale ${dividerBorder}`
                                   : isPaid
                                   ? isDark
-                                    ? 'bg-emerald-950/20 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
-                                    : 'bg-emerald-50/80 border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
+                                    ? 'border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                                    : 'border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
                                   : isDark
-                                  ? 'bg-slate-900/60 border-slate-800 hover:border-[#FF6A1A]/40'
-                                  : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]/40'
+                                  ? `${dividerBorder} hover:border-[#FF6A1A]/40`
+                                  : 'border-slate-200 hover:border-[#FF6A1A]/40'
                               } flex flex-col justify-between gap-3 shadow-xs`}
                             >
                               <div>
                                 <div className="flex items-start justify-between gap-2 mb-2">
                                   <div className="flex items-center gap-2.5 min-w-0">
-                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-transparent border border-neutral-800">
                                       {item.icon || '🏍️'}
                                     </span>
                                     <div className="min-w-0">
@@ -10992,17 +11062,17 @@ export default function App() {
                                           {catMeta.label}
                                         </span>
                                         {isInterval && (
-                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-[#FF6A1A]/15 text-[#FF6A1A] border border-[#FF6A1A]/30">
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/30">
                                             A cada {item.intervalDays} dias
                                           </span>
                                         )}
                                         <button
                                           type="button"
                                           onClick={() => toggleBikeExpensePaidStatus(item.id, selectedFinanceMonth)}
-                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border ${
+                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border bg-transparent ${
                                             isPaid
-                                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
-                                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                                              ? 'text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10'
+                                              : 'text-amber-400 border-amber-500/30 hover:bg-amber-500/10'
                                           }`}
                                           title={isPaid ? 'Quitado no mês. Clique para alternar para pendente' : 'Pendente no mês. Clique para marcar como quitado'}
                                         >
@@ -11016,10 +11086,10 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => toggleBikeExpense(item.id)}
-                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors bg-transparent border ${
                                       item.isActive
-                                        ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
-                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                        ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
+                                        : `${dividerBorder} text-slate-400 hover:text-white`
                                     }`}
                                     title={item.isActive ? 'Clique para desativar esta despesa' : 'Clique para ativar esta despesa'}
                                   >
@@ -11186,8 +11256,8 @@ export default function App() {
                               isPaid
                                 ? 'bg-emerald-950/25 border-emerald-500/40 hover:border-emerald-400'
                                 : isDark
-                                ? 'bg-slate-900/40 border-slate-800 hover:border-[#FF6A1A]/50'
-                                : 'bg-slate-50 border-slate-200 hover:border-[#FF6A1A]/50'
+                                ? 'bg-transparent border-neutral-800 hover:border-[#FF6A1A]/50'
+                                : 'bg-transparent border-slate-200 hover:border-[#FF6A1A]/50'
                             }`}
                             title="Clique para editar o prazo ou ciclo desta despesa"
                           >
@@ -11356,9 +11426,7 @@ export default function App() {
                   </div>
 
                   {/* Banner Explicativo da Metodologia dos 3 Pilares */}
-                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
-                    isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100/80 border-slate-200'
-                  }`}>
+                  <div className={`mt-4 p-3.5 sm:p-4 rounded-2xl border text-xs leading-relaxed flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-transparent ${dividerBorder}`}>
                     <div className="flex items-start gap-2.5">
                       <span className="text-xl shrink-0 mt-0.5">💡</span>
                       <div>
@@ -11381,7 +11449,7 @@ export default function App() {
                         <h3 className="text-sm sm:text-base font-black">
                           Suas Contas e Despesas Domésticas
                         </h3>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-transparent border ${dividerBorder} ${secondaryText}`}>
                           {financialIntelligence.rawHouseholdExpenses.length} cadastradas
                         </span>
                       </div>
@@ -11572,22 +11640,22 @@ export default function App() {
                           return (
                             <div
                               key={item.id}
-                              className={`rounded-2xl p-4 border transition-all ${
+                              className={`rounded-2xl p-4 border transition-all bg-transparent ${
                                 !item.isActive
-                                  ? 'opacity-50 grayscale bg-slate-900/20 border-slate-800'
+                                  ? `opacity-50 grayscale ${dividerBorder}`
                                   : isPaid
                                   ? isDark
-                                    ? 'bg-emerald-950/20 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
-                                    : 'bg-emerald-50/80 border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
+                                    ? 'border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                                    : 'border-emerald-400 shadow-md ring-1 ring-emerald-400/30'
                                   : isDark
-                                  ? 'bg-slate-900/60 border-slate-800 hover:border-blue-500/40'
-                                  : 'bg-slate-50 border-slate-200 hover:border-blue-400'
+                                  ? `${dividerBorder} hover:border-blue-500/40`
+                                  : 'border-slate-200 hover:border-blue-400'
                               } flex flex-col justify-between gap-3 shadow-xs`}
                             >
                               <div>
                                 <div className="flex items-start justify-between gap-2 mb-2">
                                   <div className="flex items-center gap-2.5 min-w-0">
-                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                    <span className="text-2xl shrink-0 p-1.5 rounded-xl bg-transparent border border-neutral-800">
                                       {item.icon || '🏠'}
                                     </span>
                                     <div className="min-w-0">
@@ -11599,17 +11667,17 @@ export default function App() {
                                           {catMeta.label}
                                         </span>
                                         {isInterval && (
-                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-transparent text-blue-400 border border-blue-500/30">
                                             A cada {item.intervalDays} dias
                                           </span>
                                         )}
                                         <button
                                           type="button"
                                           onClick={() => toggleHouseholdExpensePaidStatus(item.id, selectedFinanceMonth)}
-                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border ${
+                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border bg-transparent ${
                                             isPaid
-                                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
-                                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                                              ? 'text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10'
+                                              : 'text-amber-400 border-amber-500/30 hover:bg-amber-500/10'
                                           }`}
                                           title={isPaid ? 'Quitado no mês. Clique para alternar para pendente' : 'Pendente no mês. Clique para marcar como quitado'}
                                         >
@@ -11623,10 +11691,10 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => toggleHouseholdExpense(item.id)}
-                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors bg-transparent border ${
                                       item.isActive
-                                        ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
-                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                        ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
+                                        : `${dividerBorder} text-slate-400 hover:text-white`
                                     }`}
                                     title={item.isActive ? 'Clique para desativar esta conta' : 'Clique para ativar esta conta'}
                                   >
@@ -11783,8 +11851,8 @@ export default function App() {
                               isPaid
                                 ? 'bg-emerald-950/25 border-emerald-500/40 hover:border-emerald-400'
                                 : isDark
-                                ? 'bg-slate-900/40 border-slate-800 hover:border-blue-500/50'
-                                : 'bg-slate-50 border-slate-200 hover:border-blue-500/50'
+                                ? 'bg-transparent border-neutral-800 hover:border-blue-500/50'
+                                : 'bg-transparent border-slate-200 hover:border-blue-500/50'
                             }`}
                             title="Clique para editar o prazo ou ciclo desta conta"
                           >
@@ -11932,9 +12000,9 @@ export default function App() {
 
                   {/* Segunda Linha de Indicadores Operacionais Completos */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3 pt-3 border-t border-slate-800/40">
-                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                    <div className={`rounded-xl p-3 border bg-transparent ${dividerBorder}`}>
                       <div className={`text-[10px] font-bold ${mutedText}`}>⛽ Custo Combustível/KM</div>
-                      <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums mt-0.5">
+                      <div className="text-sm sm:text-base font-black text-rose-400 tabular-nums dashboard-number-anim mt-0.5">
                         R$ {financialIntelligence.fuelCostPerKm.toFixed(2)}/km
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
@@ -11942,9 +12010,9 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                    <div className={`rounded-xl p-3 border bg-transparent ${dividerBorder}`}>
                       <div className={`text-[10px] font-bold ${mutedText}`}>🛠️ Desgaste Mecânico/KM</div>
-                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-0.5">
+                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums dashboard-number-anim mt-0.5">
                         R$ {financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
@@ -11952,9 +12020,9 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className={`rounded-xl p-3 ${isDark ? 'bg-slate-900/40' : 'bg-slate-50'}`}>
+                    <div className={`rounded-xl p-3 border bg-transparent ${dividerBorder}`}>
                       <div className={`text-[10px] font-bold ${mutedText}`}>🏠 Despesas da Casa / Dia</div>
-                      <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums mt-0.5">
+                      <div className="text-sm sm:text-base font-black text-blue-400 tabular-nums dashboard-number-anim mt-0.5">
                         {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
@@ -11962,13 +12030,13 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className={`rounded-xl p-3 border ${
-                      isDark ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                    <div className={`rounded-xl p-3 border bg-transparent ${
+                      isDark ? 'border-amber-500/40 text-amber-400' : 'bg-amber-50 border-amber-200'
                     }`}>
                       <div className={`text-[10px] font-black text-amber-400 uppercase tracking-wider`}>
                         ⚖️ Ponto de Sobrevivência
                       </div>
-                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums mt-0.5">
+                      <div className="text-sm sm:text-base font-black text-amber-400 tabular-nums dashboard-number-anim mt-0.5">
                         {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
@@ -11991,9 +12059,7 @@ export default function App() {
                     </button>
 
                     {showFormulaExplanation && (
-                      <div className={`mt-3 p-4 rounded-2xl border text-xs leading-relaxed ${
-                        isDark ? 'bg-slate-900/80 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
-                      }`}>
+                      <div className={`mt-3 p-4 rounded-2xl border text-xs leading-relaxed bg-transparent ${dividerBorder} ${secondaryText}`}>
                         <div className="font-black text-[#FF6A1A] mb-1.5 text-sm">
                           📐 A Matemática Real do Bolso do Motoboy (Três Caixinhas)
                         </div>
@@ -12235,7 +12301,7 @@ export default function App() {
                                     const data = payload[0].payload;
                                     return (
                                       <div className={`p-2.5 rounded-xl text-xs font-bold shadow-lg border ${
-                                        isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                        isDark ? 'bg-black border-neutral-800 text-white' : 'bg-white border-slate-200 text-slate-900'
                                       }`}>
                                         <div className="flex items-center gap-1.5 mb-1">
                                           <span>{data.icon}</span>
@@ -12253,7 +12319,7 @@ export default function App() {
                             {/* Conteúdo Central do Donut com a Categoria Selecionada */}
                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none text-center px-4">
                               <span className="text-2xl animate-bounce-short">{activeItem.icon}</span>
-                              <span className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${activeItem.colorClass}`}>
+                              <span className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim mt-0.5 ${activeItem.colorClass}`}>
                                 {fmtCurrencyExact(activeItem.amount)}
                               </span>
                               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -12268,9 +12334,7 @@ export default function App() {
 
                         {/* PAINEL INSPETOR DETALHADO DO ITEM SELECIONADO */}
                         <div className="lg:col-span-7 flex flex-col gap-3">
-                          <div className={`rounded-2xl p-4 sm:p-5 border-2 transition-all ${
-                            isDark ? 'bg-slate-900/60' : 'bg-slate-50'
-                          }`} style={{ borderColor: `${activeItem.color}80` }}>
+                          <div className="rounded-2xl p-4 sm:p-5 border-2 transition-all bg-transparent" style={{ borderColor: `${activeItem.color}80` }}>
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div className="flex items-center gap-2.5">
                                 <span className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: `${activeItem.color}25` }}>
@@ -12315,8 +12379,8 @@ export default function App() {
                             </div>
 
                             {/* Base de Cálculo desta Categoria */}
-                            <div className={`p-2.5 rounded-xl text-xs mb-2.5 flex items-center justify-between gap-2 ${
-                              isDark ? 'bg-slate-800/40 text-slate-300' : 'bg-white text-slate-700'
+                            <div className={`p-2.5 rounded-xl border text-xs mb-2.5 flex items-center justify-between gap-2 bg-transparent ${
+                              isDark ? 'border-neutral-800 text-slate-300' : 'border-slate-200 text-slate-700'
                             }`}>
                               <span className="font-semibold text-[11px] flex items-center gap-1.5">
                                 <Calculator className="w-3.5 h-3.5 text-[#FF6A1A]" />
@@ -12347,7 +12411,7 @@ export default function App() {
                           <span className={mutedText}>Distribuição Proporcional do Faturamento</span>
                           <span className="text-[#FF6A1A] font-black">{financialIntelligence.baseLabel}</span>
                         </div>
-                        <div className="w-full h-4 rounded-full bg-slate-800 overflow-hidden flex p-0.5 gap-0.5">
+                        <div className={`w-full h-4 rounded-full overflow-hidden flex p-0.5 gap-0.5 ${isDark ? 'bg-neutral-900 border border-neutral-800' : 'bg-slate-200'}`}>
                           {raioXItems.map(item => {
                             const isSelected = item.id === selectedRaioXCategory;
                             return (
@@ -12501,10 +12565,10 @@ export default function App() {
                             return (
                               <div
                                 className={`rounded-xl p-3 shadow-xl border text-xs min-w-[210px] ${
-                                  isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+                                  isDark ? 'bg-black border-neutral-800 text-white' : 'bg-white border-slate-200 text-slate-900'
                                 }`}
                               >
-                                <div className="font-bold flex items-center justify-between border-b pb-1.5 mb-2 border-slate-200 dark:border-slate-800">
+                                <div className={`font-bold flex items-center justify-between border-b pb-1.5 mb-2 ${dividerBorder}`}>
                                   <span>📅 {item.fullDateLabel}</span>
                                   {item.isActive ? (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 font-bold">
@@ -12595,7 +12659,7 @@ export default function App() {
 
                     {/* Filtro de Datas Interativo */}
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
-                      <div className="flex items-center gap-1 p-1 bg-slate-900/60 rounded-xl border border-slate-800/80">
+                      <div className={`flex items-center gap-1 p-1 bg-transparent rounded-xl border ${dividerBorder}`}>
                         {[
                           { id: '3m', label: '3 Meses' },
                           { id: '6m', label: '6 Meses' },
@@ -12609,7 +12673,7 @@ export default function App() {
                             onClick={() => setSeasonalityFilter(f.id as any)}
                             className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               seasonalityFilter === f.id
-                                ? 'bg-[#FF6A1A] text-black font-black shadow-xs'
+                                ? 'bg-transparent border border-[#FF6A1A] text-[#FF6A1A] font-black'
                                 : `${mutedText} hover:text-white`
                             }`}
                           >
@@ -12622,7 +12686,7 @@ export default function App() {
 
                   {/* Seleção de Mês Inicial e Final se Personalizado */}
                   {seasonalityFilter === 'custom' && (
-                    <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-2xl bg-slate-900/40 border border-slate-800/60 text-xs">
+                    <div className={`flex flex-wrap items-center gap-3 mb-4 p-3 rounded-2xl bg-transparent border text-xs ${dividerBorder}`}>
                       <span className="font-bold flex items-center gap-1.5 text-[#FF6A1A]">
                         <Calendar className="w-3.5 h-3.5" />
                         <span>Intervalo de Meses:</span>
@@ -12709,7 +12773,7 @@ export default function App() {
                               <div
                                 className={`rounded-2xl p-3.5 shadow-xl border text-xs ${
                                   isDark
-                                    ? 'bg-[#12141C] border-slate-700 text-slate-100'
+                                    ? 'bg-black border-neutral-800 text-slate-100'
                                     : 'bg-white border-slate-200 text-slate-900'
                                 }`}
                               >
@@ -12743,7 +12807,7 @@ export default function App() {
                                     {fmtCurrencyExact(item.lucro)}
                                   </span>
                                 </div>
-                                <div className="flex items-center justify-between gap-4 mt-1 pt-1 border-t border-slate-700/40">
+                                <div className={`flex items-center justify-between gap-4 mt-1 pt-1 border-t ${dividerBorder}`}>
                                   <span className={mutedText}>Rodagem / Registros:</span>
                                   <span className="font-bold tabular-nums">
                                     {item.km.toLocaleString('pt-BR')} km · {item.corridas} reg(s)
@@ -12864,7 +12928,7 @@ export default function App() {
                   {/* Grid de Configuração dos Custos e Reservas */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mt-4">
                     {/* Bloco 1: Alimentação & Margem Mecânica */}
-                    <div className={`rounded-2xl p-4 sm:p-5 border ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className={`rounded-2xl p-4 sm:p-5 border bg-transparent ${dividerBorder}`}>
                       <h3 className="text-xs font-black uppercase tracking-wider text-orange-400 flex items-center gap-1.5 mb-3">
                         <span>🍱</span>
                         <span>Alimentação na Rua & Segurança Mecânica</span>
@@ -12944,7 +13008,7 @@ export default function App() {
                     </div>
 
                     {/* Bloco 2: Documentos da Moto, IPVA & MEI */}
-                    <div className={`rounded-2xl p-4 sm:p-5 border ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className={`rounded-2xl p-4 sm:p-5 border bg-transparent ${dividerBorder}`}>
                       <h3 className="text-xs font-black uppercase tracking-wider text-sky-400 flex items-center gap-1.5 mb-3">
                         <span>📄</span>
                         <span>Documentos Anuais & Obrigações (IPVA/MEI)</span>
@@ -13040,9 +13104,9 @@ export default function App() {
 
                 {/* CONSULTOR FINANCEIRO COM INTELIGÊNCIA ARTIFICIAL (GEMINI AI) */}
                 <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border ${
-                  isDark ? 'bg-[#12141C] border-[#FF6A1A]/40' : 'bg-white border-orange-300 shadow-sm'
+                  isDark ? 'bg-black border-[#FF6A1A]/40' : 'bg-white border-orange-300 shadow-sm'
                 }`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
+                  <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
                     <div className="flex items-start sm:items-center gap-3">
                       <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center font-black text-lg shrink-0">
                         IA
@@ -13167,8 +13231,8 @@ export default function App() {
                               {fmtMoney(app.val)} <span className={`text-[11px] ${mutedText}`}>· {pct}%</span>
                             </span>
                           </div>
-                          <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                            <div className="h-full bg-[#FF6A1A] rounded-full" style={{ width: `${pct}%` }} />
+                          <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
+                            <div className="h-full bg-[#FF6A1A] rounded-full dashboard-progress-fill" style={{ width: `${pct}%` }} />
                           </div>
                         </div>
                       );
@@ -13244,9 +13308,9 @@ export default function App() {
                               {fmtMoney(cat.val)} <span className={`text-[11px] ${mutedText}`}>· {pct}%</span>
                             </span>
                           </div>
-                          <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                          <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                             <div
-                              className={`h-full rounded-full ${cat.isHousehold ? 'bg-amber-500' : 'bg-rose-500'}`}
+                              className={`h-full rounded-full dashboard-progress-fill ${cat.isHousehold ? 'bg-amber-500' : 'bg-rose-500'}`}
                               style={{ width: `${pct}%` }}
                             />
                           </div>
@@ -13341,7 +13405,7 @@ export default function App() {
                   </div>
                   <button
                     type="button"
-                    onClick={openNewEntryModal}
+                    onClick={() => openNewEntryModal('ganho', false)}
                     className="mt-1 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center gap-1.5"
                   >
                     <Plus className="w-4 h-4 stroke-[2.5]" />
@@ -13527,7 +13591,7 @@ export default function App() {
                           }`}
                         >
                           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-                            <span className="text-lg sm:text-xl shrink-0 p-1 rounded-lg bg-slate-800/40">
+                            <span className="text-lg sm:text-xl shrink-0">
                               {getExpenseIcon()}
                             </span>
                             <div className="min-w-0 flex-1">
@@ -13647,9 +13711,9 @@ export default function App() {
                       {totals.totalKm.toLocaleString('pt-BR')} / {level.end.toLocaleString('pt-BR')} km
                     </span>
                   </div>
-                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden">
+                  <div className={`w-full h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-[#FF6A1A] to-amber-400 transition-all duration-500"
+                      className="h-full rounded-full bg-gradient-to-r from-[#FF6A1A] to-amber-400 transition-all duration-500 dashboard-progress-fill"
                       style={{ width: `${Math.min(100, Math.round(level.pct))}%` }}
                     />
                   </div>
@@ -13684,7 +13748,7 @@ export default function App() {
                   </div>
 
                   <div className="flex items-baseline justify-between gap-2 mt-2">
-                    <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-400">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-400 dashboard-number-anim">
                       {fmtCurrencyExact(progressAnalytics.revToday)}
                     </div>
                     <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
@@ -13692,9 +13756,9 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                  <div className={`w-full h-2.5 rounded-full overflow-hidden mt-2.5 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${
+                      className={`h-full rounded-full transition-all duration-500 dashboard-progress-fill ${
                         progressAnalytics.revToday >= progressAnalytics.dailyGoal
                           ? 'bg-emerald-400'
                           : 'bg-[#FF6A1A]'
@@ -13747,7 +13811,7 @@ export default function App() {
                   </div>
 
                   <div className="flex items-baseline justify-between gap-2 mt-2">
-                    <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-400">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-400 dashboard-number-anim">
                       {fmtCurrencyExact(progressAnalytics.revWeek)}
                     </div>
                     <div className={`text-xs font-bold tabular-nums ${mutedText}`}>
@@ -13755,9 +13819,9 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                  <div className={`w-full h-2.5 rounded-full overflow-hidden mt-2.5 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${
+                      className={`h-full rounded-full transition-all duration-500 dashboard-progress-fill ${
                         progressAnalytics.revWeek >= progressAnalytics.weeklyGoal
                           ? 'bg-emerald-400'
                           : 'bg-sky-400'
@@ -13828,7 +13892,7 @@ export default function App() {
 
                   <div className="flex items-baseline justify-between gap-2 mt-2">
                     <div>
-                      <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A]">
+                      <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] dashboard-number-anim">
                         {fmtCurrencyExact(progressAnalytics.customCurrent)}
                       </div>
                       <span className={`text-[10px] block font-semibold ${mutedText}`}>
@@ -13840,9 +13904,9 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="w-full h-2.5 rounded-full bg-slate-800/80 overflow-hidden mt-2.5">
+                  <div className={`w-full h-2.5 rounded-full overflow-hidden mt-2.5 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${
+                      className={`h-full rounded-full transition-all duration-500 dashboard-progress-fill ${
                         progressAnalytics.customCurrent >= progressAnalytics.customGoalTarget
                           ? 'bg-emerald-400'
                           : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
@@ -14142,9 +14206,9 @@ export default function App() {
                           </span>
                         </div>
 
-                        <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                        <div className={`w-full h-1.5 rounded-full overflow-hidden my-2 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                           <div
-                            className="h-full rounded-full bg-[#FF6A1A]"
+                            className="h-full rounded-full bg-[#FF6A1A] dashboard-progress-fill"
                             style={{ width: `${Math.max(4, app.sharePct)}%` }}
                           />
                         </div>
@@ -14193,9 +14257,9 @@ export default function App() {
                           </span>
                         </div>
 
-                        <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                        <div className={`w-full h-1.5 rounded-full overflow-hidden my-2 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                           <div
-                            className="h-full rounded-full bg-sky-400"
+                            className="h-full rounded-full bg-sky-400 dashboard-progress-fill"
                             style={{ width: `${Math.max(4, sh.sharePct)}%` }}
                           />
                         </div>
@@ -14291,7 +14355,7 @@ export default function App() {
                           <div
                             className={`rounded-2xl p-3 shadow-xl border text-xs ${
                               isDark
-                                ? 'bg-[#12141C] border-slate-700 text-slate-100'
+                                ? 'bg-black border-neutral-800 text-slate-100'
                                 : 'bg-white border-slate-200 text-slate-900'
                             }`}
                           >
@@ -14373,7 +14437,7 @@ export default function App() {
                         : day.rev > 0
                         ? 'border-[#FF6A1A]/30 bg-[#FF6A1A]/5'
                         : isDark
-                        ? 'border-slate-800/70 bg-[#181B26]/60'
+                        ? 'border-neutral-800/70 bg-transparent'
                         : 'border-slate-200 bg-slate-100/70'
                     }`}
                   >
@@ -14397,9 +14461,9 @@ export default function App() {
                         {fmtMoney(day.rev)}
                       </div>
 
-                      <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden my-2">
+                      <div className={`w-full h-1.5 rounded-full overflow-hidden my-2 ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                         <div
-                          className={`h-full rounded-full ${
+                          className={`h-full rounded-full dashboard-progress-fill ${
                             day.metGoal ? 'bg-emerald-400' : 'bg-[#FF6A1A]'
                           }`}
                           style={{ width: `${day.goalPct}%` }}
@@ -14446,7 +14510,7 @@ export default function App() {
                       <div className="flex items-start gap-3">
                         <div
                           className={`w-11 h-11 rounded-2xl flex items-center justify-center text-2xl shrink-0 ${
-                            ach.unlocked ? 'bg-[#FF6A1A]/20' : 'bg-slate-800/60 grayscale'
+                            ach.unlocked ? 'bg-[#FF6A1A]/20' : `bg-transparent border ${dividerBorder} grayscale`
                           }`}
                         >
                           {ach.icon}
@@ -14460,7 +14524,7 @@ export default function App() {
                         className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
                           ach.unlocked
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-slate-800 text-slate-400'
+                            : `bg-transparent border ${dividerBorder} text-slate-400`
                         }`}
                       >
                         {ach.unlocked ? 'Desbloqueada' : `${ach.pct}%`}
@@ -14476,9 +14540,9 @@ export default function App() {
                             : `${Math.round(ach.current).toLocaleString('pt-BR')} / ${ach.target.toLocaleString('pt-BR')} ${ach.unit}`}
                         </span>
                       </div>
-                      <div className="w-full h-2 rounded-full bg-slate-800/80 overflow-hidden">
+                      <div className={`w-full h-2 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200'}`}>
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${
+                          className={`h-full rounded-full transition-all duration-500 dashboard-progress-fill ${
                             ach.unlocked ? 'bg-emerald-400' : 'bg-[#FF6A1A]'
                           }`}
                           style={{ width: `${ach.pct}%` }}
@@ -14863,9 +14927,178 @@ export default function App() {
         )}
       </main>
 
+      {/* COCKPIT DE LANÇAMENTOS RÁPIDOS (Aberto pelo botão principal Novo Registro) */}
+      {showQuickRegisterCockpit && (
+        <div
+          className={`fixed inset-0 z-40 bg-black/70 backdrop-blur-xs ${
+            isQuickRegisterClosing ? 'cockpit-backdrop-out' : 'cockpit-backdrop-in'
+          }`}
+          onClick={() => closeQuickRegisterCockpit()}
+          aria-modal="true"
+          role="dialog"
+          aria-label="Cockpit de Novo Registro"
+        >
+          <div
+            className="fixed right-3 left-3 sm:left-auto sm:right-6 sm:w-[400px] flex justify-end pointer-events-none"
+            style={{
+              bottom: 'calc(8.75rem + env(safe-area-inset-bottom, 0px))',
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              className={`w-full pointer-events-auto rounded-3xl p-4 sm:p-5 ${modalSurface} ${
+                isQuickRegisterClosing ? 'cockpit-panel-out' : 'cockpit-panel-in'
+              }`}
+            >
+              <div className={`flex items-center justify-between gap-2 pb-3 mb-3.5 border-b ${dividerBorder}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-[#FF6A1A] animate-pulse shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[#FF6A1A] block leading-none">
+                      Cockpit Rápido
+                    </span>
+                    <h3 className="text-sm sm:text-base font-black leading-tight mt-0.5 truncate">
+                      O que deseja registrar?
+                    </h3>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => closeQuickRegisterCockpit()}
+                  className={`p-1.5 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] transition-colors cursor-pointer shrink-0`}
+                  aria-label="Fechar Cockpit"
+                  title="Fechar"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                {[
+                  {
+                    id: 'ganho',
+                    title: 'Registrar Ganho',
+                    subtitle: 'Corrida ou entrega',
+                    icon: TrendingUp,
+                    badgeClass: 'bg-emerald-500/15 border-emerald-500/35 text-emerald-400',
+                    hoverBorder: 'hover:border-emerald-500/60',
+                    spanFull: false,
+                    onSelect: () => {
+                      closeQuickRegisterCockpit(true);
+                      openNewEntryModal('ganho', true);
+                    },
+                  },
+                  {
+                    id: 'despesa',
+                    title: 'Registrar Despesa',
+                    subtitle: 'Combustível ou gasto',
+                    icon: Receipt,
+                    badgeClass: 'bg-rose-500/15 border-rose-500/35 text-rose-400',
+                    hoverBorder: 'hover:border-rose-500/60',
+                    spanFull: false,
+                    onSelect: () => {
+                      closeQuickRegisterCockpit(true);
+                      openNewEntryModal('gasto', true);
+                    },
+                  },
+                  {
+                    id: 'despesa_moto',
+                    title: 'Despesa da Moto',
+                    subtitle: 'Manutenção ou peça',
+                    icon: Wrench,
+                    badgeClass: 'bg-[#FF6A1A]/15 border-[#FF6A1A]/35 text-[#FF6A1A]',
+                    hoverBorder: 'hover:border-[#FF6A1A]/60',
+                    spanFull: false,
+                    onSelect: () => {
+                      closeQuickRegisterCockpit(true);
+                      openNewBikeExpenseModal();
+                    },
+                  },
+                  {
+                    id: 'despesa_casa',
+                    title: 'Despesa da Casa',
+                    subtitle: 'Conta fixa e família',
+                    icon: Home,
+                    badgeClass: 'bg-blue-500/15 border-blue-500/35 text-blue-400',
+                    hoverBorder: 'hover:border-blue-500/60',
+                    spanFull: false,
+                    onSelect: () => {
+                      closeQuickRegisterCockpit(true);
+                      openNewHouseholdExpenseModal();
+                    },
+                  },
+                  {
+                    id: 'faturamento_previsto',
+                    title: 'Faturamento Previsto',
+                    subtitle: 'Selecionar dias futuros no calendário',
+                    icon: CalendarDays,
+                    badgeClass: 'bg-sky-500/15 border-sky-500/35 text-sky-400',
+                    hoverBorder: 'hover:border-sky-500/60',
+                    spanFull: true,
+                    onSelect: () => {
+                      closeQuickRegisterCockpit(true);
+                      openNewProjectedRevenueModal();
+                    },
+                  },
+                ].map((action, idx) => {
+                  const ActionIcon = action.icon;
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={action.onSelect}
+                      style={{
+                        animationDelay: isQuickRegisterClosing ? '0ms' : `${idx * 42}ms`,
+                      }}
+                      className={`cockpit-item-anim group text-left p-3 rounded-2xl border transition-all duration-200 active:scale-[0.97] cursor-pointer flex ${
+                        action.spanFull ? 'col-span-2 items-center justify-between gap-3' : 'flex-col justify-between gap-2.5 min-h-[88px]'
+                      } ${
+                        isDark
+                          ? 'bg-neutral-950/90 border-neutral-800/90 hover:bg-neutral-900'
+                          : 'bg-slate-50/90 border-slate-200 hover:bg-white shadow-xs'
+                      } ${action.hoverBorder}`}
+                    >
+                      <div className={`flex items-center ${action.spanFull ? 'gap-3 min-w-0' : 'justify-between w-full'}`}>
+                        <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105 ${action.badgeClass}`}>
+                          <ActionIcon className="w-4 h-4" />
+                        </div>
+                        {action.spanFull ? (
+                          <div className="min-w-0">
+                            <span className="text-xs sm:text-sm font-black block leading-tight truncate">
+                              {action.title}
+                            </span>
+                            <span className={`text-[11px] font-medium block mt-0.5 truncate ${mutedText}`}>
+                              {action.subtitle}
+                            </span>
+                          </div>
+                        ) : (
+                          <ChevronRight className={`w-3.5 h-3.5 opacity-40 group-hover:opacity-90 group-hover:translate-x-0.5 transition-all ${mutedText}`} />
+                        )}
+                      </div>
+                      {action.spanFull ? (
+                        <ChevronRight className={`w-4 h-4 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0 ${mutedText}`} />
+                      ) : (
+                        <div className="min-w-0">
+                          <span className="text-xs sm:text-[13px] font-black block leading-tight truncate">
+                            {action.title}
+                          </span>
+                          <span className={`text-[10px] sm:text-[11px] font-medium block mt-0.5 truncate ${mutedText}`}>
+                            {action.subtitle}
+                          </span>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FLOATING ACTION BUTTONS: DITAR POR VOZ + NOVO REGISTRO (Acima da barra de navegação, lado direito) */}
       <div
-        className="fixed right-4 sm:right-6 z-40 flex items-center gap-2"
+        className={`fixed right-4 sm:right-6 ${showQuickRegisterCockpit ? 'z-50' : 'z-40'} flex items-center gap-2`}
         style={{
           bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
         }}
@@ -14873,7 +15106,10 @@ export default function App() {
         {/* Voice Dictation Button */}
         <button
           type="button"
-          onClick={handleTriggerVoiceDictation}
+          onClick={() => {
+            if (showQuickRegisterCockpit) closeQuickRegisterCockpit(true);
+            handleTriggerVoiceDictation();
+          }}
           title="Ditar Corrida ou Gasto por Voz (Hands-Free)"
           aria-label="Ditar por Voz"
           className={`h-11 sm:h-12 px-3 sm:px-3.5 rounded-2xl shadow-lg border transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
@@ -14890,15 +15126,34 @@ export default function App() {
           </span>
         </button>
 
-        {/* Novo Registro Button */}
+        {/* Novo Registro Button (Abre / Fecha Cockpit de Lançamentos) */}
         <button
           type="button"
-          onClick={openNewEntryModal}
-          aria-label="Novo Registro"
-          className="h-11 sm:h-12 px-4 sm:px-5 text-xs sm:text-sm font-black text-black bg-[#FF6A1A] hover:bg-[#ff7b33] active:scale-95 rounded-2xl shadow-lg shadow-[#FF6A1A]/30 border border-orange-300/40 transition-all flex items-center gap-2 cursor-pointer"
+          onClick={() =>
+            showQuickRegisterCockpit && !isQuickRegisterClosing
+              ? closeQuickRegisterCockpit()
+              : openQuickRegisterCockpit()
+          }
+          aria-label={
+            showQuickRegisterCockpit && !isQuickRegisterClosing
+              ? 'Fechar Cockpit de Registros'
+              : 'Novo Registro'
+          }
+          aria-expanded={showQuickRegisterCockpit && !isQuickRegisterClosing}
+          className={`h-11 sm:h-12 px-4 sm:px-5 text-xs sm:text-sm font-black rounded-2xl shadow-lg transition-all duration-200 flex items-center gap-2 cursor-pointer active:scale-95 border ${
+            showQuickRegisterCockpit && !isQuickRegisterClosing
+              ? isDark
+                ? 'bg-neutral-900 text-white border-neutral-700 hover:bg-neutral-800 shadow-black/40'
+                : 'bg-slate-900 text-white border-slate-700 hover:bg-slate-800 shadow-slate-900/20'
+              : 'text-black bg-[#FF6A1A] hover:bg-[#ff7b33] shadow-[#FF6A1A]/30 border-orange-300/40'
+          }`}
         >
-          <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8]" />
-          <span>Novo Registro</span>
+          <Plus
+            className={`w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8] transition-transform duration-300 ${
+              showQuickRegisterCockpit && !isQuickRegisterClosing ? 'rotate-45' : 'rotate-0'
+            }`}
+          />
+          <span>{showQuickRegisterCockpit && !isQuickRegisterClosing ? 'Fechar' : 'Novo Registro'}</span>
         </button>
       </div>
 
@@ -14927,7 +15182,7 @@ export default function App() {
       {/* FLOATING BOTTOM NAVIGATION BAR (Mobile Ergonomic Thumb Zone with safe spacing) */}
       <nav
         className={`fixed bottom-0 left-0 right-0 z-30 border-t backdrop-blur-md ${
-          isDark ? 'bg-[#090A0F]/95 border-slate-800' : 'bg-white/95 border-slate-200'
+          isDark ? 'bg-black/95 border-neutral-800' : 'bg-white/95 border-slate-200'
         }`}
         style={{
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
@@ -14963,21 +15218,53 @@ export default function App() {
 
       {/* ADD / EDIT RIDE OR EXPENSE BOTTOM SHEET MODAL (Optimized for Mobile Keyboards & Touch) */}
       {showEntryModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-6 sm:pb-6 max-h-[90vh] overflow-y-auto ${surfaceCard}`}>
-            <div className="flex items-center justify-between mb-4 sm:mb-5">
-              <h3 className="text-base sm:text-lg font-black">
-                {editingEntryId !== null
-                  ? entryMode === 'ganho'
-                    ? 'Editar Corrida'
-                    : 'Editar Gasto'
-                  : entryMode === 'ganho'
-                  ? 'Registrar Corrida'
-                  : 'Registrar Gasto'}
-              </h3>
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowEntryModal(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-6 sm:pb-6 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200 ${modalSurface}`}
+          >
+            <div className={`flex items-center justify-between gap-3 ${isEntryModeDedicated || editingEntryId !== null ? `pb-4 mb-4 border-b ${dividerBorder}` : 'mb-4 sm:mb-5'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                {(isEntryModeDedicated || editingEntryId !== null) && (
+                  <div
+                    className={`w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 ${
+                      entryMode === 'ganho'
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                        : 'bg-rose-500/15 border-rose-500/40 text-rose-400'
+                    }`}
+                  >
+                    {entryMode === 'ganho' ? <TrendingUp className="w-5 h-5" /> : <Receipt className="w-5 h-5" />}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  {(isEntryModeDedicated || editingEntryId !== null) && (
+                    <span
+                      className={`text-[10px] font-black uppercase tracking-wider block ${
+                        entryMode === 'ganho' ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {entryMode === 'ganho' ? 'Entrada de Corridas' : 'Lançamento de Despesa'}
+                    </span>
+                  )}
+                  <h3 className="text-base sm:text-lg font-black leading-tight">
+                    {editingEntryId !== null
+                      ? entryMode === 'ganho'
+                        ? 'Editar Corrida'
+                        : 'Editar Gasto'
+                      : entryMode === 'ganho'
+                      ? 'Registrar Corrida'
+                      : 'Registrar Gasto'}
+                  </h3>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => setShowEntryModal(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer`}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer shrink-0`}
+                title="Fechar"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -15003,26 +15290,28 @@ export default function App() {
               </button>
             )}
 
-            <div className="grid grid-cols-2 gap-2 mb-5">
-              <button
-                type="button"
-                onClick={() => setEntryMode('ganho')}
-                className={`py-2.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
-                  entryMode === 'ganho' ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
-                }`}
-              >
-                Ganho / Corrida
-              </button>
-              <button
-                type="button"
-                onClick={() => setEntryMode('gasto')}
-                className={`py-2.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
-                  entryMode === 'gasto' ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
-                }`}
-              >
-                Gasto / Despesa
-              </button>
-            </div>
+            {!isEntryModeDedicated && editingEntryId === null && (
+              <div className="grid grid-cols-2 gap-2 mb-5">
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('ganho')}
+                  className={`py-2.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
+                    entryMode === 'ganho' ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
+                  }`}
+                >
+                  Ganho / Corrida
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('gasto')}
+                  className={`py-2.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors ${
+                    entryMode === 'gasto' ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
+                  }`}
+                >
+                  Gasto / Despesa
+                </button>
+              </div>
+            )}
 
             {entryMode === 'ganho' ? (
               <div className="flex flex-col gap-4">
@@ -15183,7 +15472,7 @@ export default function App() {
                             className={`w-8 h-8 rounded-lg text-sm flex items-center justify-center cursor-pointer transition-all ${
                               newCustomAppIcon === emoji
                                 ? 'bg-[#FF6A1A] text-black scale-105 font-bold'
-                                : `${isDark ? 'bg-slate-800/80' : 'bg-white'} hover:border-[#FF6A1A]`
+                                : `${isDark ? 'bg-transparent border border-neutral-800' : 'bg-transparent border border-slate-300'} hover:border-[#FF6A1A]`
                             }`}
                           >
                             {emoji}
@@ -16722,12 +17011,12 @@ export default function App() {
           onClick={() => setIsEditingFuelCard(false)}
         >
           <div
-            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-transparent border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
                   <SlidersHorizontal className="w-5 h-5" />
                 </div>
                 <div>
@@ -16742,7 +17031,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsEditingFuelCard(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
                 title="Fechar"
               >
                 <X className="w-4 h-4" />
@@ -16851,9 +17140,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
-                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-              }`}>
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs bg-transparent ${dividerBorder}`}>
                 <div>
                   <span className={`text-[10px] block font-bold ${mutedText}`}>Custo Estimado / KM</span>
                   <span className="text-sm font-black text-rose-400 tabular-nums">
@@ -16868,7 +17155,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+              <div className={`flex items-center gap-2.5 pt-3 border-t ${dividerBorder}`}>
                 <button
                   type="button"
                   onClick={() => setIsEditingFuelCard(false)}
@@ -16879,10 +17166,223 @@ export default function App() {
                 <button
                   type="button"
                   onClick={saveFuelCardEdit}
-                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/25"
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Check className="w-4 h-4 stroke-[2.5]" />
                   <span>Salvar Dados da Moto</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE NOVA MANUTENÇÃO PREVENTIVA (SOBRE A TELA, MESMO PADRÃO DE DADOS DA MOTO) */}
+      {isAddingNewMaint && maintDraft && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => {
+            setIsAddingNewMaint(false);
+            setEditingMaintId(null);
+            setMaintDraft(null);
+          }}
+        >
+          <div
+            className={`w-full max-w-2xl rounded-2xl sm:rounded-3xl p-5 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-transparent border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6A1A]">
+                    Garagem & Manutenção
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
+                    Adicionar Nova Manutenção Preventiva
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingNewMaint(false);
+                  setEditingMaintId(null);
+                  setMaintDraft(null);
+                }}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-4">
+              <p className={`text-xs leading-relaxed ${mutedText}`}>
+                Escolha uma sugestão rápida ou digite uma peça/serviço personalizado:
+              </p>
+
+              {/* Sugestões Rápidas para Motoboys */}
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                {[
+                  { name: 'Vela de Ignição', icon: '⚡', intervalKm: 12000, costEstimate: 45, notes: 'Vela NGK Iridium / Standard' },
+                  { name: 'Filtro de Ar', icon: '🌬️', intervalKm: 10000, costEstimate: 35, notes: 'Troca preventiva do elemento filtrante' },
+                  { name: 'Fluido de Freio', icon: '💧', intervalKm: 15000, costEstimate: 40, notes: 'Fluido DOT 4' },
+                  { name: 'Cabos (Embreagem / Acelerador)', icon: '🔌', intervalKm: 15000, costEstimate: 55, notes: 'Lubrificação e regulagem de folga' },
+                  { name: 'Bateria', icon: '🔋', intervalKm: 25000, costEstimate: 220, notes: 'Verificar tensão (12.6V - 14.4V)' },
+                  { name: 'Rolamentos de Roda', icon: '⭕', intervalKm: 20000, costEstimate: 90, notes: 'Conferir folga dianteira e traseira' },
+                  { name: 'Regulagem de Válvulas', icon: '🔩', intervalKm: 12000, costEstimate: 120, notes: 'Folga de admissão e escape' },
+                ].map(preset => (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() =>
+                      setMaintDraft({
+                        ...maintDraft,
+                        name: preset.name,
+                        icon: preset.icon,
+                        intervalKm: preset.intervalKm,
+                        costEstimate: preset.costEstimate,
+                        notes: preset.notes,
+                      })
+                    }
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
+                  >
+                    {preset.icon} {preset.name}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                <div className="sm:col-span-2 lg:col-span-2">
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Nome do Componente</label>
+                  <input
+                    type="text"
+                    value={maintDraft.name}
+                    onChange={e => setMaintDraft({ ...maintDraft, name: e.target.value })}
+                    placeholder="Ex: Vela de Ignição, Filtro de Ar"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Ícone (Emoji)</label>
+                  <input
+                    type="text"
+                    value={maintDraft.icon}
+                    onChange={e => setMaintDraft({ ...maintDraft, icon: e.target.value })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Intervalo de Troca (KM)</label>
+                  <FreeNumberInput
+                    step="100"
+                    value={maintDraft.intervalKm}
+                    onValueChange={val => setMaintDraft({ ...maintDraft, intervalKm: Math.max(0, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>KM da Última Troca</label>
+                  <FreeNumberInput
+                    step="10"
+                    value={maintDraft.lastChangeKm}
+                    onValueChange={val => setMaintDraft({ ...maintDraft, lastChangeKm: Math.max(0, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Custo Estimado (R$)</label>
+                  <FreeNumberInput
+                    step="5"
+                    value={maintDraft.costEstimate}
+                    onValueChange={val => setMaintDraft({ ...maintDraft, costEstimate: Math.max(0, val) })}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  />
+                </div>
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Observação / Especificação</label>
+                  <input
+                    type="text"
+                    value={maintDraft.notes || ''}
+                    onChange={e => setMaintDraft({ ...maintDraft, notes: e.target.value })}
+                    placeholder="Ex: Marca, viscosidade, calibragem"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                  />
+                </div>
+
+                {/* Configuração de Porcentagem de Alerta (Room DB) */}
+                <div className="col-span-1 sm:col-span-2 lg:col-span-3 rounded-2xl p-3.5 bg-transparent border border-amber-500/30">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-2">
+                    <div>
+                      <label className={`block text-xs font-black ${isDark ? 'text-amber-300' : 'text-amber-700'}`}>
+                        🔔 Porcentagem de Alerta Preventivo (% do intervalo)
+                      </label>
+                      <p className={`text-[11px] mt-0.5 ${mutedText}`}>
+                        O app exibirá um alerta visual no card quando atingir essa porcentagem.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <FreeNumberInput
+                        step="1"
+                        value={maintDraft.alertThresholdPct ?? 85}
+                        onValueChange={val =>
+                          setMaintDraft({
+                            ...maintDraft,
+                            alertThresholdPct: Math.max(0, val),
+                          })
+                        }
+                        className={`w-20 px-3 py-1.5 rounded-xl text-center text-sm font-black tabular-nums outline-none ${isDark ? 'text-amber-300' : 'text-amber-700'} ${inputSurface}`}
+                      />
+                      <span className={`text-xs font-black ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>%</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className={`text-[11px] font-bold mr-1 ${mutedText}`}>Atalhos rápidos:</span>
+                    {[75, 80, 85, 90, 95].map(pctVal => {
+                      const isSelected = (maintDraft.alertThresholdPct ?? 85) === pctVal;
+                      return (
+                        <button
+                          key={pctVal}
+                          type="button"
+                          onClick={() => setMaintDraft({ ...maintDraft, alertThresholdPct: pctVal })}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors bg-transparent border ${
+                            isSelected
+                              ? 'border-amber-500 text-amber-500'
+                              : `${dividerBorder} hover:border-amber-400 ${isDark ? 'text-amber-300' : 'text-amber-700'}`
+                          }`}
+                        >
+                          {pctVal}%
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`flex items-center gap-2.5 pt-3 border-t ${dividerBorder}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingNewMaint(false);
+                    setEditingMaintId(null);
+                    setMaintDraft(null);
+                  }}
+                  className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={saveMaintenanceCardEdit}
+                  disabled={!maintDraft.name.trim()}
+                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 disabled:opacity-40 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Salvar Nova Manutenção</span>
                 </button>
               </div>
             </div>
@@ -16897,10 +17397,10 @@ export default function App() {
           onClick={() => setShowBikeModal(false)}
         >
           <div
-            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/40 flex items-center justify-center text-[#FF6A1A] text-xl shrink-0">
                   {bikeDraft.icon || '🏍️'}
@@ -16917,7 +17417,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowBikeModal(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
                 title="Fechar"
               >
                 <X className="w-4 h-4" />
@@ -16988,8 +17488,8 @@ export default function App() {
 
               {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
               {(bikeDraft.recurrenceType || 'monthly') === 'interval_days' && (
-                <div className={`p-3.5 rounded-2xl border space-y-3.5 ${
-                  isDark ? 'bg-slate-900/60 border-[#FF6A1A]/30' : 'bg-orange-50/50 border-orange-200'
+                <div className={`p-3.5 rounded-2xl border space-y-3.5 bg-transparent ${
+                  isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200'
                 }`}>
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -17430,9 +17930,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
-                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-              }`}>
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs bg-transparent ${dividerBorder}`}>
                 <div>
                   <span className={`text-[10px] block font-bold ${mutedText}`}>Status da Despesa</span>
                   <span className={`text-xs font-black ${bikeDraft.isActive ? 'text-emerald-400' : 'text-slate-400'}`}>
@@ -17445,7 +17943,7 @@ export default function App() {
                   className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-colors ${
                     bikeDraft.isActive
                       ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-slate-800 text-slate-400'
+                      : isDark ? 'bg-transparent border border-neutral-800 text-slate-400' : 'bg-transparent border border-slate-300 text-slate-600'
                   }`}
                 >
                   {bikeDraft.isActive ? 'Ativa' : 'Desativada'}
@@ -17496,10 +17994,10 @@ export default function App() {
           onClick={() => setShowHouseholdModal(false)}
         >
           <div
-            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-blue-500/15 border border-blue-500/40 flex items-center justify-center text-blue-400 text-xl shrink-0">
                   {householdDraft.icon || '🏠'}
@@ -17516,7 +18014,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowHouseholdModal(false)}
-                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-slate-700 cursor-pointer`}
+                className={`p-2 rounded-xl ${surfaceSubtle} hover:border-[#FF6A1A] cursor-pointer`}
                 title="Fechar"
               >
                 <X className="w-4 h-4" />
@@ -17587,8 +18085,8 @@ export default function App() {
 
               {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
               {(householdDraft.recurrenceType || 'monthly') === 'interval_days' && (
-                <div className={`p-3.5 rounded-2xl border space-y-3.5 ${
-                  isDark ? 'bg-slate-900/60 border-blue-500/30' : 'bg-blue-50/50 border-blue-200'
+                <div className={`p-3.5 rounded-2xl border space-y-3.5 bg-transparent ${
+                  isDark ? 'border-blue-500/30' : 'border-blue-200'
                 }`}>
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -18028,9 +18526,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
-                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-              }`}>
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs bg-transparent ${dividerBorder}`}>
                 <div>
                   <span className={`text-[10px] block font-bold ${mutedText}`}>Status da Conta</span>
                   <span className={`text-xs font-black ${householdDraft.isActive ? 'text-emerald-400' : 'text-slate-400'}`}>
@@ -18043,7 +18539,7 @@ export default function App() {
                   className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-colors ${
                     householdDraft.isActive
                       ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-slate-800 text-slate-400'
+                      : isDark ? 'bg-transparent border border-neutral-800 text-slate-400' : 'bg-transparent border border-slate-300 text-slate-600'
                   }`}
                 >
                   {householdDraft.isActive ? 'Ativa' : 'Desativada'}
@@ -18094,10 +18590,10 @@ export default function App() {
           onClick={() => setShowProjectedModal(false)}
         >
           <div
-            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+            <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-sky-500/15 border border-sky-500/40 flex items-center justify-center text-sky-400 text-xl shrink-0">
                   🔮
@@ -18126,111 +18622,154 @@ export default function App() {
             </div>
 
             <div className="py-4 space-y-4">
-              {/* 1. Data Prevista */}
+              {/* 1. Seleção Livre dos Dias que Irá Rodar via Modal de Calendário */}
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className={`text-xs font-bold ${mutedText}`}>
+                    Dias que irá rodar no mês:
+                  </label>
+                  <span className="text-[11px] font-black text-[#FF6A1A]">
+                    {projectedSelectedDates.length} dia{projectedSelectedDates.length === 1 ? '' : 's'} selecionado{projectedSelectedDates.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fallbackMonth = (projectedSelectedDates[0] || todayStr()).slice(0, 7);
+                    setProjectedCalendarMonth(fallbackMonth);
+                    setShowProjectedCalendarModal(true);
+                  }}
+                  className={`w-full p-3.5 rounded-2xl bg-transparent border ${
+                    projectedSelectedDates.length > 0 ? 'border-[#FF6A1A]/60' : dividerBorder
+                  } hover:border-[#FF6A1A] transition-colors text-left cursor-pointer flex items-center justify-between gap-3`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-10 h-10 rounded-xl bg-transparent border ${
+                      projectedSelectedDates.length > 0 ? 'border-[#FF6A1A]/50 text-[#FF6A1A]' : `${dividerBorder} ${mutedText}`
+                    } flex items-center justify-center shrink-0`}>
+                      <Calendar className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className={`text-xs sm:text-sm font-black ${primaryText}`}>
+                        {projectedSelectedDates.length > 0
+                          ? `${projectedSelectedDates.length} dia${projectedSelectedDates.length === 1 ? '' : 's'} selecionado${projectedSelectedDates.length === 1 ? '' : 's'} no calendário`
+                          : 'Abrir Calendário e Selecionar Dias'}
+                      </div>
+                      <div className={`text-[11px] mt-0.5 truncate ${mutedText}`}>
+                        {projectedSelectedDates.length > 0
+                          ? `${projectedSelectedDates
+                              .slice(0, 5)
+                              .map(d => d.slice(8, 10) + '/' + d.slice(5, 7))
+                              .join(', ')}${projectedSelectedDates.length > 5 ? ` +${projectedSelectedDates.length - 5} dias` : ''}`
+                          : 'Toque para escolher livremente quaisquer dias do mês'}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A] shrink-0">
+                    Calendário
+                  </span>
+                </button>
+              </div>
+
+              {/* 2. Valor da Diária Prevista (R$/dia) */}
               <div>
                 <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                  Data Prevista do Recebimento:
+                  Diária Prevista por Dia (R$/dia):
                 </label>
                 <input
-                  type="date"
-                  value={projectedDate}
-                  onChange={e => setProjectedDate(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="200,00"
+                  value={projectedDailyRate}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    setProjectedDailyRate(raw);
+                    const rate = parseFloat(raw.replace(',', '.')) || 0;
+                    const days = projectedSelectedDates.length;
+                    if (rate > 0 && days > 0) {
+                      setProjectedAmount(String(Math.round(days * rate * 100) / 100));
+                    }
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-base font-black tabular-nums outline-none text-sky-400 ${inputSurface}`}
                 />
-                {/* Atalhos Rápidos de Data */}
                 <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                  {[
-                    { label: 'Hoje', getDate: () => todayStr() },
-                    {
-                      label: 'Amanhã',
-                      getDate: () => {
-                        const d = new Date();
-                        d.setDate(d.getDate() + 1);
-                        return d.toISOString().slice(0, 10);
-                      },
-                    },
-                    {
-                      label: 'Sexta',
-                      getDate: () => {
-                        const d = new Date();
-                        const day = d.getDay();
-                        const diff = (5 - day + 7) % 7 || 7;
-                        d.setDate(d.getDate() + diff);
-                        return d.toISOString().slice(0, 10);
-                      },
-                    },
-                    {
-                      label: 'Sábado',
-                      getDate: () => {
-                        const d = new Date();
-                        const day = d.getDay();
-                        const diff = (6 - day + 7) % 7 || 7;
-                        d.setDate(d.getDate() + diff);
-                        return d.toISOString().slice(0, 10);
-                      },
-                    },
-                    {
-                      label: 'Domingo',
-                      getDate: () => {
-                        const d = new Date();
-                        const day = d.getDay();
-                        const diff = (0 - day + 7) % 7 || 7;
-                        d.setDate(d.getDate() + diff);
-                        return d.toISOString().slice(0, 10);
-                      },
-                    },
-                    {
-                      label: '+7 dias',
-                      getDate: () => {
-                        const d = new Date();
-                        d.setDate(d.getDate() + 7);
-                        return d.toISOString().slice(0, 10);
-                      },
-                    },
-                  ].map(item => (
+                  {selectedMonthFinancials.historicalDailyAvg > 0 && (
                     <button
-                      key={item.label}
                       type="button"
-                      onClick={() => setProjectedDate(item.getDate())}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
-                        isDark
-                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
-                      }`}
+                      onClick={() => {
+                        const avg = selectedMonthFinancials.historicalDailyAvg;
+                        setProjectedDailyRate(String(avg));
+                        const days = projectedSelectedDates.length;
+                        if (days > 0) {
+                          setProjectedAmount(String(Math.round(days * avg * 100) / 100));
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-black bg-transparent text-sky-400 border border-sky-500/40 hover:border-sky-400 cursor-pointer"
                     >
-                      {item.label}
+                      Média: R$ {selectedMonthFinancials.historicalDailyAvg.toFixed(0)}
+                    </button>
+                  )}
+                  {[100, 150, 200, 250, 300].map(r => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => {
+                        setProjectedDailyRate(String(r));
+                        const days = projectedSelectedDates.length;
+                        if (days > 0) {
+                          setProjectedAmount(String(Math.round(days * r * 100) / 100));
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/35 hover:border-[#FF6A1A] cursor-pointer"
+                    >
+                      R$ {r}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* 2. Valor Previsto */}
+              {/* 3. Valor Total Previsto (soma automática dos dias selecionados × diária) */}
               <div>
-                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                  Valor Previsto a Receber (R$):
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className={`text-xs font-bold ${mutedText}`}>
+                    Valor Total Previsto (R$):
+                  </label>
+                  <span className="text-[11px] font-bold text-sky-400">
+                    {projectedSelectedDates.length} dia(s) × {fmtMoney(parseFloat(projectedDailyRate.replace(',', '.')) || 0)}/dia
+                  </span>
+                </div>
                 <input
                   type="number"
                   step="0.01"
                   min="1"
                   placeholder="0,00"
                   value={projectedAmount}
-                  onChange={e => setProjectedAmount(e.target.value)}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    setProjectedAmount(raw);
+                    const total = parseFloat(raw.replace(',', '.')) || 0;
+                    const days = projectedSelectedDates.length;
+                    if (total > 0 && days > 0) {
+                      setProjectedDailyRate(String(Math.round((total / days) * 100) / 100));
+                    }
+                  }}
                   className={`w-full px-3.5 py-2.5 rounded-xl text-base font-black tabular-nums outline-none text-[#FF6A1A] ${inputSurface}`}
                 />
-                {/* Valores Rápidos */}
-                <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                  {[50, 100, 150, 200, 250, 300, 500].map(val => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setProjectedAmount(String(val))}
-                      className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A]/30 hover:bg-[#FF6A1A]/20 cursor-pointer"
-                    >
-                      R$ {val}
-                    </button>
-                  ))}
-                </div>
+                {(parseFloat(projectedAmount.replace(',', '.')) || 0) > 0 && projectedSelectedDates.length > 0 && (
+                  <p className={`text-[11px] mt-1.5 ${mutedText}`}>
+                    A cada dia marcado no calendário que passar,{' '}
+                    <strong className="text-sky-400">
+                      {fmtMoney(
+                        (parseFloat(projectedDailyRate.replace(',', '.')) || 0) > 0
+                          ? parseFloat(projectedDailyRate.replace(',', '.'))
+                          : (parseFloat(projectedAmount.replace(',', '.')) || 0) / projectedSelectedDates.length
+                      )}/dia
+                    </strong>{' '}
+                    será debitado automaticamente do saldo futuro total.
+                  </p>
+                )}
               </div>
 
               {/* 3. Descrição / Motivo */}
@@ -18260,8 +18799,8 @@ export default function App() {
                       onClick={() => setProjectedDescription(sug)}
                       className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border cursor-pointer transition-colors ${
                         isDark
-                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                          ? 'bg-transparent hover:border-[#FF6A1A] text-slate-300 border-neutral-800'
+                          : 'bg-transparent hover:border-[#FF6A1A] text-slate-700 border-slate-300'
                       }`}
                     >
                       {sug}
@@ -18321,7 +18860,7 @@ export default function App() {
             </div>
 
             {/* Rodapé do Modal */}
-            <div className="flex items-center gap-2.5 pt-3 border-t border-slate-800/40">
+            <div className={`flex items-center gap-2.5 pt-3 border-t ${dividerBorder}`}>
               {editingProjectedId && (
                 <button
                   type="button"
@@ -18329,7 +18868,7 @@ export default function App() {
                     handleDeleteProjectedRevenue(editingProjectedId);
                     setShowProjectedModal(false);
                   }}
-                  className="py-3 px-3.5 rounded-xl text-xs font-black bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
+                  className="py-3 px-3.5 rounded-xl text-xs font-black bg-transparent text-rose-400 border border-rose-500/40 hover:border-rose-400 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
                   title="Excluir previsão"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -18339,14 +18878,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowProjectedModal(false)}
-                className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder}`}
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleSaveProjectedRevenue}
-                className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
                 <Check className="w-4 h-4 stroke-[2.5]" />
                 <span>Salvar Faturamento Previsto</span>
@@ -18355,6 +18894,217 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL MINIMALISTA DE CALENDÁRIO PARA SELEÇÃO LIVRE DE DIAS */}
+      {showProjectedCalendarModal && (() => {
+        const [calY, calM] = projectedCalendarMonth.split('-').map(Number);
+        const yearNum = calY || new Date().getFullYear();
+        const monthNum = calM || new Date().getMonth() + 1;
+        const firstWeekday = new Date(yearNum, monthNum - 1, 1).getDay();
+        const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+        const monthPrefix = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
+        const monthLabel = `${PT_BR_MONTH_NAMES[monthNum - 1] || monthNum} de ${yearNum}`;
+        const today = todayStr();
+
+        const monthAllDates: string[] = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+          monthAllDates.push(`${monthPrefix}-${String(d).padStart(2, '0')}`);
+        }
+        const selectedSet = new Set(projectedSelectedDates);
+        const allMonthSelected = monthAllDates.every(d => selectedSet.has(d));
+        const selectedInCurrentMonthCount = monthAllDates.filter(d => selectedSet.has(d)).length;
+
+        const updateSelectedAndTotal = (nextDates: string[]) => {
+          const sorted = Array.from(new Set(nextDates)).sort();
+          setProjectedSelectedDates(sorted);
+          const rate = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
+          if (rate > 0) {
+            setProjectedAmount(
+              sorted.length > 0 ? String(Math.round(sorted.length * rate * 100) / 100) : ''
+            );
+          }
+        };
+
+        const toggleDaySelection = (ymd: string) => {
+          if (selectedSet.has(ymd)) {
+            updateSelectedAndTotal(projectedSelectedDates.filter(d => d !== ymd));
+          } else {
+            updateSelectedAndTotal([...projectedSelectedDates, ymd]);
+          }
+        };
+
+        const toggleSelectWholeMonth = () => {
+          if (allMonthSelected) {
+            updateSelectedAndTotal(projectedSelectedDates.filter(d => !d.startsWith(monthPrefix)));
+          } else {
+            updateSelectedAndTotal([...projectedSelectedDates, ...monthAllDates]);
+          }
+        };
+
+        const stepCalendarMonth = (delta: number) => {
+          const next = new Date(yearNum, monthNum - 1 + delta, 1);
+          setProjectedCalendarMonth(
+            `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+          );
+        };
+
+        const dailyRatePreview = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
+
+        return (
+          <div
+            className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+            onClick={() => setShowProjectedCalendarModal(false)}
+          >
+            <div
+              className={`w-full max-w-md rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Cabeçalho Minimalista */}
+              <div className={`flex items-start justify-between gap-3 pb-3.5 border-b ${dividerBorder}`}>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-transparent border border-[#FF6A1A]/50 flex items-center justify-center text-[#FF6A1A] shrink-0">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className={`text-sm sm:text-base font-black leading-tight ${primaryText}`}>
+                      Selecionar Dias no Calendário
+                    </h3>
+                    <p className={`text-[11px] mt-0.5 ${mutedText}`}>
+                      Toque nos dias em que você irá rodar
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowProjectedCalendarModal(false)}
+                  className={`p-2 rounded-xl shrink-0 cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-current`}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Navegação de Mês */}
+              <div className="flex items-center justify-between gap-2 py-3.5">
+                <button
+                  type="button"
+                  onClick={() => stepCalendarMonth(-1)}
+                  className={`p-2 rounded-xl bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] cursor-pointer transition-colors`}
+                  title="Mês Anterior"
+                >
+                  <ChevronRight className="w-4 h-4 rotate-180" />
+                </button>
+
+                <div className="text-center">
+                  <div className={`text-sm sm:text-base font-black capitalize ${primaryText}`}>
+                    {monthLabel}
+                  </div>
+                  <div className={`text-[10px] font-bold ${mutedText}`}>
+                    {selectedInCurrentMonthCount} de {daysInMonth} dias marcados neste mês
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => stepCalendarMonth(1)}
+                  className={`p-2 rounded-xl bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] cursor-pointer transition-colors`}
+                  title="Próximo Mês"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Ações Livres do Mês */}
+              <div className="flex items-center justify-between gap-2 pb-3">
+                <button
+                  type="button"
+                  onClick={toggleSelectWholeMonth}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black bg-transparent border cursor-pointer transition-colors ${
+                    allMonthSelected
+                      ? 'border-[#FF6A1A] text-[#FF6A1A]'
+                      : `${dividerBorder} ${secondaryText} hover:border-[#FF6A1A]`
+                  }`}
+                >
+                  {allMonthSelected ? 'Desmarcar Mês Inteiro' : 'Marcar Todos os Dias do Mês'}
+                </button>
+
+                {projectedSelectedDates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedAndTotal([])}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold bg-transparent border ${dividerBorder} ${mutedText} hover:border-rose-500/60 hover:text-rose-400 cursor-pointer transition-colors`}
+                  >
+                    Limpar ({projectedSelectedDates.length})
+                  </button>
+                )}
+              </div>
+
+              {/* Grade Semanal */}
+              <div className="grid grid-cols-7 gap-1.5 mb-1.5 text-center">
+                {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(wd => (
+                  <div key={wd} className={`text-[10px] font-black uppercase py-1 ${mutedText}`}>
+                    {wd}
+                  </div>
+                ))}
+              </div>
+
+              {/* Grade de Dias */}
+              <div className="grid grid-cols-7 gap-1.5">
+                {Array.from({ length: firstWeekday }).map((_, idx) => (
+                  <div key={`empty_${idx}`} className="h-10" />
+                ))}
+                {monthAllDates.map((ymd, idx) => {
+                  const dayNum = idx + 1;
+                  const isSelected = selectedSet.has(ymd);
+                  const isTodayCell = ymd === today;
+                  return (
+                    <button
+                      key={ymd}
+                      type="button"
+                      onClick={() => toggleDaySelection(ymd)}
+                      className={`h-10 rounded-xl text-xs font-bold tabular-nums cursor-pointer transition-all flex flex-col items-center justify-center relative border ${
+                        isSelected
+                          ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A] font-black'
+                          : `bg-transparent ${dividerBorder} ${primaryText} hover:border-[#FF6A1A]/60`
+                      }`}
+                    >
+                      <span>{dayNum}</span>
+                      {isTodayCell && (
+                        <span
+                          className={`w-1 h-1 rounded-full mt-0.5 ${
+                            isSelected ? 'bg-[#FF6A1A]' : 'bg-sky-400'
+                          }`}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Resumo & Confirmação */}
+              <div className={`mt-4 pt-3.5 border-t ${dividerBorder} flex items-center justify-between gap-3 flex-wrap`}>
+                <div className="text-xs">
+                  <div className={`font-black ${primaryText}`}>
+                    {projectedSelectedDates.length} dia{projectedSelectedDates.length === 1 ? '' : 's'} selecionado{projectedSelectedDates.length === 1 ? '' : 's'}
+                  </div>
+                  {dailyRatePreview > 0 && projectedSelectedDates.length > 0 && (
+                    <div className="text-[11px] font-bold text-sky-400">
+                      Total: {fmtMoney(Math.round(projectedSelectedDates.length * dailyRatePreview * 100) / 100)}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowProjectedCalendarModal(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer transition-colors flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>Confirmar Dias</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       <QuickCalculatorModal
         isOpen={quickCalcState.isOpen}
         title={quickCalcState.title}

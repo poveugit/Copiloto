@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* Suporte universal a Safe Area Insets (Android Edge-to-Edge & iOS Notch/Home indicator) */
 :root {
@@ -12,6 +13,11 @@
   html, body {
     height: 100%;
     overscroll-behavior-y: none;
+  }
+
+  html.dark, html.dark body {
+    background-color: #000000;
+    color: #f8fafc;
   }
 
   body {
@@ -85,6 +91,165 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* ==========================================================================
+   ANIMAÇÕES MINIMALISTAS DO PAINEL (BARRAS DE PROGRESSO, GRÁFICOS E NÚMEROS)
+   ========================================================================== */
+@keyframes dashboardProgressGrow {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes dashboardProgressShimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+.dashboard-progress-fill {
+  position: relative;
+  overflow: hidden;
+  transform-origin: left center;
+  animation: dashboardProgressGrow 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.dashboard-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.32) 50%,
+    transparent 100%
+  );
+  animation: dashboardProgressShimmer 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes dashboardBarRise {
+  0% {
+    transform: scaleY(0);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.dashboard-chart-bar {
+  transform-origin: bottom center;
+  animation: dashboardBarRise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: height 0.65s cubic-bezier(0.22, 1, 0.36, 1), filter 0.25s ease, transform 0.25s ease;
+}
+
+.dashboard-chart-bar:hover {
+  filter: brightness(1.15);
+}
+
+@keyframes dashboardNumberReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dashboard-number-anim {
+  display: inline-block;
+  animation: dashboardNumberReveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ==========================================================================
+   ANIMAÇÕES SUAVES DO MENU COCKPIT DE NOVO REGISTRO
+   ========================================================================== */
+@keyframes cockpitBackdropIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes cockpitBackdropOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cockpitPanelIn {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cockpitPanelOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+}
+
+@keyframes cockpitItemStaggerIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cockpit-backdrop-in {
+  animation: cockpitBackdropIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cockpit-backdrop-out {
+  animation: cockpitBackdropOut 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.cockpit-panel-in {
+  transform-origin: bottom right;
+  animation: cockpitPanelIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cockpit-panel-out {
+  transform-origin: bottom right;
+  animation: cockpitPanelOut 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.cockpit-item-anim {
+  animation: cockpitItemStaggerIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* ==========================================================================

@@ -175,14 +175,15 @@ export function ControleTurnoModal({
   if (!isOpen) return null;
 
   const surfaceCard = isDark
-    ? 'bg-[#12141C] border-slate-800 text-slate-100'
-    : 'bg-white border-slate-200 text-slate-900';
+    ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl'
+    : 'bg-white border border-slate-200 text-slate-900 shadow-2xl';
   const surfaceSubtle = isDark
-    ? 'bg-slate-900/70 border border-slate-800'
-    : 'bg-slate-100 border border-slate-200';
+    ? 'bg-transparent border border-neutral-800'
+    : 'bg-transparent border border-slate-200';
   const inputSurface = isDark
-    ? 'bg-slate-800/80 border-slate-700 text-white'
-    : 'bg-white border-slate-300 text-slate-900';
+    ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]'
+    : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
 
   const handleStartClick = async () => {
@@ -205,11 +206,11 @@ export function ControleTurnoModal({
         className={`w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard}`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/50">
+        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b ${dividerBorder}`}>
           <div className="flex items-center gap-2.5">
             <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black ${
-                activeSession?.isActive ? 'bg-emerald-500 text-black' : 'bg-[#FF6A1A] text-black'
+              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black bg-transparent border ${
+                activeSession?.isActive ? 'border-emerald-500/50 text-emerald-400' : 'border-[#FF6A1A]/50 text-[#FF6A1A]'
               }`}
             >
               {activeSession?.isActive ? (
@@ -225,10 +226,10 @@ export function ControleTurnoModal({
                   className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
                     activeSession?.isActive
                       ? isDark
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                        ? 'bg-transparent text-emerald-400 border-emerald-500/40'
                         : 'bg-emerald-50 text-emerald-800 border-emerald-300'
                       : isDark
-                      ? 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                      ? 'bg-transparent text-slate-400 border-neutral-800'
                       : 'bg-slate-100 text-slate-700 border-slate-300'
                   }`}
                 >
@@ -242,7 +243,7 @@ export function ControleTurnoModal({
           </div>
           <button
             onClick={onClose}
-            className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A]`}
+            className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer text-slate-400 hover:text-white hover:border-slate-500 transition-colors`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -252,10 +253,10 @@ export function ControleTurnoModal({
         {activeSession?.isActive ? (
           <div className="mt-4 flex flex-col gap-3">
             {/* Live GPS Banner */}
-            <div className={`p-4 rounded-2xl border flex flex-col gap-3 ${
+            <div className={`p-4 rounded-2xl border flex flex-col gap-3 bg-transparent ${
               isDark
-                ? 'bg-gradient-to-r from-emerald-950/50 to-teal-950/40 border-emerald-500/40'
-                : 'bg-emerald-50/90 border-emerald-300'
+                ? 'border-emerald-500/40'
+                : 'border-emerald-300'
             }`}>
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className={`text-xs font-black uppercase tracking-wider flex items-center gap-1.5 ${
@@ -266,10 +267,10 @@ export function ControleTurnoModal({
                     ? 'Odômetro GPS Automático Ativo (2º Plano)'
                     : 'Turno Aberto (Modo Manual)'}
                 </span>
-                <span className={`text-xs font-black tabular-nums px-2.5 py-1 rounded-lg border ${
+                <span className={`text-xs font-black tabular-nums px-2.5 py-1 rounded-lg border bg-transparent ${
                   isDark
-                    ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30'
-                    : 'text-emerald-900 bg-white border-emerald-300'
+                    ? 'text-emerald-300 border-emerald-500/40'
+                    : 'text-emerald-900 border-emerald-300'
                 }`}>
                   ⏱️ {formattedTime}
                 </span>
@@ -277,41 +278,41 @@ export function ControleTurnoModal({
 
               {/* Real-time GPS Odometer Metrics */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div className={`rounded-xl p-2.5 border ${
-                  isDark ? 'bg-black/35 border-emerald-500/20' : 'bg-white border-emerald-200'
+                <div className={`rounded-xl p-2.5 border bg-transparent ${
+                  isDark ? 'border-emerald-500/30' : 'border-emerald-200'
                 }`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>KM no GPS (Turno)</span>
-                  <span className={`text-sm sm:text-base font-black tabular-nums mt-0.5 block ${
+                  <span className={`text-sm sm:text-base font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                     isDark ? 'text-emerald-400' : 'text-emerald-700'
                   }`}>
                     +{liveGpsDistanceKm.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                 </div>
-                <div className={`rounded-xl p-2.5 border ${
-                  isDark ? 'bg-black/35 border-emerald-500/20' : 'bg-white border-emerald-200'
+                <div className={`rounded-xl p-2.5 border bg-transparent ${
+                  isDark ? 'border-emerald-500/30' : 'border-emerald-200'
                 }`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Odômetro Atual</span>
-                  <span className={`text-sm sm:text-base font-black tabular-nums mt-0.5 block ${
+                  <span className={`text-sm sm:text-base font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                     isDark ? 'text-white' : 'text-slate-900'
                   }`}>
                     {autoCalculatedEndKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km
                   </span>
                 </div>
-                <div className={`rounded-xl p-2.5 border ${
-                  isDark ? 'bg-black/35 border-emerald-500/20' : 'bg-white border-emerald-200'
+                <div className={`rounded-xl p-2.5 border bg-transparent ${
+                  isDark ? 'border-emerald-500/30' : 'border-emerald-200'
                 }`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Velocidade GPS</span>
-                  <span className={`text-sm sm:text-base font-black tabular-nums mt-0.5 block ${
+                  <span className={`text-sm sm:text-base font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                     isDark ? 'text-sky-400' : 'text-sky-700'
                   }`}>
                     {activeSession.currentSpeedKmh || 0} km/h
                   </span>
                 </div>
-                <div className={`rounded-xl p-2.5 border ${
-                  isDark ? 'bg-black/35 border-emerald-500/20' : 'bg-white border-emerald-200'
+                <div className={`rounded-xl p-2.5 border bg-transparent ${
+                  isDark ? 'border-emerald-500/30' : 'border-emerald-200'
                 }`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Ganhos no Turno</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums mt-0.5 block text-[#FF6A1A]">
+                  <span className="text-sm sm:text-base font-black tabular-nums dashboard-number-anim mt-0.5 block text-[#FF6A1A]">
                     R$ {summary.shiftRevenue.toFixed(2)}
                   </span>
                 </div>
@@ -332,7 +333,7 @@ export function ControleTurnoModal({
                   <button
                     type="button"
                     onClick={onOpenGpsPermissionModal}
-                    className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-[#FF6A1A] text-black cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 cursor-pointer"
                   >
                     Ativar GPS
                   </button>
@@ -376,8 +377,8 @@ export function ControleTurnoModal({
                       setEndKmInput(autoCalculatedEndKm);
                     }}
                     title="Voltar para o valor automático do GPS"
-                    className={`px-2.5 py-2 rounded-xl text-[10px] font-black cursor-pointer shrink-0 border ${
-                      isDark ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    className={`px-2.5 py-2 rounded-xl text-[10px] font-black cursor-pointer shrink-0 border bg-transparent ${
+                      isDark ? 'text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10' : 'text-emerald-800 border-emerald-300 hover:bg-emerald-50'
                     }`}
                   >
                     Usar GPS
@@ -386,22 +387,22 @@ export function ControleTurnoModal({
               </div>
 
               {/* Real-Time Preview of Distance Run */}
-              <div className="grid grid-cols-3 gap-2 text-center pt-2 border-t border-slate-800/40">
-                <div className={`p-2 rounded-xl ${surfaceCard}`}>
+              <div className={`grid grid-cols-3 gap-2 text-center pt-2 border-t ${dividerBorder}`}>
+                <div className={`p-2 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>KM Rodados</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums text-[#FF6A1A]">
+                  <span className="text-sm sm:text-base font-black tabular-nums dashboard-number-anim text-[#FF6A1A]">
                     {summary.kmDelta.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km
                   </span>
                 </div>
-                <div className={`p-2 rounded-xl ${surfaceCard}`}>
+                <div className={`p-2 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Tempo Total</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums">
+                  <span className="text-sm sm:text-base font-black tabular-nums dashboard-number-anim">
                     {summary.durationHours.toFixed(1)}h
                   </span>
                 </div>
-                <div className={`p-2 rounded-xl ${surfaceCard}`}>
+                <div className={`p-2 rounded-xl bg-transparent border ${dividerBorder}`}>
                   <span className={`block text-[10px] font-bold ${mutedText}`}>Média R$ / KM</span>
-                  <span className="text-sm sm:text-base font-black tabular-nums text-emerald-400">
+                  <span className="text-sm sm:text-base font-black tabular-nums dashboard-number-anim text-emerald-400">
                     R$ {summary.revPerKm.toFixed(2)}
                   </span>
                 </div>
@@ -425,7 +426,7 @@ export function ControleTurnoModal({
               <button
                 type="button"
                 onClick={onClose}
-                className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-white hover:border-slate-500 transition-colors`}
               >
                 Continuar Rodando
               </button>
@@ -442,7 +443,7 @@ export function ControleTurnoModal({
                   });
                   onClose();
                 }}
-                className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-rose-500 text-white hover:bg-rose-600 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-rose-500/20"
+                className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-rose-500/70 text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Square className="w-4 h-4 fill-current" />
                 <span>
@@ -456,15 +457,15 @@ export function ControleTurnoModal({
           <div className="mt-4 flex flex-col gap-4">
             {/* Automatic GPS Background Mode Card */}
             <div
-              className={`p-4 rounded-2xl border transition-all flex flex-col gap-3 ${
+              className={`p-4 rounded-2xl border transition-all flex flex-col gap-3 bg-transparent ${
                 useAutoGps
-                  ? 'bg-emerald-500/10 border-emerald-500/40'
-                  : surfaceSubtle
+                  ? 'border-emerald-500/40'
+                  : dividerBorder
               }`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
+                  <div className="w-9 h-9 rounded-xl bg-transparent border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
                     <Navigation className="w-4 h-4" />
                   </div>
                   <div>
@@ -473,14 +474,14 @@ export function ControleTurnoModal({
                         Odômetro Automático por GPS (2º Plano)
                       </span>
                       <span
-                        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border bg-transparent ${
                           gpsPermissionStatus === 'granted'
                             ? isDark
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                              : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              ? 'text-emerald-300 border-emerald-500/40'
+                              : 'text-emerald-800 border-emerald-300'
                             : isDark
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                            ? 'text-amber-300 border-amber-500/40'
+                            : 'text-amber-800 border-amber-300'
                         }`}
                       >
                         {gpsPermissionStatus === 'granted'
@@ -515,7 +516,7 @@ export function ControleTurnoModal({
                   <button
                     type="button"
                     onClick={onOpenGpsPermissionModal}
-                    className="px-3 py-1.5 rounded-xl text-[11px] font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer shrink-0"
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 cursor-pointer shrink-0"
                   >
                     Autorizar Localização
                   </button>
@@ -556,7 +557,7 @@ export function ControleTurnoModal({
               <button
                 type="button"
                 onClick={onClose}
-                className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+                className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-white hover:border-slate-500 transition-colors`}
               >
                 Cancelar
               </button>
@@ -564,7 +565,7 @@ export function ControleTurnoModal({
                 type="button"
                 disabled={isStartingShiftGps}
                 onClick={handleStartClick}
-                className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-emerald-500 text-black hover:bg-emerald-400 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
+                className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-emerald-500 text-emerald-400 hover:bg-emerald-500/10 transition-colors flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Play className="w-4 h-4 fill-current" />
                 <span>

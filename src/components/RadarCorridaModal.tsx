@@ -53,14 +53,15 @@ export function RadarCorridaModal({
 
   // Surface classes
   const surfaceCard = isDark
-    ? 'bg-[#12141C] border-slate-800 text-slate-100'
-    : 'bg-white border-slate-200 text-slate-900';
+    ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl'
+    : 'bg-white border border-slate-200 text-slate-900 shadow-2xl';
   const surfaceSubtle = isDark
-    ? 'bg-slate-900/70 border border-slate-800'
-    : 'bg-slate-100 border border-slate-200';
+    ? 'bg-transparent border border-neutral-800'
+    : 'bg-transparent border border-slate-200';
   const inputSurface = isDark
-    ? 'bg-slate-800/80 border-slate-700 text-white'
-    : 'bg-white border-slate-300 text-slate-900';
+    ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]'
+    : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
 
   // Analysis calculations (Moto + Casa & Pessoal)
@@ -259,7 +260,7 @@ export function RadarCorridaModal({
           </div>
           <button
             onClick={onClose}
-            className={`p-1.5 sm:p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A] shrink-0`}
+            className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer text-slate-400 hover:text-white hover:border-slate-500 transition-colors shrink-0`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -267,7 +268,7 @@ export function RadarCorridaModal({
 
         {/* Input Fields */}
         <div className="grid grid-cols-3 gap-2 mt-3">
-          <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 flex flex-col justify-between border ${surfaceSubtle}`}>
             <label className={`text-[10px] font-bold uppercase ${mutedText}`}>Valor da Corrida</label>
             <div className="flex items-center gap-1 mt-1">
               <span className="text-xs font-black text-[#FF6A1A]">R$</span>
@@ -283,7 +284,7 @@ export function RadarCorridaModal({
             </div>
           </div>
 
-          <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 flex flex-col justify-between border ${surfaceSubtle}`}>
             <label className={`text-[10px] font-bold uppercase ${mutedText}`}>Distância Total</label>
             <div className="flex items-center gap-1 mt-1">
               <input
@@ -299,7 +300,7 @@ export function RadarCorridaModal({
             </div>
           </div>
 
-          <div className={`rounded-xl p-2.5 flex flex-col justify-between ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 flex flex-col justify-between border ${surfaceSubtle}`}>
             <label className={`text-[10px] font-bold uppercase ${mutedText}`}>Tempo Estimado</label>
             <div className="flex items-center gap-1 mt-1">
               <input
@@ -324,8 +325,10 @@ export function RadarCorridaModal({
               key={v}
               type="button"
               onClick={() => setValorCorrida(String(v))}
-              className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer ${
-                parseFloat(valorCorrida) === v ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
+              className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                parseFloat(valorCorrida) === v
+                  ? 'bg-transparent border border-[#FF6A1A] text-[#FF6A1A]'
+                  : `bg-transparent border ${dividerBorder} ${mutedText} hover:border-slate-500`
               }`}
             >
               R$ {v}
@@ -334,9 +337,9 @@ export function RadarCorridaModal({
         </div>
 
         {/* BLOCO 1: LUCRO LÍQUIDO DA MOTO */}
-        <div className={`mt-3 p-3.5 rounded-2xl border flex flex-col gap-2 ${analysis.verdictColor}`}>
+        <div className={`mt-3 p-3.5 rounded-2xl border flex flex-col gap-2 bg-transparent ${analysis.verdictColor}`}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/25">
+            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border border-current/30">
               {analysis.verdictBadge}
             </span>
             <span className="text-[11px] font-extrabold">
@@ -353,7 +356,7 @@ export function RadarCorridaModal({
               <span className="text-[9px] font-bold block uppercase opacity-80">
                 Lucro Líquido da Moto
               </span>
-              <span className="text-lg sm:text-2xl font-black tabular-nums">
+              <span className="text-lg sm:text-2xl font-black tabular-nums dashboard-number-anim">
                 R$ {analysis.netProfitBike.toFixed(2)}
               </span>
             </div>
@@ -383,10 +386,10 @@ export function RadarCorridaModal({
 
         {/* BLOCO 2 (NOVO): CARD COBRINDO DESPESAS DA CASA & PESSOAL (O QUE SOBRA DE FATO) */}
         <div
-          className={`mt-2.5 p-3.5 rounded-2xl border ${
+          className={`mt-2.5 p-3.5 rounded-2xl border bg-transparent ${
             isDark
-              ? 'bg-blue-950/20 border-blue-500/35'
-              : 'bg-blue-50/70 border-blue-200'
+              ? 'border-blue-500/35'
+              : 'border-blue-200'
           }`}
         >
           <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-blue-500/20">
@@ -405,15 +408,15 @@ export function RadarCorridaModal({
           <div className="grid grid-cols-2 gap-2 mt-2.5">
             {/* Caixa A: Após Moto + Contas da Casa */}
             <div
-              className={`p-2.5 rounded-xl border ${
-                isDark ? 'bg-slate-950/60 border-blue-500/25' : 'bg-white border-blue-200'
+              className={`p-2.5 rounded-xl border bg-transparent ${
+                isDark ? 'border-blue-500/30' : 'border-blue-200'
               }`}
             >
               <span className={`block text-[10px] font-bold ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
                 🏠 Após Moto + Contas Casa
               </span>
               <div
-                className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
+                className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim mt-0.5 ${
                   analysis.netAfterHouseOnly >= 0
                     ? isDark ? 'text-blue-400' : 'text-blue-700'
                     : isDark ? 'text-rose-400' : 'text-rose-700'
@@ -428,14 +431,14 @@ export function RadarCorridaModal({
 
             {/* Caixa B: 100% Livre (Após Moto + Casa + Pessoal/Alimentação) */}
             <div
-              className={`p-2.5 rounded-xl border ${
+              className={`p-2.5 rounded-xl border bg-transparent ${
                 analysis.netFreeAfterAll >= 0
                   ? isDark
-                    ? 'bg-emerald-950/30 border-emerald-500/35'
-                    : 'bg-emerald-50 border-emerald-300'
+                    ? 'border-emerald-500/40 text-emerald-400'
+                    : 'border-emerald-300'
                   : isDark
-                  ? 'bg-rose-950/30 border-rose-500/35'
-                  : 'bg-rose-50 border-rose-300'
+                  ? 'border-rose-500/40 text-rose-400'
+                  : 'border-rose-300'
               }`}
             >
               <div className="flex items-center justify-between gap-1">
@@ -450,7 +453,7 @@ export function RadarCorridaModal({
                 </span>
               </div>
               <div
-                className={`text-base sm:text-lg font-black tabular-nums mt-0.5 ${
+                className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim mt-0.5 ${
                   analysis.netFreeAfterAll >= 0
                     ? isDark ? 'text-emerald-400' : 'text-emerald-700'
                     : isDark ? 'text-rose-400' : 'text-rose-700'
@@ -469,31 +472,29 @@ export function RadarCorridaModal({
 
           {/* Equação Passo a Passo Desta Corrida */}
           <div
-            className={`mt-2.5 p-2 rounded-xl text-[10px] font-bold grid grid-cols-2 sm:grid-cols-4 gap-1.5 border ${
-              isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-100 border-slate-200'
-            }`}
+            className={`mt-2.5 p-2 rounded-xl text-[10px] font-bold grid grid-cols-2 sm:grid-cols-4 gap-1.5 border bg-transparent ${dividerBorder}`}
           >
             <div className="flex flex-col">
               <span className={mutedText}>1. Ganho Bruto</span>
-              <span className={`${isDark ? 'text-slate-200' : 'text-slate-900'} font-black tabular-nums`}>
+              <span className={`${isDark ? 'text-slate-200' : 'text-slate-900'} font-black tabular-nums dashboard-number-anim`}>
                 + R$ {analysis.revenue.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
               <span className={isDark ? 'text-rose-400' : 'text-rose-700'}>2. Custo Moto ({analysis.km}km)</span>
-              <span className={`${isDark ? 'text-rose-400' : 'text-rose-700'} font-black tabular-nums`}>
+              <span className={`${isDark ? 'text-rose-400' : 'text-rose-700'} font-black tabular-nums dashboard-number-anim`}>
                 - R$ {analysis.totalBikeCost.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
               <span className={isDark ? 'text-blue-400' : 'text-blue-700'}>3. Contas Casa ({analysis.km}km)</span>
-              <span className={`${isDark ? 'text-blue-400' : 'text-blue-700'} font-black tabular-nums`}>
+              <span className={`${isDark ? 'text-blue-400' : 'text-blue-700'} font-black tabular-nums dashboard-number-anim`}>
                 - R$ {analysis.rideHouseCost.toFixed(2)}
               </span>
             </div>
             <div className="flex flex-col">
               <span className={isDark ? 'text-orange-400' : 'text-orange-700'}>4. Pessoal/Rua ({analysis.km}km)</span>
-              <span className={`${isDark ? 'text-orange-400' : 'text-orange-700'} font-black tabular-nums`}>
+              <span className={`${isDark ? 'text-orange-400' : 'text-orange-700'} font-black tabular-nums dashboard-number-anim`}>
                 - R$ {analysis.ridePersonalCost.toFixed(2)}
               </span>
             </div>
@@ -511,18 +512,18 @@ export function RadarCorridaModal({
 
         {/* BLOCO 3: COMPARATIVO POR QUILÔMETRO (BRUTO vs LÍQUIDO MOTO vs APÓS CASA vs 100% LIVRE) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5">
-          <div className={`rounded-xl p-2.5 ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 border ${surfaceSubtle}`}>
             <span className={`block text-[10px] font-bold ${mutedText}`}>R$ / KM Bruto</span>
-            <span className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+            <span className={`text-xs sm:text-sm font-black tabular-nums dashboard-number-anim mt-0.5 block ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
               R$ {analysis.grossPerKm.toFixed(2)} / km
             </span>
             <span className={`text-[9px] block mt-0.5 ${mutedText}`}>Sem descontos</span>
           </div>
 
-          <div className={`rounded-xl p-2.5 ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 border ${surfaceSubtle}`}>
             <span className={`block text-[10px] font-bold ${mutedText}`}>R$ / KM Líq. Moto</span>
             <span
-              className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 block ${
+              className={`text-xs sm:text-sm font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                 analysis.netBikePerKm >= 1.5
                   ? 'text-amber-400'
                   : analysis.netBikePerKm >= 1.0
@@ -537,10 +538,10 @@ export function RadarCorridaModal({
             </span>
           </div>
 
-          <div className={`rounded-xl p-2.5 ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 border ${surfaceSubtle}`}>
             <span className={`block text-[10px] font-bold ${mutedText}`}>R$ / KM Após Casa</span>
             <span
-              className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 block ${
+              className={`text-xs sm:text-sm font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                 analysis.netAfterHouseOnlyPerKm >= 0 ? 'text-blue-400' : 'text-rose-400'
               }`}
             >
@@ -551,10 +552,10 @@ export function RadarCorridaModal({
             </span>
           </div>
 
-          <div className={`rounded-xl p-2.5 ${surfaceSubtle}`}>
+          <div className={`rounded-xl p-2.5 border ${surfaceSubtle}`}>
             <span className={`block text-[10px] font-bold ${mutedText}`}>R$ / KM 100% Livre</span>
             <span
-              className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 block ${
+              className={`text-xs sm:text-sm font-black tabular-nums dashboard-number-anim mt-0.5 block ${
                 analysis.freePerKm >= 0.8
                   ? 'text-emerald-400'
                   : analysis.freePerKm >= 0
@@ -571,11 +572,11 @@ export function RadarCorridaModal({
         </div>
 
         {/* Botão de Ação: Lançar Direto no Registro */}
-        <div className="mt-3.5 flex gap-2">
+        <div className={`mt-3.5 flex gap-2 pt-2 border-t ${dividerBorder}`}>
           <button
             type="button"
             onClick={onClose}
-            className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer ${surfaceSubtle}`}
+            className={`px-4 py-3 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-white hover:border-slate-500 transition-colors`}
           >
             Fechar
           </button>
@@ -591,7 +592,7 @@ export function RadarCorridaModal({
               }
               onClose();
             }}
-            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-[#FF6A1A]/20"
+            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
             <span>Aceitei essa Corrida! (Lançar Registro)</span>

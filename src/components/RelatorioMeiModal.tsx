@@ -601,9 +601,10 @@ export function RelatorioMeiModal({
 
   if (!isOpen) return null;
 
-  const surfaceCard = isDark ? 'bg-[#12141C] border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900';
-  const surfaceSubtle = isDark ? 'bg-slate-900/80 border border-slate-800' : 'bg-slate-100 border border-slate-200';
-  const inputSurface = isDark ? 'bg-slate-800/90 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900';
+  const surfaceCard = isDark ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl' : 'bg-white border border-slate-200 text-slate-900 shadow-2xl';
+  const surfaceSubtle = isDark ? 'bg-transparent border border-neutral-800' : 'bg-transparent border border-slate-200';
+  const inputSurface = isDark ? 'bg-black border border-neutral-800 text-white focus:border-[#FF6A1A]' : 'bg-transparent border border-slate-300 text-slate-900 focus:border-[#FF6A1A]';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
   const mutedText = isDark ? 'text-slate-400' : 'text-slate-500';
 
   return (
@@ -612,18 +613,16 @@ export function RelatorioMeiModal({
         className={`w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 flex flex-col max-h-[92vh] overflow-y-auto shadow-2xl border ${surfaceCard} mei-modal-card`}
       >
         {/* Header (No print) */}
-        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b no-print ${
-          isDark ? 'border-slate-800/50' : 'border-slate-200'
-        }`}>
+        <div className={`flex items-center justify-between pb-3 sm:pb-4 border-b no-print ${dividerBorder}`}>
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A] text-black flex items-center justify-center font-black shadow-md">
-              <FileText className="w-5 h-5 text-black" />
+            <div className="w-10 h-10 rounded-2xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center font-black">
+              <FileText className="w-5 h-5 text-[#FF6A1A]" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm sm:text-base font-black">Extrato & Relatório Fiscal MEI</h3>
-                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
-                  isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border bg-transparent ${
+                  isDark ? 'text-emerald-400 border-emerald-500/40' : 'text-emerald-800 border-emerald-300'
                 }`}>
                   Compatível DASN-SIMEI
                 </span>
@@ -636,7 +635,7 @@ export function RelatorioMeiModal({
           <button
             type="button"
             onClick={onClose}
-            className={`p-2 rounded-xl ${surfaceSubtle} cursor-pointer hover:border-[#FF6A1A] transition-colors`}
+            className={`p-2 rounded-xl bg-transparent border ${dividerBorder} text-slate-400 hover:text-white hover:border-slate-500 cursor-pointer transition-colors`}
             title="Fechar"
           >
             <X className="w-4 h-4" />
@@ -645,8 +644,8 @@ export function RelatorioMeiModal({
 
         {/* Feedback Alert Toast */}
         {feedbackMsg && (
-          <div className={`my-3 p-3 rounded-xl border text-xs font-bold flex items-center gap-2 no-print animate-in fade-in ${
-            isDark ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+          <div className={`my-3 p-3 rounded-xl border text-xs font-bold flex items-center gap-2 no-print animate-in fade-in bg-transparent ${
+            isDark ? 'border-emerald-500/30 text-emerald-300' : 'border-emerald-300 text-emerald-900'
           }`}>
             <CheckCircle2 className={`w-4 h-4 shrink-0 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
             <span className="flex-1">{feedbackMsg}</span>
@@ -654,7 +653,7 @@ export function RelatorioMeiModal({
         )}
 
         {/* Action Toolbar & Month Selector (No print) */}
-        <div className="my-3 p-3 rounded-2xl border border-sky-500/30 bg-sky-500/5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 no-print">
+        <div className={`my-3 p-3 rounded-2xl border bg-transparent flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 no-print ${dividerBorder}`}>
           <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-sky-400 shrink-0" />
             <span className="text-xs font-bold">Mês:</span>
@@ -678,7 +677,7 @@ export function RelatorioMeiModal({
             <button
               type="button"
               onClick={handleCopyWhatsApp}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${surfaceSubtle} hover:border-emerald-500`}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 bg-transparent border ${dividerBorder} hover:border-emerald-500`}
               title="Copiar resumo textual para WhatsApp"
             >
               <Copy className="w-3.5 h-3.5 text-emerald-400" />
@@ -688,7 +687,7 @@ export function RelatorioMeiModal({
             <button
               type="button"
               onClick={handleDownloadStandaloneReport}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${surfaceSubtle} hover:border-sky-500`}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 bg-transparent border ${dividerBorder} hover:border-sky-500`}
               title="Baixar arquivo oficial para impressão ou contabilidade"
             >
               <Download className="w-3.5 h-3.5 text-sky-400" />
@@ -699,7 +698,7 @@ export function RelatorioMeiModal({
               type="button"
               onClick={handlePrint}
               disabled={isPrinting}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-sky-500 text-black hover:bg-sky-400 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50"
+              className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-transparent border border-sky-500 text-sky-400 hover:bg-sky-500/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Salvar em PDF / Imprimir</span>
@@ -711,7 +710,7 @@ export function RelatorioMeiModal({
         <div
           id="printable-mei-report"
           className={`p-4 sm:p-6 rounded-2xl border ${
-            isDark ? 'bg-slate-950/70 border-slate-800' : 'bg-slate-50 border-slate-200'
+            isDark ? 'bg-black border-neutral-800' : 'bg-slate-50 border-slate-200'
           }`}
         >
           {/* Header of Report */}
@@ -909,7 +908,7 @@ export function RelatorioMeiModal({
           </div>
 
           {/* MEI Guidelines & Tax Compliance Notice */}
-          <div className="p-3 rounded-xl border border-slate-700/40 bg-slate-900/30 text-xs mb-4">
+          <div className={`p-3 rounded-xl border text-xs mb-4 bg-transparent ${isDark ? 'border-neutral-800' : 'border-slate-300'}`}>
             <div className="flex items-center gap-1.5 font-bold text-[#FF6A1A] print-brand-orange mb-1">
               <ShieldCheck className="w-4 h-4" />
               <span>Controle Fiscal MEI (DASN-SIMEI)</span>
@@ -937,11 +936,11 @@ export function RelatorioMeiModal({
         </div>
 
         {/* Bottom Actions (No print) */}
-        <div className="mt-4 pt-3 border-t border-slate-800/50 flex flex-wrap items-center justify-between gap-2.5 no-print">
+        <div className={`mt-4 pt-3 border-t flex flex-wrap items-center justify-between gap-2.5 no-print ${dividerBorder}`}>
           <button
             type="button"
             onClick={onClose}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${mutedText} hover:text-white hover:border-slate-500`}
           >
             Fechar
           </button>
@@ -950,7 +949,7 @@ export function RelatorioMeiModal({
             <button
               type="button"
               onClick={handleDownloadStandaloneReport}
-              className={`px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-colors flex items-center gap-1.5 ${surfaceSubtle} hover:border-sky-500`}
+              className={`px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-colors flex items-center gap-1.5 bg-transparent border ${dividerBorder} hover:border-sky-500`}
             >
               <Download className="w-4 h-4 text-sky-400" />
               <span>Baixar Arquivo</span>
@@ -960,7 +959,7 @@ export function RelatorioMeiModal({
               type="button"
               onClick={handlePrint}
               disabled={isPrinting}
-              className="px-5 py-2.5 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors flex items-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl text-xs font-black bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <Printer className="w-4 h-4" />
               <span>Imprimir / Salvar PDF</span>

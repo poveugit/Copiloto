@@ -184,15 +184,16 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
   if (!isOpen) return null;
 
   const bgModal = isDark
-    ? 'bg-[#12141C] border border-slate-800 text-slate-100 shadow-2xl'
+    ? 'bg-black border border-neutral-800 text-slate-100 shadow-2xl'
     : 'bg-white border border-slate-200 text-slate-900 shadow-2xl';
   const displaySurface = isDark
-    ? 'bg-[#090A0F] border border-slate-800 text-white'
-    : 'bg-slate-100 border border-slate-300 text-slate-900';
+    ? 'bg-black border border-neutral-800 text-white'
+    : 'bg-transparent border border-slate-300 text-slate-900';
   const numBtnClass = isDark
-    ? 'bg-[#181B26] hover:bg-[#202535] active:bg-[#282e42] text-white border border-slate-800/80 shadow-xs'
-    : 'bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-900 border border-slate-200 shadow-xs';
-  const opBtnClass = 'bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 active:bg-[#FF6A1A]/35 text-[#FF6A1A] border border-[#FF6A1A]/40 font-black';
+    ? 'bg-transparent hover:bg-white/10 active:bg-white/15 text-white border border-neutral-800 shadow-xs'
+    : 'bg-transparent hover:bg-slate-100 active:bg-slate-200 text-slate-900 border border-slate-200 shadow-xs';
+  const opBtnClass = 'bg-transparent hover:bg-[#FF6A1A]/15 active:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/50 font-black';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
 
   return (
     <div
@@ -204,11 +205,9 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={`flex items-center justify-between pb-2 border-b ${
-          isDark ? 'border-slate-800/60' : 'border-slate-200'
-        }`}>
+        <div className={`flex items-center justify-between pb-2 border-b ${dividerBorder}`}>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#FF6A1A] text-black flex items-center justify-center shadow-xs">
+            <div className="w-8 h-8 rounded-xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center shadow-xs">
               <Calculator className="w-4 h-4 stroke-[2.5]" />
             </div>
             <div>
@@ -221,8 +220,8 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className={`p-1.5 rounded-xl cursor-pointer transition-colors ${
-              isDark ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+            className={`p-1.5 rounded-xl cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${
+              isDark ? 'text-slate-400 hover:text-white hover:border-slate-600' : 'text-slate-700 hover:text-slate-900 hover:border-slate-400'
             }`}
           >
             <X className="w-4 h-4" />
@@ -238,7 +237,7 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
             {expression || '0'}
           </div>
           {/* Linha do Resultado / Valor em Tempo Real */}
-          <div className="text-2xl sm:text-3xl font-black tabular-nums tracking-tight text-[#FF6A1A]">
+          <div className="text-2xl sm:text-3xl font-black tabular-nums tracking-tight text-[#FF6A1A] dashboard-number-anim">
             R$ {currentResult.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
@@ -255,10 +254,10 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
               key={val}
               type="button"
               onClick={() => handleQuickAdd(val)}
-              className={`px-2 py-1 rounded-lg text-[11px] font-black border shrink-0 cursor-pointer transition-all active:scale-95 ${
+              className={`px-2 py-1 rounded-lg text-[11px] font-black border shrink-0 cursor-pointer transition-all active:scale-95 bg-transparent ${
                 isDark
-                  ? 'bg-slate-800/80 hover:bg-[#FF6A1A] hover:text-black text-slate-200 border-slate-700/60'
-                  : 'bg-slate-100 hover:bg-[#FF6A1A] hover:text-black text-slate-700 border-slate-300'
+                  ? 'hover:border-[#FF6A1A] hover:text-[#FF6A1A] text-slate-200 border-neutral-800'
+                  : 'hover:border-[#FF6A1A] hover:text-[#FF6A1A] text-slate-700 border-slate-300'
               }`}
             >
               +{val}
@@ -272,10 +271,10 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
           <button
             type="button"
             onClick={handleClear}
-            className={`py-3 rounded-xl cursor-pointer transition-all active:scale-95 border ${
+            className={`py-3 rounded-xl cursor-pointer transition-all active:scale-95 border bg-transparent ${
               isDark
-                ? 'bg-rose-500/20 hover:bg-rose-500/30 active:bg-rose-500 text-rose-400 hover:text-rose-200 border-rose-500/40'
-                : 'bg-rose-50 hover:bg-rose-100 active:bg-rose-500 text-rose-700 border-rose-300'
+                ? 'hover:bg-rose-500/10 active:bg-rose-500/20 text-rose-400 border-rose-500/40'
+                : 'hover:bg-rose-50 active:bg-rose-100 text-rose-700 border-rose-300'
             }`}
             title="Limpar tudo"
           >
@@ -284,10 +283,10 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
           <button
             type="button"
             onClick={handleBackspace}
-            className={`py-3 rounded-xl cursor-pointer flex items-center justify-center transition-all active:scale-95 border ${
+            className={`py-3 rounded-xl cursor-pointer flex items-center justify-center transition-all active:scale-95 border bg-transparent ${
               isDark
-                ? 'bg-slate-800/80 hover:bg-slate-750 active:bg-slate-700 text-slate-200 border-slate-700/60'
-                : 'bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 border-slate-300'
+                ? 'hover:bg-white/10 active:bg-white/15 text-slate-200 border-neutral-800'
+                : 'hover:bg-slate-100 active:bg-slate-200 text-slate-700 border-slate-300'
             }`}
             title="Apagar dígito"
           >
@@ -423,21 +422,21 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
           <button
             type="button"
             onClick={handleEquals}
-            className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black cursor-pointer shadow-sm flex items-center justify-center transition-all active:scale-95"
+            className="py-3 rounded-xl bg-transparent hover:bg-emerald-500/10 active:bg-emerald-500/20 text-emerald-400 border border-emerald-500 font-black cursor-pointer shadow-sm flex items-center justify-center transition-all active:scale-95"
           >
             =
           </button>
         </div>
 
         {/* Botão de Ação: Inserir no Campo */}
-        <div className="flex gap-2 pt-1">
+        <div className={`flex gap-2 pt-2 border-t ${dividerBorder}`}>
           <button
             type="button"
             onClick={onClose}
-            className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer border ${
+            className={`py-3 px-4 rounded-xl text-xs font-bold cursor-pointer border bg-transparent ${dividerBorder} ${
               isDark
-                ? 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/60'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                ? 'hover:border-slate-500 text-slate-300'
+                : 'hover:border-slate-400 text-slate-700'
             }`}
           >
             Cancelar
@@ -445,7 +444,7 @@ export const QuickCalculatorModal: React.FC<QuickCalculatorModalProps> = ({
           <button
             type="button"
             onClick={handleApply}
-            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] hover:bg-[#ff7b33] active:bg-[#e05810] text-black shadow-lg shadow-[#FF6A1A]/20 cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+            className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-transparent hover:bg-[#FF6A1A]/10 active:bg-[#FF6A1A]/20 text-[#FF6A1A] border border-[#FF6A1A] cursor-pointer flex items-center justify-center gap-1.5 transition-all"
           >
             <Check className="w-4 h-4 stroke-[3]" />
             <span>

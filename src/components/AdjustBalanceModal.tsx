@@ -86,9 +86,10 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
     onClose();
   };
 
-  const modalBg = isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900';
-  const surfaceSubtle = isDark ? 'bg-slate-800/60 border-slate-700/60' : 'bg-slate-100 border-slate-200';
-  const inputBg = isDark ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400';
+  const modalBg = isDark ? 'bg-black border-neutral-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900';
+  const surfaceSubtle = isDark ? 'bg-transparent border-neutral-800' : 'bg-transparent border-slate-200';
+  const inputBg = isDark ? 'bg-black border-neutral-800 text-white placeholder-slate-500' : 'bg-transparent border-slate-300 text-slate-900 placeholder-slate-400';
+  const dividerBorder = isDark ? 'border-neutral-800' : 'border-slate-200';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
@@ -99,9 +100,9 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
         aria-labelledby="adjust-modal-title"
       >
         {/* HEADER */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-800/60">
+        <div className={`flex items-center justify-between p-4 sm:p-5 border-b ${dividerBorder}`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#FF6A1A]/15 border border-[#FF6A1A]/30 text-[#FF6A1A] flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-2xl bg-transparent border border-[#FF6A1A]/40 text-[#FF6A1A] flex items-center justify-center shrink-0">
               <SlidersHorizontal className="w-5 h-5" />
             </div>
             <div>
@@ -116,8 +117,8 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className={`p-2 rounded-xl transition-colors cursor-pointer ${
-              isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800/60' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            className={`p-2 rounded-xl transition-colors cursor-pointer bg-transparent border ${dividerBorder} ${
+              isDark ? 'text-slate-400 hover:text-white hover:border-slate-600' : 'text-slate-600 hover:text-slate-900 hover:border-slate-400'
             }`}
             aria-label="Fechar"
           >
@@ -136,7 +137,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
               </span>
             </div>
             <span
-              className={`text-base sm:text-lg font-black tabular-nums ${
+              className={`text-base sm:text-lg font-black tabular-nums dashboard-number-anim ${
                 currentBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
@@ -162,7 +163,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
                   setErrorMsg('');
                 }}
                 placeholder="0,00"
-                className={`w-full pl-11 pr-4 py-3 rounded-2xl text-xl sm:text-2xl font-black tabular-nums border outline-none focus:ring-2 focus:ring-[#FF6A1A]/40 focus:border-[#FF6A1A] transition-all ${inputBg}`}
+                className={`w-full pl-11 pr-4 py-3 rounded-2xl text-xl sm:text-2xl font-black tabular-nums border outline-none focus:border-[#FF6A1A] transition-all ${inputBg}`}
                 autoFocus
               />
             </div>
@@ -176,45 +177,45 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
             <button
               type="button"
               onClick={() => handleApplyShortcut(10)}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-transparent text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/40 transition-all cursor-pointer"
             >
               +R$ 10
             </button>
             <button
               type="button"
               onClick={() => handleApplyShortcut(50)}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-transparent text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/40 transition-all cursor-pointer"
             >
               +R$ 50
             </button>
             <button
               type="button"
               onClick={() => handleApplyShortcut(100)}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-transparent text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/40 transition-all cursor-pointer"
             >
               +R$ 100
             </button>
             <button
               type="button"
               onClick={() => handleApplyShortcut(-10)}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-transparent text-rose-400 hover:bg-rose-500/10 border border-rose-500/40 transition-all cursor-pointer"
             >
               -R$ 10
             </button>
             <button
               type="button"
               onClick={() => handleApplyShortcut(-50)}
-              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-transparent text-rose-400 hover:bg-rose-500/10 border border-rose-500/40 transition-all cursor-pointer"
             >
               -R$ 50
             </button>
             <button
               type="button"
               onClick={handleSetZero}
-              className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer bg-transparent ${
                 isDark
-                  ? 'bg-slate-700/30 text-slate-300 hover:bg-slate-700/60 border-slate-600/40'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300'
+                  ? 'text-slate-300 hover:border-slate-500 border-neutral-800'
+                  : 'text-slate-700 hover:border-slate-400 border-slate-300'
               }`}
             >
               Zerar (R$ 0)
@@ -224,14 +225,14 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           {/* CARD DO CÁLCULO AUTOMÁTICO DO AJUSTE */}
           {isValidNumber && isDifferent && (
             <div
-              className={`p-3.5 sm:p-4 rounded-2xl border transition-all ${
+              className={`p-3.5 sm:p-4 rounded-2xl border transition-all bg-transparent ${
                 isSurplus
                   ? isDark
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                    : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                    ? 'border-emerald-500/40 text-emerald-300'
+                    : 'border-emerald-300 text-emerald-900'
                   : isDark
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                  : 'bg-rose-50 border-rose-300 text-rose-900'
+                  ? 'border-rose-500/40 text-rose-300'
+                  : 'border-rose-300 text-rose-900'
               }`}
             >
               <div className="flex items-center justify-between font-black text-sm mb-1.5">
@@ -248,7 +249,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
                     </>
                   )}
                 </span>
-                <span className="text-base tabular-nums font-black">
+                <span className="text-base tabular-nums font-black dashboard-number-anim">
                   {isSurplus ? `+${fmtBRL(diff)}` : `-${fmtBRL(Math.abs(diff))}`}
                 </span>
               </div>
@@ -271,13 +272,13 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           )}
 
           {isValidNumber && !isDifferent && (
-            <div className={`p-3 rounded-2xl border text-xs text-center ${surfaceSubtle} ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+            <div className={`p-3 rounded-2xl border text-xs text-center bg-transparent ${dividerBorder} ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
               O valor digitado é igual ao saldo atual do sistema. Nenhuma transação será gerada.
             </div>
           )}
 
           {/* Detalhes Opcionais: Data e Motivo */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/40">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t ${dividerBorder}`}>
             <div>
               <label className="block text-[11px] font-bold text-slate-400 mb-1 flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5 text-slate-500" />
@@ -306,7 +307,7 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
           </div>
 
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold">
+            <div className="p-3 rounded-xl bg-transparent border border-rose-500/40 text-rose-300 text-xs font-bold">
               {errorMsg}
             </div>
           )}
@@ -316,17 +317,17 @@ export const AdjustBalanceModal: React.FC<AdjustBalanceModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-colors cursor-pointer border ${surfaceSubtle} hover:bg-slate-800`}
+              className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-colors cursor-pointer border bg-transparent ${dividerBorder} ${isDark ? 'text-slate-300 hover:border-slate-500' : 'text-slate-700 hover:border-slate-400'}`}
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={!isDifferent || !isValidNumber}
-              className={`flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg ${
+              className={`flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
                 !isDifferent || !isValidNumber
-                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
-                  : 'bg-[#FF6A1A] hover:bg-[#ff7b33] text-black shadow-[#FF6A1A]/20 active:scale-98'
+                  ? 'bg-transparent text-neutral-600 border border-neutral-800 cursor-not-allowed opacity-60'
+                  : 'bg-transparent border border-[#FF6A1A] text-[#FF6A1A] hover:bg-[#FF6A1A]/10 active:scale-98'
               }`}
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
