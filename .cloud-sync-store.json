@@ -3,16 +3,6 @@
     "state": {
       "entries": [
         {
-          "id": 1794412133233,
-          "km": 0,
-          "app": "ajuste",
-          "date": "2026-11-11",
-          "hours": 0,
-          "shift": "ajuste",
-          "revenue": 16.68,
-          "isCancelled": false
-        },
-        {
           "id": 1794409812617,
           "km": 28,
           "app": "99moto",
@@ -281,110 +271,115 @@
           "category": "Aluguel / Habitação",
           "amount": 1300,
           "expenseType": "casa",
-          "description": "Pagamento do aluguel mensal 11/12",
-          "householdExpenseId": "aluguel"
+          "householdExpenseId": "aluguel",
+          "description": "Pagamento do aluguel mensal 11/12"
         },
         {
           "id": 1794337985061,
           "date": "2026-11-10",
-          "amount": 20,
-          "liters": 2.9,
           "category": "combustivel",
+          "amount": 20,
+          "expenseType": "moto",
+          "liters": 2.9,
           "odometerKm": 7315,
           "description": "Pagamento / Manutenção: Combustível / Abastecimentos",
-          "expenseType": "moto",
           "pricePerLiter": 6.89
         },
         {
           "id": 1793987928504,
           "date": "2026-11-06",
-          "amount": 30,
-          "liters": 4.67,
           "category": "combustivel",
-          "odometerKm": 7043,
+          "amount": 30,
           "expenseType": "moto",
+          "liters": 4.67,
+          "odometerKm": 7043,
           "pricePerLiter": 6.42
         },
         {
           "id": 1793987777364,
           "date": "2026-11-06",
-          "amount": 30,
-          "liters": 4.67,
           "category": "combustivel",
-          "odometerKm": 6963,
+          "amount": 30,
           "expenseType": "moto",
+          "liters": 4.67,
+          "odometerKm": 6963,
           "pricePerLiter": 6.42
         },
         {
           "id": 1793925955007,
           "date": "2026-11-05",
-          "amount": 779.12,
           "category": "Supermercado & Feira (Casa)",
+          "amount": 779.12,
           "expenseType": "casa",
           "householdExpenseId": "mercado"
         },
         {
           "id": 1793925744147,
           "date": "2026-11-05",
-          "amount": 20,
-          "liters": 3.12,
           "category": "combustivel",
-          "odometerKm": 6939,
+          "amount": 20,
           "expenseType": "moto",
+          "liters": 3.12,
+          "odometerKm": 6939,
           "pricePerLiter": 6.42
         },
         {
           "id": 1793925651335,
           "date": "2026-11-05",
-          "amount": 42,
           "category": "cat_1793925614748",
-          "description": "Óleo motor Mobil 20w 50",
-          "expenseType": "moto"
+          "amount": 42,
+          "expenseType": "moto",
+          "description": "Óleo motor Mobil 20w 50"
         },
         {
           "id": 1793895641533,
           "date": "2026-11-05",
-          "amount": 20,
-          "liters": 3.12,
           "category": "combustivel",
+          "amount": 20,
+          "expenseType": "moto",
+          "liters": 3.12,
           "odometerKm": 6833,
           "pricePerLiter": 6.42
         },
         {
           "id": 1793797949572,
           "date": "2026-11-04",
-          "amount": 30,
-          "liters": 4.67,
           "category": "combustivel",
+          "amount": 30,
+          "expenseType": "moto",
+          "liters": 4.67,
           "odometerKm": 6688,
           "pricePerLiter": 6.42
         },
         {
           "id": 1793283686059,
           "date": "2026-10-29",
+          "category": "combustivel",
           "amount": 30,
-          "category": "combustivel"
+          "expenseType": "moto"
         },
         {
           "id": 1793275654834,
           "date": "2026-10-28",
+          "category": "pecas",
           "amount": 115,
-          "category": "pecas"
+          "expenseType": "moto"
         },
         {
           "id": 1793121075532,
           "date": "2026-10-27",
+          "category": "combustivel",
           "amount": 20,
-          "category": "combustivel"
+          "expenseType": "moto"
         }
       ],
       "dailyGoal": 250,
       "weeklyGoal": 1190,
-      "customGoalTarget": 1176.56,
+      "customGoalTarget": 2721,
       "customGoalDays": 8,
       "customGoalTitle": "Meta Personalizada de Ganhos",
       "customGoalMode": "date",
-      "customGoalTargetDate": "2026-11-10",
+      "customGoalTargetDate": "2026-11-30",
       "customGoalScope": "month",
       "maintenanceNotificationsEnabled": true,
       "maintenanceItems": [
@@ -394,7 +389,7 @@
           "icon": "🛢️",
           "lastChangeKm": 6833,
           "intervalKm": 1000,
-          "costEstimate": 42,
+          "costEstimate": 84,
           "notes": "Óleo 10W40 mineral",
           "isDefault": true,
           "alertThresholdPct": 90,
@@ -413,22 +408,22 @@
           "id": "tire",
           "name": "Pneus Dianteiro/Traseiro",
           "icon": "🛞",
-          "lastChangeKm": 7116,
+          "lastChangeKm": 2,
           "intervalKm": 10000,
-          "costEstimate": 350,
+          "costEstimate": 200,
           "notes": "Calibrar semanalmente (29/33 PSI)",
           "isDefault": true,
           "alertThresholdPct": 90,
           "history": [
             {
               "id": "mh_1794301349768",
-              "km": 7116,
-              "date": "2026-11-10",
+              "km": 2,
+              "date": "2026-08-11",
               "notes": "Calibrar semanalmente (29/33 PSI)",
-              "amount": 520
+              "amount": 0
             }
           ],
-          "updatedAt": 1794301349769
+          "updatedAt": 1794423291275
         },
         {
           "id": "chain",
@@ -491,21 +486,21 @@
         }
       ],
       "fuelConfig": {
-        "kmPerLiter": 28,
+        "kmPerLiter": 24,
         "fuelPrice": 6.52,
         "tankCapacityLiters": 15,
         "bikeModelName": "SHI 175",
         "odometerBaseKm": 5954
       },
       "financialPlan": {
-        "workDaysPerMonth": 26,
-        "dailyLunchBudget": 20,
+        "workDaysPerMonth": 20,
+        "dailyLunchBudget": 0,
         "dailySnackBudget": 0,
-        "emergencyReservePct": 10,
-        "maintenanceExtraBufferPct": 5,
-        "ipvaAnnual": 280,
-        "licensingAnnual": 280,
-        "insuranceOrMeiMonthly": 50,
+        "emergencyReservePct": 0,
+        "maintenanceExtraBufferPct": 0,
+        "ipvaAnnual": 0,
+        "licensingAnnual": 0,
+        "insuranceOrMeiMonthly": 0,
         "otherDocsAnnual": 0,
         "docsTargetMonths": 6,
         "revenueBaseMode": "actual_or_goal",
@@ -576,7 +571,10 @@
         1793064845364,
         1793045774484,
         1793290730314,
-        1794314038149
+        1794314038149,
+        1794415508181,
+        1794418518668,
+        1794412133233
       ],
       "deletedExpenseIds": [
         1793064731329,
@@ -596,43 +594,12 @@
           "totalCost": 1300,
           "recurrenceType": "monthly",
           "intervalDays": 30,
-          "lastPaidDate": "2026-11-10",
-          "nextDueDate": "2026-12-10"
-        },
-        {
-          "id": "mercado",
-          "name": "Supermercado & Feira (Casa)",
-          "category": "alimentacao",
-          "monthlyAmount": 779.12,
-          "dueDay": 30,
-          "icon": "🛒",
-          "isActive": true,
-          "isCustomEdited": true,
-          "totalCost": 0,
-          "nextDueDate": "2026-12-11",
-          "intervalDays": 30,
           "lastPaidDate": "2026-11-11",
-          "recurrenceType": "monthly"
-        },
-        {
-          "id": "luz",
-          "name": "Energia Elétrica (Luz)",
-          "category": "utilidades",
-          "monthlyAmount": 0,
-          "dueDay": 15,
-          "icon": "⚡",
-          "isActive": true,
-          "totalCost": 0
-        },
-        {
-          "id": "agua",
-          "name": "Água & Saneamento",
-          "category": "utilidades",
-          "monthlyAmount": 0,
-          "dueDay": 20,
-          "icon": "💧",
-          "isActive": true,
-          "totalCost": 0
+          "nextDueDate": "2026-12-10",
+          "paidMonths": [
+            "2026-11"
+          ],
+          "unpaidMonths": []
         },
         {
           "id": "internet",
@@ -645,188 +612,241 @@
           "totalCost": 120,
           "recurrenceType": "monthly",
           "intervalDays": 30,
-          "lastPaidDate": "2026-11-10",
-          "nextDueDate": "2026-12-10"
+          "nextDueDate": "2026-12-10",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
         },
         {
-          "id": "gas",
-          "name": "Gás de Cozinha",
+          "id": "house_1794418890773",
+          "icon": "⚡",
+          "name": "Cemig",
+          "dueDay": 30,
           "category": "utilidades",
-          "monthlyAmount": 8.33,
-          "dueDay": 25,
-          "icon": "🔥",
           "isActive": true,
-          "totalCost": 25,
-          "recurrenceType": "interval_days",
-          "intervalDays": 90,
-          "lastPaidDate": "2026-09-01",
-          "nextDueDate": "2026-11-30"
+          "totalCost": 184.4,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 184.4,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
         },
         {
-          "id": "farmacia",
-          "name": "Farmácia & Cuidados",
-          "category": "saude",
-          "monthlyAmount": 0,
-          "dueDay": 10,
-          "icon": "💊",
+          "id": "house_1794422861138",
+          "icon": "💧",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
           "isActive": true,
-          "totalCost": 0
+          "totalCost": 56.73,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 56.73,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
         },
         {
-          "id": "outros",
-          "name": "Outras Contas Residência",
-          "category": "outros",
-          "monthlyAmount": 0,
-          "dueDay": 28,
-          "icon": "📋",
+          "id": "house_1794422890318",
+          "icon": "💧",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
           "isActive": true,
-          "totalCost": 0
+          "totalCost": 12.79,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 12.79,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
+        },
+        {
+          "id": "house_1794422910561",
+          "icon": "💧",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
+          "isActive": true,
+          "totalCost": 10.78,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 10.78,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
+        },
+        {
+          "id": "house_1794422931556",
+          "icon": "🏠",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
+          "isActive": true,
+          "totalCost": 50.62,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 50.62,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
+        },
+        {
+          "id": "house_1794422956166",
+          "icon": "💧",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
+          "isActive": true,
+          "totalCost": 51.16,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 51.16,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
+        },
+        {
+          "id": "house_1794422979241",
+          "icon": "💧",
+          "name": "Copasa",
+          "dueDay": 30,
+          "category": "utilidades",
+          "isActive": true,
+          "totalCost": 55.92,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 55.92,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
+        },
+        {
+          "id": "house_1794423004095",
+          "icon": "⚡",
+          "name": "Cemig",
+          "dueDay": 30,
+          "category": "utilidades",
+          "isActive": true,
+          "totalCost": 91.66,
+          "nextDueDate": "2026-12-11",
+          "intervalDays": 30,
+          "monthlyAmount": 91.66,
+          "recurrenceType": "monthly",
+          "paidMonths": [],
+          "unpaidMonths": [
+            "2026-11"
+          ]
         }
       ],
       "bikeExpenses": [
         {
-          "id": "combustivel_mensal",
-          "name": "Combustível / Abastecimentos",
-          "category": "combustivel",
-          "monthlyAmount": 900,
-          "recurrenceType": "interval_days",
-          "intervalDays": 7,
-          "totalCost": 30,
-          "dueDay": 5,
-          "icon": "⛽",
-          "isActive": true,
-          "lastPaidDate": "2026-11-09",
-          "nextDueDate": "2026-11-10",
-          "isCustomEdited": true
-        },
-        {
-          "id": "oleo_filtro",
-          "name": "Troca de Óleo & Filtro",
-          "category": "manutencao",
-          "monthlyAmount": 126,
-          "recurrenceType": "interval_days",
-          "intervalDays": 15,
-          "totalCost": 42,
-          "dueDay": 15,
-          "icon": "🛢️",
-          "isActive": true,
-          "lastPaidDate": "2026-11-05",
-          "nextDueDate": "2026-11-15",
-          "isCustomEdited": true
-        },
-        {
-          "id": "pneus_camaras",
-          "name": "Pneus (Dianteiro & Traseiro)",
-          "category": "manutencao",
-          "monthlyAmount": 58.33,
-          "recurrenceType": "interval_days",
-          "intervalDays": 180,
-          "totalCost": 350,
-          "dueDay": 20,
-          "icon": "🛞",
-          "isActive": true,
-          "lastPaidDate": "2026-08-10",
-          "nextDueDate": "2027-02-06",
-          "isCustomEdited": true
-        },
-        {
-          "id": "kit_transmissao",
-          "name": "Kit Relação (Corrente, Coroa, Pinhão)",
-          "category": "manutencao",
-          "monthlyAmount": 50,
-          "recurrenceType": "interval_days",
-          "intervalDays": 120,
-          "totalCost": 200,
-          "dueDay": 25,
-          "icon": "⛓️",
-          "isActive": true,
-          "lastPaidDate": "2026-08-10",
-          "nextDueDate": "2026-12-08",
-          "isCustomEdited": true
-        },
-        {
-          "id": "freios_pastilhas",
-          "name": "Freios (Pastilhas & Lonas)",
-          "category": "manutencao",
-          "monthlyAmount": 57.5,
-          "recurrenceType": "interval_days",
-          "intervalDays": 60,
-          "totalCost": 115,
-          "dueDay": 10,
-          "icon": "🛑",
-          "isActive": true,
-          "lastPaidDate": "2026-10-01",
-          "nextDueDate": "2026-11-30",
-          "isCustomEdited": true
-        },
-        {
-          "id": "seguro_rastreador",
-          "name": "Seguro / Proteção Veicular / Rastreador",
-          "category": "seguro",
-          "monthlyAmount": 50,
-          "recurrenceType": "monthly",
-          "dueDay": 5,
-          "icon": "🛡️",
-          "isActive": true,
-          "totalCost": 50,
-          "isCustomEdited": true,
-          "intervalDays": 30,
-          "lastPaidDate": "2026-11-10",
-          "nextDueDate": "2026-12-10"
-        },
-        {
-          "id": "ipva_licenciamento",
-          "name": "IPVA, Licenciamento & DPVAT",
+          "id": "bike_1794422517093",
+          "name": "Financiamento SHI",
           "category": "documentacao",
-          "monthlyAmount": 23.01,
-          "recurrenceType": "interval_days",
-          "intervalDays": 365,
-          "totalCost": 280,
-          "dueDay": 12,
+          "monthlyAmount": 898.78,
+          "recurrenceType": "monthly",
+          "dueDay": 30,
+          "intervalDays": 90,
+          "totalCost": 898.78,
+          "nextDueDate": "2026-11-30",
           "icon": "📄",
           "isActive": true,
-          "lastPaidDate": "2026-03-31",
-          "nextDueDate": "2027-03-31",
-          "isCustomEdited": true
+          "isCustomEdited": true,
+          "paidMonths": []
         },
         {
-          "id": "mecanica_revisao",
-          "name": "Revisão Geral & Oficina Mecânica",
-          "category": "manutencao",
-          "monthlyAmount": 0,
-          "recurrenceType": "interval_days",
+          "id": "bike_1794422619177",
+          "name": "Financiamento SHI",
+          "category": "documentacao",
+          "monthlyAmount": 898.78,
+          "recurrenceType": "monthly",
+          "dueDay": 30,
           "intervalDays": 90,
-          "totalCost": 0,
-          "dueDay": 18,
-          "icon": "🔧",
-          "isActive": true
+          "totalCost": 898.78,
+          "nextDueDate": "2027-02-09",
+          "icon": "📄",
+          "isActive": true,
+          "isCustomEdited": true,
+          "paidMonths": []
         },
         {
-          "id": "lavagem_estetica",
-          "name": "Lavagem & Lubrificação Periódica",
-          "category": "outros",
-          "monthlyAmount": 0,
-          "recurrenceType": "interval_days",
-          "intervalDays": 15,
-          "totalCost": 0,
-          "dueDay": 8,
-          "icon": "✨",
-          "isActive": true
+          "id": "bike_1794422756457",
+          "icon": "⛽",
+          "name": "Combustível",
+          "dueDay": 30,
+          "category": "combustivel",
+          "isActive": true,
+          "totalCost": 325,
+          "nextDueDate": "2026-11-12",
+          "intervalDays": 1,
+          "monthlyAmount": 325,
+          "isCustomEdited": true,
+          "recurrenceType": "monthly",
+          "paidMonths": []
         },
         {
-          "id": "equipamentos_piloto",
-          "name": "Equipamentos (Capacete, Capa, Luvas)",
-          "category": "equipamento",
-          "monthlyAmount": 0,
-          "recurrenceType": "interval_days",
-          "intervalDays": 180,
-          "totalCost": 0,
-          "dueDay": 28,
-          "icon": "🪖",
-          "isActive": true
+          "id": "bike_1794422816631",
+          "icon": "🛢️",
+          "name": "Óleo motor",
+          "dueDay": 30,
+          "category": "manutencao",
+          "isActive": true,
+          "totalCost": 84,
+          "nextDueDate": "2027-02-09",
+          "intervalDays": 90,
+          "monthlyAmount": 84,
+          "isCustomEdited": true,
+          "recurrenceType": "monthly",
+          "paidMonths": []
         }
       ],
-      "lastSyncedAt": "2026-11-11T16:12:32.026Z"
+      "projectedRevenues": [
+        {
+          "id": "proj_1794432204766",
+          "date": "2026-11-30",
+          "amount": 1040,
+          "description": "Fixo Semanal",
+          "app": "Fixo",
+          "status": "pending",
+          "createdAt": "2026-11-11T21:23:24.766Z"
+        },
+        {
+          "id": "proj_1794432175530",
+          "date": "2026-11-30",
+          "amount": 750,
+          "description": "Fixo Semanal",
+          "app": "Fixo",
+          "status": "pending",
+          "createdAt": "2026-11-11T21:22:55.530Z"
+        },
+        {
+          "id": "proj_1794432138319",
+          "date": "2026-11-30",
+          "amount": 1260,
+          "description": "Fixo Semanal",
+          "app": "Fixo",
+          "status": "pending",
+          "createdAt": "2026-11-11T21:22:18.319Z"
+        }
+      ],
+      "lastSyncedAt": "2026-11-12T00:16:59.589Z"
     },
     "pilotProfile": {
       "id": "usr_1792618634013",
@@ -837,7 +857,7 @@
       "createdAt": "2026-10-21T21:37:14.013Z",
       "passwordHash": "9ac4dbf2"
     },
-    "updatedAt": "2026-11-11T16:12:32.306Z"
+    "updatedAt": "2026-11-12T00:16:59.869Z"
   },
   "usr_lauraivini13_gmail.com": {
     "state": {

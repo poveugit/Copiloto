@@ -32,6 +32,18 @@ export interface ExpenseEntry {
   isCancelled?: boolean;
 }
 
+export interface ProjectedRevenueItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  amount: number;
+  description: string;
+  app?: string;
+  status: 'pending' | 'realized' | 'cancelled';
+  notes?: string;
+  createdAt: string;
+  realizedEntryId?: number;
+}
+
 export interface MaintenanceHistoryRecord {
   id: string;
   date: string; // YYYY-MM-DD
@@ -96,6 +108,8 @@ export interface BikeExpenseItem {
   icon?: string;
   isActive: boolean;
   isCustomEdited?: boolean;
+  paidMonths?: string[];
+  unpaidMonths?: string[];
 }
 
 export const DEFAULT_BIKE_EXPENSES: BikeExpenseItem[] = [
@@ -235,6 +249,8 @@ export interface HouseholdExpenseItem {
   icon?: string;
   isActive: boolean;
   isCustomEdited?: boolean;
+  paidMonths?: string[];
+  unpaidMonths?: string[];
 }
 
 export const DEFAULT_HOUSEHOLD_EXPENSES: HouseholdExpenseItem[] = [
@@ -352,6 +368,7 @@ export interface LocalRoomDatabaseState {
   financialPlan?: FinancialPlanningConfig;
   bikeExpenses?: BikeExpenseItem[];
   householdExpenses?: HouseholdExpenseItem[];
+  projectedRevenues?: ProjectedRevenueItem[];
   customApps: AppDefinition[];
   customCategories: CategoryDefinition[];
   appOverrides: Record<string, { name: string; icon: string }>;
@@ -624,6 +641,7 @@ export async function runWorkManagerCloudSync(
     deletedExpenseIds: state.deletedExpenseIds || [],
     householdExpenses: effectiveHousehold,
     bikeExpenses: effectiveBike,
+    projectedRevenues: state.projectedRevenues || [],
     lastSyncedAt: isoNow,
   };
 
@@ -1417,6 +1435,12 @@ export async function fetchRemoteCloudData(
               : Array.isArray(settings?.custom_bike_expenses)
               ? settings.custom_bike_expenses
               : undefined,
+          projectedRevenues:
+            Array.isArray(snap.projectedRevenues)
+              ? snap.projectedRevenues
+              : Array.isArray(m.projectedRevenues)
+              ? m.projectedRevenues
+              : [],
           customApps: Array.isArray(settings?.custom_apps)
             ? settings.custom_apps
             : Array.isArray(snap.customApps)

@@ -141,3 +141,70 @@
   - Botão de alternância com estado visual claro: botão de ativação em verde esmeralda quando anulado, e botão sutil de anulação quando ativo.
   - Filtro adicional no topo do histórico para visualizar: `Todos os Status`, `Ativos` ou `🚫 Anulados`.
 - **APK Release (11/11/2026 13:19)**: `android/app/build/outputs/apk/release/app-release.apk` (4.36 MB), assinado (apksigner v2 OK), commit `a4ed917` enviado ao GitHub `main`. Contém dedução orçamentária, feedback de contas quitadas, filtros de competência/status e anulação/ativação no histórico.
+
+## Vencimentos do Dia no Painel, Modais no Header & Faturamento Futuro Previsto (11/11/2026)
+- **1. Card de Vencimentos do Dia Oculto Quando Vazio**:
+  - Na tela de Painel (`activeTab === 'dashboard'`), o card de vencimentos do dia agora verifica se há contas pendentes vencendo hoje (tanto de casa quanto da moto).
+  - Caso não haja nenhum vencimento pendente no dia (`allPendingDueToday.length === 0`), o componente retorna `null` e o card fica 100% oculto, despoluindo a tela inicial.
+  - Quando houver contas com vencimento hoje, o card aparece com destaque, contadores, saldo atual vs. valor a vencer e botão de registrar pagamento.
+
+- **2. Botões de Acesso Rápido a Extrato MEI e Meta Reversa na Barra Superior**:
+  - No `<header>`, foram adicionados dois botões de atalho:
+    - Botão **Extrato MEI** (ícone `Printer`, estilizado em roxo): aciona `setShowRelatorioMeiModal(true)`.
+    - Botão **Meta Reversa** (ícone `Target`, estilizado em laranja `#FF6A1A`): aciona `setShowMetaReversaModal(true)`.
+  - Ambos com tooltip e texto responsivo (`hidden lg:inline`), acessíveis de qualquer tela do aplicativo com 1 clique.
+
+- **3. Faturamento Futuro Previsto na Tela de Finanças**:
+  - **Interface `ProjectedRevenueItem`**: id, data (`date`), valor (`amount`), descrição (`description`), aplicativo/origem (`app`), status (`pending` | `realized` | `cancelled`), notas (`notes`) e data de criação (`createdAt`).
+  - **Sub-aba dedicada na Central de Finanças**: `billingSubTab === 'projecao'` com o rótulo **`🔮 Faturamento Previsto`**.
+  - **Card na Aba Mensal**: Exibe o Faturamento Previsto Pendente da competência selecionada e a Projeção Total Consolidada (Ganhos Reais + Previsto), com botões de atalho `+ Lançar Faturamento Futuro` e `Ver Previsões`.
+  - **Métricas Consolidadas na Sub-Aba**:
+    - 1. Previsto a Receber (pendentes no mês).
+    - 2. Faturamento Já Realizado no Mês.
+    - 3. Projeção Total do Mês (Real + Previsto).
+    - 4. Lucro Limpo Projetado (Balanço com Despesas Totais de Casa e Moto).
+  - **Ações na Lista**:
+    - **✓ Confirmar Recebimento**: Transforma a previsão em corrida/ganho real em `entries` com 1 clique, marca o status como `realized` e atualiza os ganhos do mês.
+    - **Editar**: Abre o modal para atualizar valor, data ou detalhes.
+    - **Anular / Reativar**: Alterna o status para `cancelled` ou `pending`.
+    - **Excluir**: Remove a previsão com confirmação.
+  - **Filtros de Status**: `Todas`, `⏳ Pendentes`, `✅ Recebidas / Realizadas` e `🚫 Canceladas`.
+  - **Modal de Lançamento / Edição**:
+    - Seleção de data com atalhos: `Hoje`, `Amanhã`, `Sexta`, `Sábado`, `Domingo`, `+7 dias`.
+    - Campo de valor com atalhos numéricos (`R$ 50`, `R$ 100`, `R$ 150`, `R$ 200`, `R$ 250`, `R$ 300`, `R$ 500`).
+    - Campo de descrição com sugestões: `Entrega Agendada`, `Turno Fim de Semana`, `Frete Particular`, `Fixo Semanal`, `Meta do Dia`.
+    - Seleção de canal: `Particular`, `iFood`, `99Moto`, `Uber Flash`, `Rappi`, `Frete`, `Fixo Semanal`, `Outro`.
+  - **Persistência Offline & Online**: Integrado ao `LocalRoomDatabaseState` e à sincronização da nuvem (`WorkManagerCloudSync`).
+
+- **4. Remoção do Card de DAS-MEI na Tela de Finanças**:
+  - O card estático de lembrete do DAS-MEI que ficava no topo da tela de Finanças foi completamente removido, deixando o fluxo direto da seleção de abas para o conteúdo financeiro.
+  - O acesso ao Extrato MEI e à Meta Reversa permanece direto e prático através dos botões dedicados na barra superior.
+
+## Gestão de Despesas da Moto e da Casa: Critérios de Quitação, Duplicação e Limpeza Visual (11/11/2026)
+- **1. Critério Formal de Quitação de Despesas (Moto e Casa)**:
+  - Implementado em `getExpenseDueInfo` e consolidado em `financialIntelligence`.
+  - Uma despesa é formalmente considerada **quitada** no mês de competência (`targetYM`) quando:
+    1. For marcada explicitamente como quitada no mês (`item.paidMonths?.includes(ym)`).
+    2. A data do último pagamento registrado estiver no mês selecionado (`item.lastPaidDate?.startsWith(ym)`).
+    3. O valor pago lançado no mês cobrir o valor orçado (`expectedVal > 0 && paidInMonth >= expectedVal`).
+    4. Houver pagamento lançado para despesa sem valor pré-fixado (`expectedVal === 0 && paidInMonth > 0`).
+  - Badge interativa `[✓ Quitado]` / `[⏳ A Pagar]` no cabeçalho de cada card permite alternar manualmente a quitação sem burocracia (`toggleBikeExpensePaidStatus` / `toggleHouseholdExpensePaidStatus`).
+- **2. Feedback Visual Dinâmico no Botão Principal**:
+  - Removido o texto fixo "quitado" do botão de ação em ambas as abas (Moto e Casa).
+  - Se a despesa estiver **pendente**: botão verde esmeralda `[+ Lançar Gasto]`, abrindo o modal com a categoria pré-selecionada.
+  - Se a despesa estiver **quitada**: botão azul céu `[📋 Duplicar Despesa]`, transformando a ação em duplicação ágil tanto para despesas da moto quanto para contas da casa.
+- **3. Função de Duplicação de Despesa**:
+  - Funções `duplicateBikeExpense` e `duplicateHouseholdExpense`: criam uma nova despesa idêntica com identificador único (`bike_<timestamp>` / `house_<timestamp>`), sufixo `(Cópia)` e estado pendente (`paidMonths: []`, `lastPaidDate: undefined`).
+  - Funções de matching (`matchesBikeExpense` e `matchesHouseholdExpense`) isolam o histórico: despesas vinculadas a um item original ou com nome genérico não se associam à cópia, mantendo a nova despesa pendente até que um gasto próprio seja efetuado.
+- **4. Despoluição dos Cards de Despesas**:
+  - Removidos os rótulos de texto `Editar` e `Excluir` dos cards de despesas da moto e da casa.
+  - Mantidos apenas os botões compactos com ícones `Edit3` e `Trash2`, com tooltips explicativos e confirmação inline de exclusão.
+- **5. Correção do Bloqueio de Alternância de Status (Quitado -> A Pagar)**:
+  - **Causa Raiz**: Quando uma conta (como Aluguel ou Óleo da Moto) possuía um gasto já lançado no mês (`paidInMonth >= expectedVal`) ou data em `lastPaidDate`, a função `getExpenseDueInfo` forçava automaticamente o status para `paid`. Ao clicar para alternar para "A Pagar", o sistema apenas limpava `paidMonths`, mas a presença do gasto no extrato fazia a tela reavaliar imediatamente como "Quitado".
+  - **Correção Implementada**:
+    - Adicionado suporte ao array `unpaidMonths?: string[]` em `HouseholdExpenseItem` e `BikeExpenseItem`.
+    - `isExplicitlyUnpaid`: Prioridade máxima no cálculo de status. Se a competência constar em `unpaidMonths`, o status do card é forçado para pendente/vencido (exibindo dias restantes, label de vencimento e botão `+ Lançar Gasto`), ignorando lançamentos passados.
+    - Em `toggleHouseholdExpensePaidStatus` e `toggleBikeExpensePaidStatus`, a função inspeciona dinamicamente o status que está na tela (`currentDueInfo.status === 'paid'`) e transiciona perfeitamente entre `paidMonths` e `unpaidMonths`.
+    - Ao lançar um novo pagamento pelo modal para essa despesa, a competência é automaticamente removida de `unpaidMonths`, retornando ao fluxo natural.
+    - Solução aplicada e testada para **todos** os cards de despesas da Casa e da Moto.
+  - **APK Release (11/11/2026 21:24)**: `android/app/build/outputs/apk/release/app-release.apk` (4.57 MB), assinado (`release-key.jks`, apksigner v2 OK). Contém todas as correções de quitação/duplicação das despesas da casa e moto, projeção de faturamento futuro e desbloqueio do toggle manual para "A Pagar".

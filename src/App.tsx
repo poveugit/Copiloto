@@ -103,6 +103,7 @@ import {
   HouseholdExpenseItem,
   HouseholdCategory,
   DEFAULT_HOUSEHOLD_EXPENSES,
+  ProjectedRevenueItem,
   ExpenseRecurrenceType,
   AppDefinition,
   CategoryDefinition,
@@ -371,6 +372,7 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     financialPlan: { ...DEFAULT_FINANCIAL_PLAN },
     bikeExpenses: DEFAULT_BIKE_EXPENSES.map(item => ({ ...item })),
     householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(item => ({ ...item })),
+    projectedRevenues: [],
     customApps: [],
     customCategories: [],
     appOverrides: {},
@@ -494,6 +496,7 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         },
         bikeExpenses: bikeExpensesList,
         householdExpenses: houseExpenses,
+        projectedRevenues: Array.isArray(parsed.projectedRevenues) ? parsed.projectedRevenues : [],
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
         appOverrides: parsed.appOverrides || {},
@@ -584,15 +587,19 @@ function addDaysToDateStr(dateStr: string, daysToAdd: number): string {
 }
 
 export function matchesHouseholdExpense(expense: ExpenseEntry, item: HouseholdExpenseItem): boolean {
-  if (expense.householdExpenseId && expense.householdExpenseId === item.id) {
-    return true;
+  if (expense.householdExpenseId) {
+    return expense.householdExpenseId === item.id;
   }
   const expCat = (expense.category || '').toLowerCase().trim();
   const itemName = (item.name || '').toLowerCase().trim();
   const itemId = (item.id || '').toLowerCase().trim();
 
   if (expCat === itemName || expCat === itemId) return true;
-  if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+
+  const isCopy = itemName.includes('(cópia)') || itemName.includes('(copia)');
+  if (!isCopy) {
+    if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+  }
 
   // Casos específicos dos itens padrão
   if (itemId === 'aluguel' && (expCat.includes('aluguel') || expCat.includes('habita'))) return true;
@@ -604,22 +611,30 @@ export function matchesHouseholdExpense(expense: ExpenseEntry, item: HouseholdEx
 
   if (expense.description) {
     const desc = expense.description.toLowerCase();
-    if (desc.includes(itemName) || desc.includes(itemId)) return true;
+    if (isCopy) {
+      if (desc.includes(itemName)) return true;
+    } else {
+      if (desc.includes(itemName) || desc.includes(itemId)) return true;
+    }
   }
 
   return false;
 }
 
 export function matchesBikeExpense(expense: ExpenseEntry, item: BikeExpenseItem): boolean {
-  if ((expense as any).bikeExpenseId && (expense as any).bikeExpenseId === item.id) {
-    return true;
+  if ((expense as any).bikeExpenseId) {
+    return (expense as any).bikeExpenseId === item.id;
   }
   const expCat = (expense.category || '').toLowerCase().trim();
   const itemName = (item.name || '').toLowerCase().trim();
   const itemId = (item.id || '').toLowerCase().trim();
 
   if (expCat === itemName || expCat === itemId) return true;
-  if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+
+  const isCopy = itemName.includes('(cópia)') || itemName.includes('(copia)');
+  if (!isCopy) {
+    if (expCat.includes(itemName) || itemName.includes(expCat)) return true;
+  }
 
   if (itemId === 'combustivel_mensal' && (expCat === 'combustivel' || expCat.includes('gasolina') || expCat.includes('etanol') || expCat.includes('combustível') || expCat.includes('abastecimento'))) return true;
   if (itemId === 'oleo_filtro' && (expCat.includes('óleo') || expCat.includes('oleo'))) return true;
@@ -631,7 +646,11 @@ export function matchesBikeExpense(expense: ExpenseEntry, item: BikeExpenseItem)
 
   if (expense.description) {
     const desc = expense.description.toLowerCase();
-    if (desc.includes(itemName) || desc.includes(itemId)) return true;
+    if (isCopy) {
+      if (desc.includes(itemName)) return true;
+    } else {
+      if (desc.includes(itemName) || desc.includes(itemId)) return true;
+    }
   }
 
   return false;
@@ -661,33 +680,45 @@ function getExpenseDueInfo(
     monthlyAmount?: number;
     lastPaidDate?: string;
     nextDueDate?: string;
+    paidMonths?: string[];
+    unpaidMonths?: string[];
   },
   paidInMonth: number = 0,
   targetYM?: string
 ): ExpenseDueInfo {
   const today = todayStr();
   const currentDay = new Date().getDate();
+  const currentYM = today.slice(0, 7);
+  const ym = targetYM || currentYM;
   const recType = item.recurrenceType || 'monthly';
   const expectedVal = Math.max(0, Number(item.totalCost || item.monthlyAmount) || 0);
 
-  // 1. SE JÁ FOI QUITADO NESTE MÊS/COMPETÊNCIA:
-  if (paidInMonth >= expectedVal && expectedVal > 0) {
+  // CRITÉRIO DE DEFINIÇÃO DE QUITAÇÃO & OVERRIDE MANUAL:
+  // Se o usuário marcou explicitamente como "A PAGAR" (pendente) para este mês:
+  const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(ym));
+  // Se o usuário marcou explicitamente como "QUITADO" para este mês:
+  const isExplicitlyPaid = Boolean(item.paidMonths && item.paidMonths.includes(ym));
+  const hasPaidDateInMonth = Boolean(item.lastPaidDate && item.lastPaidDate.startsWith(ym));
+  const hasCoveredExpected = expectedVal > 0 ? paidInMonth >= expectedVal : paidInMonth > 0;
+
+  if (!isExplicitlyUnpaid && (isExplicitlyPaid || hasPaidDateInMonth || hasCoveredExpected)) {
+    const displayPaid = paidInMonth > 0 ? paidInMonth : expectedVal;
     return {
-      label: `✅ Quitado no mês (${fmtMoney(paidInMonth)})`,
+      label: `✅ Quitado no mês${displayPaid > 0 ? ` (${fmtMoney(displayPaid)})` : ''}`,
       daysRemaining: 999,
       status: 'paid',
       targetDateStr: item.lastPaidDate || today,
       badgeClass: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
-      detailNote: `Quitado · ${fmtMoney(paidInMonth)}`,
+      detailNote: `Quitado${displayPaid > 0 ? ` · ${fmtMoney(displayPaid)}` : ''}`,
       timelineSortKey: 1000,
-      paidAmount: paidInMonth,
+      paidAmount: displayPaid,
       remainingAmount: 0,
       isPaid: true,
     };
   }
 
   // 2. SE FOI PAGO PARCIALMENTE:
-  if (paidInMonth > 0 && expectedVal > 0 && paidInMonth < expectedVal) {
+  if (!isExplicitlyUnpaid && paidInMonth > 0 && expectedVal > 0 && paidInMonth < expectedVal) {
     const remaining = expectedVal - paidInMonth;
     return {
       label: `⏳ Parcial: ${fmtMoney(paidInMonth)} pago (resta ${fmtMoney(remaining)})`,
@@ -704,8 +735,6 @@ function getExpenseDueInfo(
   }
 
   // Se targetYM for um mês futuro ou passado em relação ao mês atual do relógio
-  const now = new Date();
-  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const isFutureMonth = Boolean(targetYM && targetYM > currentYM);
   const isPastMonth = Boolean(targetYM && targetYM < currentYM);
 
@@ -1020,7 +1049,22 @@ export default function App() {
 
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'projecao' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+
+  // Estados de Faturamento Futuro Previsto
+  const [showProjectedModal, setShowProjectedModal] = useState<boolean>(false);
+  const [editingProjectedId, setEditingProjectedId] = useState<string | null>(null);
+  const [projectedDate, setProjectedDate] = useState<string>(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().slice(0, 10);
+  });
+  const [projectedAmount, setProjectedAmount] = useState<string>('');
+  const [projectedDescription, setProjectedDescription] = useState<string>('');
+  const [projectedApp, setProjectedApp] = useState<string>('Particular');
+  const [projectedNotes, setProjectedNotes] = useState<string>('');
+  const [projectedStatusFilter, setProjectedStatusFilter] = useState<'all' | 'pending' | 'realized' | 'cancelled'>('all');
+  const [deletingProjectedId, setDeletingProjectedId] = useState<string | null>(null);
   const [bikeCategoryFilter, setBikeCategoryFilter] = useState<string>('all');
   const [bikeStatusFilter, setBikeStatusFilter] = useState<'all' | 'pending' | 'paid' | 'overdue'>('all');
   const [showBikeModal, setShowBikeModal] = useState<boolean>(false);
@@ -1741,9 +1785,25 @@ export default function App() {
     const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const isCurrentMonth = selectedFinanceMonth === currentYM;
 
+    // Faturamento Futuro Previsto do mês selecionado
+    const rawProjectedList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+      ? dbState.projectedRevenues
+      : [];
+    const mProjected = rawProjectedList.filter(
+      p => p.status !== 'cancelled' && p.date && p.date.startsWith(selectedFinanceMonth)
+    );
+    const mProjectedPending = mProjected.filter(p => p.status === 'pending');
+    const projectedPendingRevenue = mProjectedPending.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const projectedTotalRevenue = totalRevenue + projectedPendingRevenue;
+    const projectedBalance = projectedTotalRevenue - totalExpenses;
+
     return {
       entries: mEntries,
       expenses: mExpenses,
+      projectedList: mProjected,
+      projectedPendingRevenue,
+      projectedTotalRevenue,
+      projectedBalance,
       totalRevenue,
       totalExpenses,
       currentBalance,
@@ -1760,7 +1820,7 @@ export default function App() {
       formattedLabel: `${monthName} de ${y}`,
       isCurrentMonth,
     };
-  }, [dbState.entries, dbState.expenses, selectedFinanceMonth, allApps]);
+  }, [dbState.entries, dbState.expenses, dbState.projectedRevenues, selectedFinanceMonth, allApps]);
 
   // Shift & Bike Diagnostics
   const shiftEval = useMemo(() => {
@@ -2503,6 +2563,52 @@ export default function App() {
     });
   };
 
+  const duplicateBikeExpense = (item: BikeExpenseItem) => {
+    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      ? dbState.bikeExpenses
+      : DEFAULT_BIKE_EXPENSES;
+
+    const newId = 'bike_' + Date.now();
+    const duplicatedItem: BikeExpenseItem = {
+      ...item,
+      id: newId,
+      name: `${item.name} (Cópia)`,
+      isCustomEdited: true,
+      lastPaidDate: undefined,
+      paidMonths: [], // A cópia nasce pendente!
+      unpaidMonths: [],
+    };
+
+    const nextList = [...currentList, duplicatedItem];
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: nextList,
+    });
+  };
+
+  const duplicateHouseholdExpense = (item: HouseholdExpenseItem) => {
+    const currentList = Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+      ? dbState.householdExpenses
+      : DEFAULT_HOUSEHOLD_EXPENSES;
+
+    const newId = 'house_' + Date.now();
+    const duplicatedItem: HouseholdExpenseItem = {
+      ...item,
+      id: newId,
+      name: `${item.name} (Cópia)`,
+      isCustomEdited: true,
+      lastPaidDate: undefined,
+      paidMonths: [], // A cópia nasce pendente!
+      unpaidMonths: [],
+    };
+
+    const nextList = [...currentList, duplicatedItem];
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: nextList,
+    });
+  };
+
   const getHouseholdExpenseMonthPayments = useCallback(
     (item: HouseholdExpenseItem, targetYM: string) => {
       const matching = (dbState.expenses || []).filter(
@@ -2525,6 +2631,94 @@ export default function App() {
     [dbState.expenses]
   );
 
+  const toggleBikeExpensePaidStatus = (itemId: string, targetYM?: string) => {
+    const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
+    const currentList = Array.isArray(dbState.bikeExpenses) && dbState.bikeExpenses.length > 0
+      ? dbState.bikeExpenses
+      : DEFAULT_BIKE_EXPENSES;
+
+    const list = currentList.map(b => {
+      if (b.id !== itemId) return b;
+      const currentPaidMonths = Array.isArray(b.paidMonths) ? [...b.paidMonths] : [];
+      const currentUnpaidMonths = Array.isArray(b.unpaidMonths) ? [...b.unpaidMonths] : [];
+
+      const { totalPaid } = getBikeExpenseMonthPayments(b, ym);
+      const currentDueInfo = getExpenseDueInfo(b, totalPaid, ym);
+      const isCurrentlyPaid = currentDueInfo.status === 'paid';
+
+      if (isCurrentlyPaid) {
+        // Estava Quitado -> Usuário quer alternar para "A Pagar"
+        const nextPaidMonths = currentPaidMonths.filter(m => m !== ym);
+        const nextUnpaidMonths = Array.from(new Set([...currentUnpaidMonths, ym]));
+        return {
+          ...b,
+          paidMonths: nextPaidMonths,
+          unpaidMonths: nextUnpaidMonths,
+          lastPaidDate: b.lastPaidDate?.startsWith(ym) ? undefined : b.lastPaidDate,
+        };
+      } else {
+        // Estava A Pagar -> Usuário quer alternar para "Quitado"
+        const nextPaidMonths = Array.from(new Set([...currentPaidMonths, ym]));
+        const nextUnpaidMonths = currentUnpaidMonths.filter(m => m !== ym);
+        return {
+          ...b,
+          paidMonths: nextPaidMonths,
+          unpaidMonths: nextUnpaidMonths,
+          lastPaidDate: todayStr(),
+        };
+      }
+    });
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      bikeExpenses: list,
+    });
+  };
+
+  const toggleHouseholdExpensePaidStatus = (itemId: string, targetYM?: string) => {
+    const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
+    const currentList = Array.isArray(dbState.householdExpenses) && dbState.householdExpenses.length > 0
+      ? dbState.householdExpenses
+      : DEFAULT_HOUSEHOLD_EXPENSES;
+
+    const list = currentList.map(h => {
+      if (h.id !== itemId) return h;
+      const currentPaidMonths = Array.isArray(h.paidMonths) ? [...h.paidMonths] : [];
+      const currentUnpaidMonths = Array.isArray(h.unpaidMonths) ? [...h.unpaidMonths] : [];
+
+      const { totalPaid } = getHouseholdExpenseMonthPayments(h, ym);
+      const currentDueInfo = getExpenseDueInfo(h, totalPaid, ym);
+      const isCurrentlyPaid = currentDueInfo.status === 'paid';
+
+      if (isCurrentlyPaid) {
+        // Estava Quitado -> Usuário quer alternar para "A Pagar"
+        const nextPaidMonths = currentPaidMonths.filter(m => m !== ym);
+        const nextUnpaidMonths = Array.from(new Set([...currentUnpaidMonths, ym]));
+        return {
+          ...h,
+          paidMonths: nextPaidMonths,
+          unpaidMonths: nextUnpaidMonths,
+          lastPaidDate: h.lastPaidDate?.startsWith(ym) ? undefined : h.lastPaidDate,
+        };
+      } else {
+        // Estava A Pagar -> Usuário quer alternar para "Quitado"
+        const nextPaidMonths = Array.from(new Set([...currentPaidMonths, ym]));
+        const nextUnpaidMonths = currentUnpaidMonths.filter(m => m !== ym);
+        return {
+          ...h,
+          paidMonths: nextPaidMonths,
+          unpaidMonths: nextUnpaidMonths,
+          lastPaidDate: todayStr(),
+        };
+      }
+    });
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      householdExpenses: list,
+    });
+  };
+
   const openNewBikePaymentModal = (item: BikeExpenseItem) => {
     setEditingEntryId(null);
     setEntryMode('gasto');
@@ -2539,7 +2733,8 @@ export default function App() {
     const fullVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
       ? item.totalCost
       : ((item as any).monthlyCost || item.monthlyAmount);
-    const remainingVal = Math.max(0, fullVal - totalPaid);
+    const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(targetYM));
+    const remainingVal = isExplicitlyUnpaid ? fullVal : Math.max(0, fullVal - totalPaid);
     const payVal = remainingVal > 0 ? remainingVal : fullVal;
 
     setExpenseAmount(payVal > 0 ? String(payVal) : '');
@@ -2692,6 +2887,137 @@ export default function App() {
       ...dbState,
       householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h })),
     });
+  };
+
+  // ================= PROJEÇÃO / FATURAMENTO FUTURO PREVISTO HANDLERS =================
+  const openNewProjectedRevenueModal = (defaultDate?: string) => {
+    setEditingProjectedId(null);
+    const targetDate = defaultDate || (() => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow.toISOString().slice(0, 10);
+    })();
+    setProjectedDate(targetDate);
+    setProjectedAmount('');
+    setProjectedDescription('');
+    setProjectedApp('Particular');
+    setProjectedNotes('');
+    setShowProjectedModal(true);
+  };
+
+  const openEditProjectedRevenueModal = (item: ProjectedRevenueItem) => {
+    setEditingProjectedId(item.id);
+    setProjectedDate(item.date);
+    setProjectedAmount(String(item.amount));
+    setProjectedDescription(item.description);
+    setProjectedApp(item.app || 'Particular');
+    setProjectedNotes(item.notes || '');
+    setShowProjectedModal(true);
+  };
+
+  const handleSaveProjectedRevenue = () => {
+    const val = parseFloat(projectedAmount.replace(',', '.'));
+    if (!val || val <= 0) {
+      alert('Por favor, informe um valor previsto válido maior que zero.');
+      return;
+    }
+    const desc = projectedDescription.trim() || 'Faturamento Previsto';
+    const dateStr = projectedDate.trim() || todayStr();
+
+    const currentList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+      ? dbState.projectedRevenues
+      : [];
+
+    let updatedList: ProjectedRevenueItem[];
+    if (editingProjectedId) {
+      updatedList = currentList.map(p =>
+        p.id === editingProjectedId
+          ? {
+              ...p,
+              date: dateStr,
+              amount: val,
+              description: desc,
+              app: projectedApp,
+              notes: projectedNotes.trim() || undefined,
+            }
+          : p
+      );
+    } else {
+      const newItem: ProjectedRevenueItem = {
+        id: 'proj_' + Date.now(),
+        date: dateStr,
+        amount: val,
+        description: desc,
+        app: projectedApp,
+        status: 'pending',
+        notes: projectedNotes.trim() || undefined,
+        createdAt: new Date().toISOString(),
+      };
+      updatedList = [newItem, ...currentList];
+    }
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      projectedRevenues: updatedList,
+    });
+
+    setShowProjectedModal(false);
+    setEditingProjectedId(null);
+  };
+
+  const handleConvertProjectedToReal = (item: ProjectedRevenueItem) => {
+    const newEntry: RideEntry = {
+      id: Date.now(),
+      date: item.date || todayStr(),
+      app: item.app || 'Particular',
+      shift: 'integral',
+      km: 0,
+      revenue: item.amount,
+      hours: 1,
+    };
+
+    const currentProjected: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+      ? dbState.projectedRevenues
+      : [];
+
+    const updatedProjected = currentProjected.map(p =>
+      p.id === item.id
+        ? { ...p, status: 'realized' as const, realizedEntryId: newEntry.id }
+        : p
+    );
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      entries: [newEntry, ...dbState.entries],
+      projectedRevenues: updatedProjected,
+    });
+  };
+
+  const handleToggleProjectedCancelled = (id: string) => {
+    const currentList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+      ? dbState.projectedRevenues
+      : [];
+    const updatedList = currentList.map(p => {
+      if (p.id !== id) return p;
+      const nextStatus = p.status === 'cancelled' ? 'pending' : 'cancelled';
+      return { ...p, status: nextStatus as 'pending' | 'cancelled' };
+    });
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      projectedRevenues: updatedList,
+    });
+  };
+
+  const handleDeleteProjectedRevenue = (id: string) => {
+    const currentList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+      ? dbState.projectedRevenues
+      : [];
+    const updatedList = currentList.filter(p => p.id !== id);
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      projectedRevenues: updatedList,
+    });
+    setDeletingProjectedId(null);
   };
 
   // ================= ADD / EDIT RIDE OR EXPENSE MODAL STATE =================
@@ -3160,7 +3486,8 @@ export default function App() {
     const fullVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
       ? item.totalCost
       : item.monthlyAmount;
-    const remainingVal = Math.max(0, fullVal - totalPaid);
+    const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(targetYM));
+    const remainingVal = isExplicitlyUnpaid ? fullVal : Math.max(0, fullVal - totalPaid);
     const payVal = remainingVal > 0 ? remainingVal : fullVal;
 
     setExpenseAmount(payVal > 0 ? String(payVal) : '');
@@ -3634,12 +3961,15 @@ export default function App() {
 
       if (expenseType === 'casa') {
         const targetHId = selectedHouseholdExpenseId;
+        const entryYM = entryDate.slice(0, 7);
         nextDb.householdExpenses = (nextDb.householdExpenses || []).map(h => {
-          if (h.id === targetHId || h.name.toLowerCase() === finalCategoryId.toLowerCase()) {
+          const isTarget = targetHId ? h.id === targetHId : h.name.toLowerCase() === finalCategoryId.toLowerCase();
+          if (isTarget) {
             const intDays = Math.max(1, Number(h.intervalDays) || 30);
             return {
               ...h,
               lastPaidDate: entryDate,
+              unpaidMonths: (h.unpaidMonths || []).filter(m => m !== entryYM),
               nextDueDate:
                 h.recurrenceType === 'interval_days'
                   ? addDaysToDateStr(entryDate, intDays)
@@ -3652,12 +3982,15 @@ export default function App() {
 
       if (expenseType === 'moto') {
         const targetBId = selectedBikeExpenseId;
+        const entryYM = entryDate.slice(0, 7);
         nextDb.bikeExpenses = (nextDb.bikeExpenses || []).map(b => {
-          if (b.id === targetBId || b.name.toLowerCase() === finalCategoryId.toLowerCase()) {
+          const isTarget = targetBId ? b.id === targetBId : b.name.toLowerCase() === finalCategoryId.toLowerCase();
+          if (isTarget) {
             const intDays = Math.max(1, Number(b.intervalDays) || 30);
             return {
               ...b,
               lastPaidDate: entryDate,
+              unpaidMonths: (b.unpaidMonths || []).filter(m => m !== entryYM),
               nextDueDate:
                 b.recurrenceType === 'interval_days'
                   ? addDaysToDateStr(entryDate, intDays)
@@ -4645,11 +4978,22 @@ export default function App() {
         e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesHouseholdExpense(e, h)
       );
       const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-      const budget = Math.max(0, Number(h.monthlyAmount) || 0);
+      const budget =
+        h.recurrenceType === 'interval_days' && h.totalCost && h.totalCost > 0
+          ? Number(h.totalCost)
+          : Math.max(0, Number(h.monthlyAmount) || 0);
       monthlyHouseholdPaid += paid;
-      const rem = Math.max(0, budget - paid);
+      const isExplicitlyUnpaid = Boolean(h.unpaidMonths && h.unpaidMonths.includes(targetFinanceYM));
+      const isPaidHouse =
+        !isExplicitlyUnpaid &&
+        (Boolean(h.paidMonths && h.paidMonths.includes(targetFinanceYM)) ||
+          Boolean(h.lastPaidDate && h.lastPaidDate.startsWith(targetFinanceYM)) ||
+          (paid >= budget && budget > 0) ||
+          (paid > 0 && budget === 0));
+
+      const rem = isPaidHouse ? 0 : isExplicitlyUnpaid ? budget : Math.max(0, budget - paid);
       monthlyHouseholdRemaining += rem;
-      if (paid >= budget && budget > 0) {
+      if (isPaidHouse) {
         householdPaidCount++;
       } else {
         householdPendingCount++;
@@ -4669,9 +5013,17 @@ export default function App() {
       const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
       const budget = (b as any).monthlyCost ?? Number(b.monthlyAmount || 0);
       monthlyBikePaid += paid;
-      const rem = Math.max(0, budget - paid);
+      const isExplicitlyUnpaid = Boolean(b.unpaidMonths && b.unpaidMonths.includes(targetFinanceYM));
+      const isPaidBike =
+        !isExplicitlyUnpaid &&
+        (Boolean(b.paidMonths && b.paidMonths.includes(targetFinanceYM)) ||
+          Boolean(b.lastPaidDate && b.lastPaidDate.startsWith(targetFinanceYM)) ||
+          (paid >= budget && budget > 0) ||
+          (paid > 0 && budget === 0));
+
+      const rem = isPaidBike ? 0 : isExplicitlyUnpaid ? budget : Math.max(0, budget - paid);
       monthlyBikeRemaining += rem;
-      if (paid >= budget && budget > 0) {
+      if (isPaidBike) {
         bikePaidCount++;
       } else {
         bikePendingCount++;
@@ -5711,7 +6063,31 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 relative">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 relative">
+          {/* Botão de Acesso Rápido ao Modal de Extrato MEI na Barra Superior */}
+          <button
+            type="button"
+            onClick={() => setShowRelatorioMeiModal(true)}
+            aria-label="Extrato MEI"
+            title="Emitir Extrato MEI (Relatório Mensal)"
+            className="p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-500/70 shadow-xs"
+          >
+            <Printer className="w-4 h-4 text-purple-400 shrink-0" />
+            <span className="hidden lg:inline text-purple-200">Extrato MEI</span>
+          </button>
+
+          {/* Botão de Acesso Rápido ao Modal de Meta Reversa na Barra Superior */}
+          <button
+            type="button"
+            onClick={() => setShowMetaReversaModal(true)}
+            aria-label="Meta Reversa"
+            title="Simulador de Meta Reversa (Custos Fixos & Metas)"
+            className="p-2 sm:px-2.5 sm:py-2 rounded-xl text-xs font-black transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center gap-1.5 border border-[#FF6A1A]/50 bg-[#FF6A1A]/10 text-[#FF6A1A] hover:bg-[#FF6A1A]/20 hover:border-[#FF6A1A] shadow-xs"
+          >
+            <Target className="w-4 h-4 text-[#FF6A1A] shrink-0" />
+            <span className="hidden lg:inline">Meta Reversa</span>
+          </button>
+
           {/* Menu Cockpit Hub (Radar de Lucro, Iniciar Turno, Extrato MEI, Meta Reversa) */}
           <div className="relative">
             <button
@@ -6518,7 +6894,8 @@ export default function App() {
                       </div>
 
                       {/* ========================================================================= */}
-                      {/* VENCIMENTO DE HOJE (CONTAS DA CASA) & IMPACTO NO SALDO ATUAL DO MOTOBOY  */}
+                      {/* VENCIMENTO DE HOJE & IMPACTO NO SALDO ATUAL DO MOTOBOY                    */}
+                      {/* REGRA: SÓ DEVE APARECER QUANDO HOUVER VENCIMENTO NO DIA, CASO CONTRÁRIO OCULTO */}
                       {/* ========================================================================= */}
                       {(() => {
                         const today = todayStr();
@@ -6530,10 +6907,10 @@ export default function App() {
                           : DEFAULT_HOUSEHOLD_EXPENSES;
                         const activeHouse = rawHouseList.filter(h => h.isActive !== false);
 
-                        // Verifica se o item já foi pago neste mês em dbState.expenses ou se tem lastPaidDate neste mês
+                        // Verifica se a conta da casa já foi paga neste mês
                         const isHousePaidThisMonth = (h: HouseholdExpenseItem) => {
                           const inExpenses = dbState.expenses.some(e => {
-                            if (!e.date || !e.date.startsWith(curMonthStr)) return false;
+                            if (!e.date || !e.date.startsWith(curMonthStr) || e.isCancelled) return false;
                             return (
                               e.householdExpenseId === h.id ||
                               (e.description && e.description.toLowerCase().includes(h.name.toLowerCase())) ||
@@ -6545,41 +6922,69 @@ export default function App() {
                           return false;
                         };
 
-                        // Contas da casa com vencimento HOJE (dia do mês ou status today)
+                        // Contas da casa com vencimento HOJE pendentes
                         const houseDueToday = activeHouse.filter(h => {
                           const due = getExpenseDueInfo(h);
                           const day = Number(h.dueDay) || 10;
                           return due.status === 'today' || day === curDay;
                         });
-
                         const pendingHouseDueToday = houseDueToday.filter(h => !isHousePaidThisMonth(h));
-                        const paidHouseDueToday = houseDueToday.filter(h => isHousePaidThisMonth(h));
 
-                        const totalAmountDueToday = pendingHouseDueToday.reduce(
-                          (sum, h) => sum + (Number(h.monthlyAmount) || Number(h.totalCost) || 0),
+                        // Despesas da moto com vencimento HOJE pendentes
+                        const rawBikeList: BikeExpenseItem[] = Array.isArray(dbState.bikeExpenses)
+                          ? dbState.bikeExpenses
+                          : DEFAULT_BIKE_EXPENSES;
+                        const activeBike = rawBikeList.filter(b => b.isActive !== false);
+
+                        const isBikePaidThisMonth = (b: BikeExpenseItem) => {
+                          const inExpenses = dbState.expenses.some(e => {
+                            if (!e.date || !e.date.startsWith(curMonthStr) || e.isCancelled) return false;
+                            return (
+                              e.bikeExpenseId === b.id ||
+                              (e.description && e.description.toLowerCase().includes(b.name.toLowerCase())) ||
+                              (e.category && e.category.toLowerCase() === b.name.toLowerCase())
+                            );
+                          });
+                          if (inExpenses) return true;
+                          if (b.lastPaidDate && b.lastPaidDate.startsWith(curMonthStr)) return true;
+                          return false;
+                        };
+
+                        const bikeDueToday = activeBike.filter(b => {
+                          const due = getExpenseDueInfo(b);
+                          const day = Number(b.dueDay) || 10;
+                          return due.status === 'today' || (b.recurrenceType === 'monthly' && day === curDay);
+                        });
+                        const pendingBikeDueToday = bikeDueToday.filter(b => !isBikePaidThisMonth(b));
+
+                        const allPendingDueToday = [
+                          ...pendingHouseDueToday.map(h => ({
+                            id: h.id,
+                            name: h.name,
+                            amount: Number(h.monthlyAmount) || Number(h.totalCost) || 0,
+                            icon: h.icon || '🏠',
+                            type: 'casa' as const,
+                            raw: h,
+                          })),
+                          ...pendingBikeDueToday.map(b => ({
+                            id: b.id,
+                            name: b.name,
+                            amount: Number(b.monthlyAmount) || Number(b.totalCost) || 0,
+                            icon: b.icon || '🏍️',
+                            type: 'moto' as const,
+                            raw: b,
+                          })),
+                        ];
+
+                        // REGRA: Se NÃO houver nenhum vencimento pendente no dia de hoje, o card fica 100% OCULTO!
+                        if (allPendingDueToday.length === 0) {
+                          return null;
+                        }
+
+                        const totalAmountDueToday = allPendingDueToday.reduce(
+                          (sum, item) => sum + item.amount,
                           0
                         );
-
-                        const hasPendingDueToday = pendingHouseDueToday.length > 0;
-                        const hasPaidDueToday = paidHouseDueToday.length > 0;
-
-                        // Próximo vencimento mais próximo caso não haja conta vencendo hoje
-                        const upcomingBills = activeHouse
-                          .map(h => {
-                            const due = getExpenseDueInfo(h);
-                            const day = Number(h.dueDay) || 10;
-                            const daysUntil = day >= curDay ? day - curDay : (30 - curDay) + day;
-                            return {
-                              item: h,
-                              daysUntil: due.daysRemaining > 0 ? due.daysRemaining : (daysUntil === 0 ? 30 : daysUntil),
-                              amount: Number(h.monthlyAmount) || Number(h.totalCost) || 0,
-                              isPaid: isHousePaidThisMonth(h),
-                            };
-                          })
-                          .filter(x => !x.isPaid && x.daysUntil > 0)
-                          .sort((a, b) => a.daysUntil - b.daysUntil);
-
-                        const nextUpcomingBill = upcomingBills[0] || null;
 
                         // Cálculos de saldo vs. vencimento de hoje
                         const isBalanceSufficient = curBalance >= totalAmountDueToday && totalAmountDueToday > 0;
@@ -6589,54 +6994,40 @@ export default function App() {
                           ? Math.min(100, Math.max(0, Math.round((Math.max(0, curBalance) / totalAmountDueToday) * 100)))
                           : 0;
 
+                        const firstPending = allPendingDueToday[0];
+
                         return (
                           <div className={`mt-3.5 p-3.5 sm:p-4 rounded-2xl border-2 transition-all shadow-md ${
-                            hasPendingDueToday
-                              ? isBalanceSufficient
-                                ? isDark ? 'bg-[#0e1713] border-emerald-500 text-slate-100' : 'bg-white border-emerald-500 text-slate-900'
-                                : isDark ? 'bg-[#15121b] border-rose-500 text-slate-100' : 'bg-white border-rose-500 text-slate-900'
-                              : hasPaidDueToday
-                              ? isDark ? 'bg-[#0f1118] border-emerald-500/50 text-slate-200' : 'bg-white border-emerald-400 text-slate-800'
-                              : isDark ? 'bg-[#0f1118] border-slate-700 text-slate-200' : 'bg-white border-slate-300 text-slate-800'
+                            isBalanceSufficient
+                              ? isDark ? 'bg-[#0e1713] border-emerald-500 text-slate-100' : 'bg-white border-emerald-500 text-slate-900'
+                              : isDark ? 'bg-[#15121b] border-rose-500 text-slate-100' : 'bg-white border-rose-500 text-slate-900'
                           }`}>
                             {/* Header do Bloco */}
                             <div className="flex items-center justify-between gap-2 flex-wrap mb-2.5">
                               <div className="flex items-center gap-2">
                                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
-                                  hasPendingDueToday
-                                    ? isBalanceSufficient
-                                      ? 'bg-emerald-600 text-white border border-emerald-700'
-                                      : 'bg-rose-600 text-white border border-rose-700 animate-pulse'
-                                    : 'bg-slate-800 text-slate-300'
+                                  isBalanceSufficient
+                                    ? 'bg-emerald-600 text-white border border-emerald-700'
+                                    : 'bg-rose-600 text-white border border-rose-700 animate-pulse'
                                 }`}>
-                                  <Home className="w-4 h-4 stroke-[2.5]" />
+                                  {firstPending?.type === 'moto' ? (
+                                    <Zap className="w-4 h-4 stroke-[2.5]" />
+                                  ) : (
+                                    <Home className="w-4 h-4 stroke-[2.5]" />
+                                  )}
                                 </div>
                                 <div>
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-xs sm:text-sm font-black tracking-tight">
-                                      {hasPendingDueToday
-                                        ? `Vencimento de Hoje (Dia ${curDay})`
-                                        : hasPaidDueToday
-                                        ? `Contas de Hoje (Dia ${curDay})`
-                                        : `Vencimentos da Casa (Dia ${curDay})`}
+                                      Vencimento de Hoje (Dia {curDay})
                                     </span>
-                                    {hasPendingDueToday ? (
-                                      isBalanceSufficient ? (
-                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs border border-emerald-700">
-                                          ✅ Saldo Suficiente
-                                        </span>
-                                      ) : (
-                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-xs border border-rose-700 animate-pulse">
-                                          🚨 Vence Hoje · Falta Completar
-                                        </span>
-                                      )
-                                    ) : hasPaidDueToday ? (
-                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs">
-                                        ✅ Paga neste Mês
+                                    {isBalanceSufficient ? (
+                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs border border-emerald-700">
+                                        ✅ Saldo Suficiente
                                       </span>
                                     ) : (
-                                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                                        Nenhuma conta hoje
+                                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-xs border border-rose-700 animate-pulse">
+                                        🚨 Vence Hoje · Falta Completar
                                       </span>
                                     )}
                                   </div>
@@ -6645,262 +7036,193 @@ export default function App() {
 
                               <button
                                 type="button"
-                                onClick={() => setShowHouseholdModal(true)}
+                                onClick={() => {
+                                  setActiveTab('billing');
+                                  if (firstPending?.type === 'moto') {
+                                    setBillingSubTab('despesas_moto');
+                                  } else {
+                                    setBillingSubTab('despesas_casa');
+                                  }
+                                }}
                                 className="text-[11px] font-black text-[#FF6A1A] hover:underline cursor-pointer flex items-center gap-1"
                               >
-                                <span>Gerenciar contas da casa</span>
+                                <span>Ver no Financeiro</span>
                                 <ArrowRight className="w-3.5 h-3.5" />
                               </button>
                             </div>
 
-                            {/* Conteúdo Se Tem Conta Pendente Vencendo Hoje */}
-                            {hasPendingDueToday ? (
-                              <div className="space-y-3">
-                                {/* Lista de Contas que Vencem Hoje */}
-                                <div className="flex flex-wrap gap-2">
-                                  {pendingHouseDueToday.map(h => (
-                                    <div
-                                      key={h.id}
-                                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-2 shadow-xs ${
-                                        isDark
-                                          ? 'bg-[#1e1319] border-rose-500/80 text-white'
-                                          : 'bg-rose-50 border-rose-500 text-slate-900'
-                                      }`}
-                                    >
-                                      <span className="text-base">{h.icon || '🏠'}</span>
-                                      <span className="font-black">{h.name}</span>
-                                      <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums bg-white dark:bg-black/50 px-1.5 py-0.5 rounded border border-rose-300 dark:border-rose-700">
-                                        {Number(h.monthlyAmount) > 0 ? fmtMoney(Number(h.monthlyAmount)) : 'A definir'}
-                                      </span>
-                                    </div>
-                                  ))}
+                            {/* Conteúdo: Contas que Vencem Hoje */}
+                            <div className="space-y-3">
+                              {/* Lista de Contas que Vencem Hoje */}
+                              <div className="flex flex-wrap gap-2">
+                                {allPendingDueToday.map(item => (
+                                  <div
+                                    key={`${item.type}_${item.id}`}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-2 shadow-xs ${
+                                      isDark
+                                        ? 'bg-[#1e1319] border-rose-500/80 text-white'
+                                        : 'bg-rose-50 border-rose-500 text-slate-900'
+                                    }`}
+                                  >
+                                    <span className="text-base">{item.icon}</span>
+                                    <span className="font-black">{item.name}</span>
+                                    <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums bg-white dark:bg-black/50 px-1.5 py-0.5 rounded border border-rose-300 dark:border-rose-700">
+                                      {item.amount > 0 ? fmtMoney(item.amount) : 'A definir'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Cards comparativos: Saldo Atual vs. Vencimento de Hoje vs. Sobra / Falta */}
+                              <div className="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
+                                {/* 1. Saldo Atual */}
+                                <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
+                                  isDark ? 'bg-[#090b12] border-slate-700' : 'bg-slate-100 border-slate-300'
+                                }`}>
+                                  <div className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-400">
+                                    1. Saldo Atual
+                                  </div>
+                                  <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
+                                    curBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                  }`}>
+                                    {fmtMoney(curBalance)}
+                                  </div>
                                 </div>
 
-                                {/* Cards comparativos: Saldo Atual vs. Vencimento de Hoje vs. Sobra / Falta (SEM TRANSPARÊNCIA) */}
-                                <div className="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
-                                  {/* 1. Saldo Atual (Fundo Sólido Opaque) */}
-                                  <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
-                                    isDark ? 'bg-[#090b12] border-slate-700' : 'bg-slate-100 border-slate-300'
+                                {/* 2. Vencimento de Hoje */}
+                                <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
+                                  isDark ? 'bg-[#090b12] border-rose-500/80' : 'bg-rose-50 border-rose-400'
+                                }`}>
+                                  <div className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400">
+                                    2. Vence Hoje
+                                  </div>
+                                  <div className="text-sm sm:text-base font-black text-rose-600 dark:text-rose-400 tabular-nums mt-1">
+                                    {totalAmountDueToday > 0 ? fmtMoney(totalAmountDueToday) : 'R$ 0,00'}
+                                  </div>
+                                </div>
+
+                                {/* 3. O Que Falta Pagar / O Que Vai Ficar */}
+                                <div className={`p-2.5 rounded-xl border-2 shadow-md ${
+                                  isBalanceSufficient
+                                    ? isDark
+                                      ? 'bg-[#0b2417] border-emerald-500 text-white'
+                                      : 'bg-emerald-100 border-emerald-600 text-emerald-950'
+                                    : isDark
+                                      ? 'bg-[#2b0d18] border-rose-500 text-white'
+                                      : 'bg-rose-100 border-rose-600 text-rose-950'
+                                }`}>
+                                  <div className={`text-[10px] font-black uppercase tracking-wider ${
+                                    isBalanceSufficient
+                                      ? 'text-emerald-700 dark:text-emerald-300'
+                                      : 'text-rose-700 dark:text-rose-300'
                                   }`}>
-                                    <div className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-400">
-                                      1. Saldo Atual
-                                    </div>
-                                    <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
-                                      curBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                                    }`}>
-                                      {fmtMoney(curBalance)}
-                                    </div>
+                                    {isBalanceSufficient ? '3. Vai Ficar (Sobra)' : '3. Falta Pagar'}
+                                  </div>
+                                  <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
+                                    isBalanceSufficient
+                                      ? 'text-emerald-600 dark:text-emerald-300'
+                                      : 'text-rose-600 dark:text-rose-300'
+                                  }`}>
+                                    {isBalanceSufficient ? fmtMoney(sobraSaldo) : fmtMoney(faltaCompletar)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Barra de Progresso e Mensagem de Diagnóstico */}
+                              {totalAmountDueToday > 0 ? (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-[11px] font-black">
+                                    <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>
+                                      Cobertura da conta com o Saldo Atual:
+                                    </span>
+                                    <span className={`tabular-nums ${isBalanceSufficient ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                      {coveragePct}% coberto
+                                    </span>
+                                  </div>
+                                  <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                    <div
+                                      className={`h-full rounded-full transition-all duration-500 ${
+                                        isBalanceSufficient ? 'bg-emerald-500' : 'bg-rose-500'
+                                      }`}
+                                      style={{ width: `${coveragePct}%` }}
+                                    />
                                   </div>
 
-                                  {/* 2. Vencimento de Hoje (Fundo Sólido Opaque com Vermelho Nítido) */}
-                                  <div className={`p-2.5 rounded-xl border-2 shadow-xs ${
-                                    isDark ? 'bg-[#090b12] border-rose-500/80' : 'bg-rose-50 border-rose-400'
-                                  }`}>
-                                    <div className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400">
-                                      2. Vence Hoje
-                                    </div>
-                                    <div className="text-sm sm:text-base font-black text-rose-600 dark:text-rose-400 tabular-nums mt-1">
-                                      {totalAmountDueToday > 0 ? fmtMoney(totalAmountDueToday) : 'R$ 0,00'}
-                                    </div>
-                                  </div>
-
-                                  {/* 3. O Que Falta Pagar / O Que Vai Ficar (SEM NENHUMA TRANSPARÊNCIA - 100% SÓLIDO) */}
-                                  <div className={`p-2.5 rounded-xl border-2 shadow-md ${
+                                  {/* Caixa de Alerta de Alto Contraste */}
+                                  <div className={`p-3 rounded-xl border-2 shadow-xs flex items-start gap-2.5 ${
                                     isBalanceSufficient
                                       ? isDark
-                                        ? 'bg-[#0b2417] border-emerald-500 text-white'
-                                        : 'bg-emerald-100 border-emerald-600 text-emerald-950'
+                                        ? 'bg-[#0c2216] border-emerald-500/80 text-white'
+                                        : 'bg-emerald-50 border-emerald-500 text-slate-900'
                                       : isDark
-                                        ? 'bg-[#2b0d18] border-rose-500 text-white'
-                                        : 'bg-rose-100 border-rose-600 text-rose-950'
+                                        ? 'bg-[#261019] border-rose-500 text-white'
+                                        : 'bg-rose-50 border-rose-500 text-slate-900'
                                   }`}>
-                                    <div className={`text-[10px] font-black uppercase tracking-wider ${
-                                      isBalanceSufficient
-                                        ? 'text-emerald-700 dark:text-emerald-300'
-                                        : 'text-rose-700 dark:text-rose-300'
-                                    }`}>
-                                      {isBalanceSufficient ? '3. Vai Ficar (Sobra)' : '3. Falta Pagar'}
-                                    </div>
-                                    <div className={`text-sm sm:text-base font-black tabular-nums mt-1 ${
-                                      isBalanceSufficient
-                                        ? 'text-emerald-600 dark:text-emerald-300'
-                                        : 'text-rose-600 dark:text-rose-300'
-                                    }`}>
-                                      {isBalanceSufficient ? fmtMoney(sobraSaldo) : fmtMoney(faltaCompletar)}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Barra de Progresso e Mensagem de Diagnóstico */}
-                                {totalAmountDueToday > 0 ? (
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between text-[11px] font-black">
-                                      <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>
-                                        Cobertura da conta com o Saldo Atual:
-                                      </span>
-                                      <span className={`tabular-nums ${isBalanceSufficient ? 'text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                                        {coveragePct}% coberto
-                                      </span>
-                                    </div>
-                                    <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                                      <div
-                                        className={`h-full rounded-full transition-all duration-500 ${
-                                          isBalanceSufficient ? 'bg-emerald-500' : 'bg-rose-500'
-                                        }`}
-                                        style={{ width: `${coveragePct}%` }}
-                                      />
-                                    </div>
-
-                                    {/* Caixa de Alerta de Alto Contraste (Texto Nítido e Legível, Sem Amarelo Apagado) */}
-                                    <div className={`p-3 rounded-xl border-2 shadow-xs flex items-start gap-2.5 ${
-                                      isBalanceSufficient
-                                        ? isDark
-                                          ? 'bg-[#0c2216] border-emerald-500/80 text-white'
-                                          : 'bg-emerald-50 border-emerald-500 text-slate-900'
-                                        : isDark
-                                          ? 'bg-[#261019] border-rose-500 text-white'
-                                          : 'bg-rose-50 border-rose-500 text-slate-900'
-                                    }`}>
+                                    {isBalanceSufficient ? (
+                                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                    ) : (
+                                      <AlertTriangle className="w-5 h-5 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
+                                    )}
+                                    <div className="text-xs leading-relaxed space-y-1">
                                       {isBalanceSufficient ? (
-                                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                        <>
+                                          <div className="font-black text-emerald-400 uppercase tracking-wide">
+                                            Saldo Suficiente para Pagar
+                                          </div>
+                                          <p className="font-medium text-slate-100 dark:text-slate-100">
+                                            Excelente! O seu saldo atual cobre integralmente a conta de hoje. Após efetuar o pagamento, ainda{' '}
+                                            <strong className="text-emerald-300 bg-emerald-950/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-500/50">
+                                              vai ficar {fmtMoney(sobraSaldo)} limpo
+                                            </strong>{' '}
+                                            no seu bolso.
+                                          </p>
+                                        </>
                                       ) : (
-                                        <AlertTriangle className="w-5 h-5 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
+                                        <>
+                                          <div className="font-black text-rose-600 dark:text-rose-400 uppercase tracking-wide flex items-center gap-1.5">
+                                            <span>Atenção ao Vencimento de Hoje</span>
+                                          </div>
+                                          <p className="font-semibold text-slate-900 dark:text-slate-100">
+                                            Para que a conta do dia seja paga integralmente,{' '}
+                                            <strong className="text-rose-700 dark:text-rose-200 bg-rose-200 dark:bg-rose-950/90 px-1.5 py-0.5 rounded border border-rose-400 dark:border-rose-500/60 font-black">
+                                              falta completar {fmtMoney(faltaCompletar)}
+                                            </strong>{' '}
+                                            faturando nas próximas corridas.
+                                          </p>
+                                        </>
                                       )}
-                                      <div className="text-xs leading-relaxed space-y-1">
-                                        {isBalanceSufficient ? (
-                                          <>
-                                            <div className="font-black text-emerald-400 uppercase tracking-wide">
-                                              Saldo Suficiente para Pagar
-                                            </div>
-                                            <p className="font-medium text-slate-100 dark:text-slate-100">
-                                              Excelente! O seu saldo atual cobre integralmente a conta de hoje. Após efetuar o pagamento, ainda{' '}
-                                              <strong className="text-emerald-300 bg-emerald-950/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded border border-emerald-500/50">
-                                                vai ficar {fmtMoney(sobraSaldo)} limpo
-                                              </strong>{' '}
-                                              no seu bolso.
-                                            </p>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <div className="font-black text-rose-600 dark:text-rose-400 uppercase tracking-wide flex items-center gap-1.5">
-                                              <span>Atenção ao Vencimento de Hoje</span>
-                                            </div>
-                                            <p className="font-semibold text-slate-900 dark:text-slate-100">
-                                              Para que a conta do dia seja paga integralmente,{' '}
-                                              <strong className="text-rose-700 dark:text-rose-200 bg-rose-200 dark:bg-rose-950/90 px-1.5 py-0.5 rounded border border-rose-400 dark:border-rose-500/60 font-black">
-                                                falta completar {fmtMoney(faltaCompletar)}
-                                              </strong>{' '}
-                                              faturando nas próximas corridas.
-                                            </p>
-                                          </>
-                                        )}
-                                      </div>
                                     </div>
                                   </div>
-                                ) : (
-                                  <div className={`p-3 rounded-xl border-2 text-xs flex items-center justify-between gap-2 ${
-                                    isDark ? 'bg-[#1b1420] border-amber-500 text-amber-200' : 'bg-amber-50 border-amber-400 text-amber-950'
-                                  }`}>
-                                    <span className="font-bold">
-                                      O valor desta conta está como <strong>R$ 0,00</strong>. Defina o valor mensal para calcular a sobra do saldo.
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const item = pendingHouseDueToday[0];
-                                        if (item) openEditHouseholdExpenseModal(item);
-                                      }}
-                                      className="px-3 py-1.5 rounded-lg bg-[#FF6A1A] text-black font-black text-xs shrink-0 cursor-pointer shadow-sm"
-                                    >
-                                      Definir Valor
-                                    </button>
-                                  </div>
-                                )}
+                                </div>
+                              ) : null}
 
-                                {/* Botão de Lançar Pagamento da Conta de Hoje */}
-                                <div className="flex items-center gap-2 pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const firstPending = pendingHouseDueToday[0];
-                                      if (firstPending) {
+                              {/* Botão de Lançar Pagamento da Conta de Hoje */}
+                              <div className="flex items-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (firstPending) {
+                                      if (firstPending.type === 'casa') {
                                         setSelectedHouseholdExpenseId(firstPending.id);
-                                        setSelectedCategory(firstPending.name);
-                                        if (firstPending.monthlyAmount > 0) {
-                                          setExpenseAmount(String(firstPending.monthlyAmount));
-                                        }
+                                        setBillingSubTab('despesas_casa');
+                                      } else {
+                                        setSelectedBikeExpenseId(firstPending.id);
+                                        setBillingSubTab('despesas_moto');
                                       }
-                                      setActiveTab('billing');
-                                    }}
-                                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all"
-                                  >
-                                    <Zap className="w-4 h-4 stroke-[2.5]" />
-                                    <span>Registrar Pagamento da Conta ({pendingHouseDueToday[0]?.name || 'Conta'})</span>
-                                  </button>
-                                </div>
+                                      setSelectedCategory(firstPending.name);
+                                      if (firstPending.amount > 0) {
+                                        setExpenseAmount(String(firstPending.amount));
+                                      }
+                                    }
+                                    setActiveTab('billing');
+                                  }}
+                                  className="flex-1 py-2.5 px-4 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all"
+                                >
+                                  <Zap className="w-4 h-4 stroke-[2.5]" />
+                                  <span>Registrar Pagamento da Conta ({firstPending?.name || 'Conta'})</span>
+                                </button>
                               </div>
-                            ) : hasPaidDueToday ? (
-                              /* Caso a conta de hoje já foi paga neste mês */
-                              <div className="text-xs space-y-1.5">
-                                <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                                  <span>
-                                    Contas com vencimento hoje (Dia {curDay}) já foram pagas neste mês:
-                                  </span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {paidHouseDueToday.map(h => (
-                                    <span
-                                      key={h.id}
-                                      className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold"
-                                    >
-                                      {h.icon || '🏠'} {h.name} ({fmtMoney(Number(h.monthlyAmount) || 0)})
-                                    </span>
-                                  ))}
-                                </div>
-                                <p className={`text-[10px] ${mutedText}`}>
-                                  Seu saldo atual de <strong>{fmtMoney(curBalance)}</strong> está livre dessas despesas hoje.
-                                </p>
-                              </div>
-                            ) : (
-                              /* Caso NÃO haja contas vencendo hoje */
-                              <div className="text-xs space-y-1">
-                                <div className="flex items-center justify-between gap-1 flex-wrap">
-                                  <span className={`text-[11px] font-semibold ${mutedText}`}>
-                                    Hoje (Dia {curDay}): Nenhuma conta da casa agendada para hoje.
-                                  </span>
-                                </div>
-                                {nextUpcomingBill ? (
-                                  <div className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-[11px] mt-1 ${
-                                    isDark ? 'bg-black/25 border-slate-800 text-slate-300' : 'bg-white border-slate-200 text-slate-800'
-                                  }`}>
-                                    <div className="flex items-center gap-1.5 truncate">
-                                      <span>{nextUpcomingBill.item.icon || '🏠'}</span>
-                                      <span className="font-bold truncate">{nextUpcomingBill.item.name}</span>
-                                      <span className={`text-[10px] ${mutedText}`}>
-                                        (Vence dia {nextUpcomingBill.item.dueDay} · em {nextUpcomingBill.daysUntil} {nextUpcomingBill.daysUntil === 1 ? 'dia' : 'dias'})
-                                      </span>
-                                    </div>
-                                    <div className="text-right shrink-0">
-                                      <span className="font-black text-[#FF6A1A] tabular-nums">
-                                        {fmtMoney(nextUpcomingBill.amount)}
-                                      </span>
-                                      <div className="text-[9px] text-slate-400">
-                                        {curBalance >= nextUpcomingBill.amount ? (
-                                          <span className="text-emerald-400 font-bold">Saldo já cobre</span>
-                                        ) : (
-                                          <span>Falta {fmtMoney(nextUpcomingBill.amount - Math.max(0, curBalance))}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <p className={`text-[10px] ${mutedText}`}>
-                                    Cadastre o dia de vencimento nas despesas da casa para acompanhar aqui.
-                                  </p>
-                                )}
-                              </div>
-                            )}
+                            </div>
                           </div>
                         );
                       })()}
@@ -8867,6 +9189,7 @@ export default function App() {
               <div className={`flex items-center gap-1 p-1 rounded-xl sm:rounded-2xl overflow-x-auto max-w-full no-scrollbar ${surfaceSubtle}`}>
                 {[
                   { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
+                  { id: 'projecao', label: '🔮 Faturamento Previsto' },
                   { id: 'despesas_moto', label: '🏍️ Despesas da Moto' },
                   { id: 'despesas_casa', label: '🏠 Despesas da Casa' },
                   { id: 'planejamento', label: 'Planejamento & IA' },
@@ -8885,84 +9208,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            {/* LEMBRETE DO DAS-MEI OTIMIZADO & COMPACTO */}
-            {(() => {
-              const today = new Date();
-              const currentDay = today.getDate();
-              const daysUntil20 = 20 - currentDay;
-              const isNearOrOver = currentDay >= 12 && currentDay <= 25;
-              const isPast20 = currentDay > 20;
-
-              return (
-                <div
-                  className={`rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all shadow-xs ${
-                    isPast20
-                      ? 'bg-amber-500/10 border-amber-500/30'
-                      : isNearOrOver
-                      ? 'bg-purple-500/10 border-purple-500/30'
-                      : surfaceSubtle
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border ${
-                        isPast20
-                          ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                          : 'bg-purple-500/20 border-purple-500/40 text-purple-400'
-                      }`}
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                      <span
-                        className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded-md ${
-                          isPast20
-                            ? 'bg-amber-500/20 text-amber-300'
-                            : daysUntil20 === 0
-                            ? '🚨 Vence Hoje (20)!'
-                            : `DAS-MEI em ${daysUntil20}d`
-                        }`}
-                      >
-                        {isPast20
-                          ? '⚠️ Venceu dia 20'
-                          : daysUntil20 === 0
-                          ? '🚨 Vence Hoje!'
-                          : `DAS-MEI dia 20 (${daysUntil20}d)`}
-                      </span>
-                      <span className="text-xs font-bold truncate">
-                        {isPast20
-                          ? 'Guia DAS-MEI deste mês venceu dia 20. Emita no Simples Nacional.'
-                          : daysUntil20 <= 5
-                          ? `Atenção: Vence ${daysUntil20 === 0 ? 'HOJE' : `em ${daysUntil20} dias`}. Mantenha seu INSS regular!`
-                          : 'Pague sua guia até o dia 20 para garantir direitos previdenciários e CNPJ regular.'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
-                    <button
-                      type="button"
-                      onClick={() => setShowRelatorioMeiModal(true)}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-600/90 hover:bg-purple-500 text-white transition-colors flex items-center gap-1 cursor-pointer"
-                      title="Emitir extrato/relatório mensal do MEI"
-                    >
-                      <Printer className="w-3 h-3" />
-                      <span>Extrato MEI</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowMetaReversaModal(true)}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black transition-colors flex items-center gap-1 cursor-pointer"
-                      title="Calcular meta reversa com base nos custos fixos"
-                    >
-                      <Target className="w-3 h-3" />
-                      <span>Meta Reversa</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
 
             {billingSubTab === 'mensal' && (
               <div className="flex flex-col gap-4 sm:gap-6">
@@ -9281,6 +9526,54 @@ export default function App() {
                       </div>
                     );
                   })()}
+                </div>
+
+                {/* CARD DE PROJEÇÃO / FATURAMENTO FUTURO PREVISTO DO MÊS */}
+                <div className={`rounded-2xl p-4 sm:p-5 border transition-all ${
+                  isDark ? 'bg-[#131622] border-sky-500/30' : 'bg-sky-50/80 border-sky-300'
+                }`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400 shrink-0">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100">
+                            Faturamento Futuro Previsto ({selectedMonthFinancials.formattedLabel})
+                          </span>
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-400 border border-sky-500/40">
+                            {selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length} agendado{selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        <p className={`text-xs mt-0.5 ${mutedText}`}>
+                          Ganhos reais ({fmtMoney(selectedMonthFinancials.totalRevenue)}) + Previsto ({fmtMoney(selectedMonthFinancials.projectedPendingRevenue)}) ={' '}
+                          <strong className="text-sky-400 font-black">
+                            Projeção Total: {fmtMoney(selectedMonthFinancials.projectedTotalRevenue)}
+                          </strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => openNewProjectedRevenueModal()}
+                        className="px-3 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black cursor-pointer transition-all flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Plus className="w-4 h-4 stroke-[2.5]" />
+                        <span>Lançar Faturamento Futuro</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingSubTab('projecao')}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold ${surfaceSubtle} hover:border-sky-500 text-sky-400 cursor-pointer transition-all flex items-center gap-1`}
+                      >
+                        <span>Ver Previsões</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 3. FAIXA OPERACIONAL RESUMIDA DO MÊS */}
@@ -9773,6 +10066,505 @@ export default function App() {
               </div>
             )}
 
+            {/* ================= SUB-ABA: FATURAMENTO FUTURO PREVISTO & PROJEÇÃO ================= */}
+            {billingSubTab === 'projecao' && (
+              <div className="flex flex-col gap-4 sm:gap-6">
+                {/* 1. TOPO: APRESENTAÇÃO & BOTÃO DE LANÇAMENTO */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard} border shadow-sm`}>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-xl shrink-0 text-sky-400">
+                          🔮
+                        </span>
+                        <h2 className="text-base sm:text-xl font-black">
+                          Faturamento Futuro Previsto & Projeção
+                        </h2>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/30">
+                          Corridas Agendadas, Metas & Fixos
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-1 max-w-2xl ${mutedText}`}>
+                        Lance suas corridas particulares agendadas, fretes programados, metas de dias específicos ou fixos semanais. Ao concluir o serviço, converta em ganho real com 1 clique!
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => openNewProjectedRevenueModal()}
+                      className="px-4 py-2.5 rounded-xl bg-[#FF6A1A] hover:bg-[#ff7b33] text-black text-xs sm:text-sm font-black cursor-pointer flex items-center justify-center gap-2 shadow-md transition-all shrink-0 active:scale-95"
+                    >
+                      <Plus className="w-4 h-4 stroke-[2.5]" />
+                      <span>+ Lançar Faturamento Previsto</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. BARRA DE NAVEGAÇÃO DE MÊS DA PROJEÇÃO */}
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 ${surfaceCard} shadow-sm border`}>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm sm:text-base font-black flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4 text-sky-400" />
+                          <span>Mês de Projeção: {selectedMonthFinancials.formattedLabel}</span>
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                            selectedMonthFinancials.isCurrentMonth
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                          }`}
+                        >
+                          {selectedMonthFinancials.isCurrentMonth ? 'Mês Atual' : 'Competência Selecionada'}
+                        </span>
+                      </div>
+                      <p className={`text-xs mt-0.5 ${mutedText}`}>
+                        Acompanhe quanto você já faturou e quanto ainda tem previsto para entrar neste mês
+                      </p>
+                    </div>
+
+                    {/* Controles de Navegação */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                          const d = new Date(y, m - 2, 1);
+                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                        }}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        title="Mês Anterior"
+                      >
+                        <ChevronRight className="w-4 h-4 rotate-180" />
+                        <span className="hidden sm:inline">Anterior</span>
+                      </button>
+
+                      <div className="relative">
+                        <select
+                          value={selectedFinanceMonth}
+                          onChange={e => setSelectedFinanceMonth(e.target.value)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none pr-8 ${inputSurface}`}
+                        >
+                          {availableFinanceMonths.map(ym => {
+                            const [y, m] = ym.split('-');
+                            const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+                            const now = new Date();
+                            const nowYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                            return (
+                              <option key={ym} value={ym}>
+                                {name} de {y} {ym === nowYM ? '· (Atual)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-70" />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                          const d = new Date(y, m, 1);
+                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                        }}
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 ${surfaceSubtle} hover:border-[#FF6A1A]`}
+                        title="Próximo Mês"
+                      >
+                        <span className="hidden sm:inline">Próximo</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+
+                      {!selectedMonthFinancials.isCurrentMonth && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const now = new Date();
+                            setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                          }}
+                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 text-[#FF6A1A] hover:bg-[#FF6A1A]/25 border border-[#FF6A1A]/30 cursor-pointer transition-colors"
+                        >
+                          Ir p/ Mês Atual
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. OS 4 CARDS DE MÉTRICAS DA PROJEÇÃO */}
+                {(() => {
+                  const totalExpensesMonth = (financialIntelligence.monthlyBikeCostsTotal || 0) + (financialIntelligence.monthlyHouseholdCost || 0);
+                  const lucroProjetado = selectedMonthFinancials.projectedTotalRevenue - totalExpensesMonth;
+                  const cobriuDespesas = selectedMonthFinancials.projectedTotalRevenue >= totalExpensesMonth && totalExpensesMonth > 0;
+
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                      {/* Card 1: Previsto a Receber */}
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                        isDark ? 'bg-[#101422] border-sky-500/40' : 'bg-sky-50 border-sky-300'
+                      }`}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-sky-400">
+                              1. Previsto a Receber
+                            </span>
+                            <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                              {selectedMonthFinancials.projectedList.filter(p => p.status === 'pending').length} agendados
+                            </span>
+                          </div>
+                          <div className="text-xl sm:text-2xl font-black tabular-nums text-sky-400 mt-1">
+                            {fmtMoney(selectedMonthFinancials.projectedPendingRevenue)}
+                          </div>
+                        </div>
+                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                          Ganhos futuros aguardando realização
+                        </div>
+                      </div>
+
+                      {/* Card 2: Faturamento Já Realizado */}
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${surfaceCard}`}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
+                              2. Já Realizado no Mês
+                            </span>
+                            <span className="text-[10px] font-bold text-[#FF6A1A] bg-[#FF6A1A]/10 px-1.5 py-0.5 rounded">
+                              {selectedMonthFinancials.entries.length} corridas
+                            </span>
+                          </div>
+                          <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] mt-1">
+                            {fmtMoney(selectedMonthFinancials.totalRevenue)}
+                          </div>
+                        </div>
+                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                          Corridas e ganhos confirmados
+                        </div>
+                      </div>
+
+                      {/* Card 3: Projeção Total do Mês (Real + Previsto) */}
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                        isDark ? 'bg-[#0f1b16] border-emerald-500/40' : 'bg-emerald-50 border-emerald-300'
+                      }`}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                              3. Projeção Total
+                            </span>
+                            <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                              Real + Previsto
+                            </span>
+                          </div>
+                          <div className="text-xl sm:text-2xl font-black tabular-nums text-emerald-400 mt-1">
+                            {fmtMoney(selectedMonthFinancials.projectedTotalRevenue)}
+                          </div>
+                        </div>
+                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                          Potencial de faturamento do mês
+                        </div>
+                      </div>
+
+                      {/* Card 4: Balanço Projetado vs. Despesas do Mês */}
+                      <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border ${
+                        lucroProjetado >= 0
+                          ? isDark ? 'bg-emerald-950/20 border-emerald-500/40' : 'bg-emerald-100/50 border-emerald-300'
+                          : isDark ? 'bg-rose-950/20 border-rose-500/40' : 'bg-rose-100/50 border-rose-300'
+                      }`}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                              4. Lucro Limpo Projetado
+                            </span>
+                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                              cobriuDespesas ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                            }`}>
+                              {cobriuDespesas ? '✅ Cobre Contas' : '⏳ A Cobrir'}
+                            </span>
+                          </div>
+                          <div className={`text-xl sm:text-2xl font-black tabular-nums mt-1 ${
+                            lucroProjetado >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {fmtMoney(lucroProjetado)}
+                          </div>
+                        </div>
+                        <div className={`mt-3 pt-2.5 border-t border-slate-800/40 text-[11px] font-semibold ${mutedText}`}>
+                          Após pagar R$ {fmtMoney(totalExpensesMonth).replace('R$', '').trim()} (Casa + Moto)
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 4. BARRA DE FILTROS DE STATUS DAS PREVISÕES */}
+                {(() => {
+                  const rawList: ProjectedRevenueItem[] = Array.isArray(dbState.projectedRevenues)
+                    ? dbState.projectedRevenues
+                    : [];
+
+                  // Previsões da competência do mês selecionado
+                  const monthList = rawList.filter(p => p.date && p.date.startsWith(selectedFinanceMonth));
+
+                  const pendingCount = monthList.filter(p => p.status === 'pending').length;
+                  const realizedCount = monthList.filter(p => p.status === 'realized').length;
+                  const cancelledCount = monthList.filter(p => p.status === 'cancelled').length;
+
+                  // Filtra conforme status selecionado
+                  const displayedList = monthList.filter(p => {
+                    if (projectedStatusFilter === 'all') return true;
+                    return p.status === projectedStatusFilter;
+                  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+                  const today = todayStr();
+
+                  return (
+                    <div className="space-y-3">
+                      {/* Filtros em Pílulas */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {[
+                            { id: 'all', label: 'Todas as Previsões', count: monthList.length },
+                            { id: 'pending', label: '⏳ Pendentes', count: pendingCount },
+                            { id: 'realized', label: '✅ Recebidas / Realizadas', count: realizedCount },
+                            { id: 'cancelled', label: '🚫 Canceladas', count: cancelledCount },
+                          ].map(f => (
+                            <button
+                              key={f.id}
+                              type="button"
+                              onClick={() => setProjectedStatusFilter(f.id as any)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                                projectedStatusFilter === f.id
+                                  ? 'bg-sky-500 text-black font-black border-sky-400 shadow-xs'
+                                  : `${surfaceSubtle} ${mutedText} hover:text-white border-transparent`
+                              }`}
+                            >
+                              <span>{f.label}</span>
+                              <span className="ml-1.5 opacity-80 font-normal">({f.count})</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => openNewProjectedRevenueModal()}
+                          className="px-3 py-1.5 rounded-xl text-xs font-black bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/40 transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Nova Previsão</span>
+                        </button>
+                      </div>
+
+                      {/* 5. LISTA DE CARDS DE FATURAMENTO PREVISTO */}
+                      {displayedList.length === 0 ? (
+                        <div className={`p-8 text-center rounded-2xl border-2 border-dashed ${
+                          isDark ? 'border-slate-800 bg-slate-900/30' : 'border-slate-300 bg-slate-50'
+                        }`}>
+                          <div className="w-12 h-12 rounded-2xl bg-sky-500/10 text-sky-400 mx-auto flex items-center justify-center text-2xl mb-3">
+                            🔮
+                          </div>
+                          <div className="text-sm font-black text-slate-800 dark:text-slate-200">
+                            Nenhum faturamento futuro previsto encontrado para {selectedMonthFinancials.formattedLabel}
+                          </div>
+                          <p className={`text-xs mt-1 max-w-md mx-auto ${mutedText}`}>
+                            Tem uma corrida particular agendada? Um frete programado? Ou quer estipular uma meta de faturamento para um dia específico? Lance agora para calcular seu lucro projetado!
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => openNewProjectedRevenueModal()}
+                            className="mt-4 px-4 py-2 rounded-xl text-xs font-black bg-[#FF6A1A] hover:bg-[#ff7b33] text-black cursor-pointer shadow-md inline-flex items-center gap-1.5"
+                          >
+                            <Plus className="w-4 h-4 stroke-[2.5]" />
+                            <span>Lançar Primeiro Faturamento Previsto</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                          {displayedList.map(item => {
+                            const daysDiff = calculateDaysDifference(today, item.date);
+                            const isToday = item.date === today;
+                            const isPast = item.date < today;
+                            const isCancelled = item.status === 'cancelled';
+                            const isRealized = item.status === 'realized';
+                            const isPending = item.status === 'pending';
+
+                            return (
+                              <div
+                                key={item.id}
+                                className={`rounded-2xl p-4 sm:p-5 border-2 transition-all flex flex-col justify-between gap-3 shadow-xs ${
+                                  isRealized
+                                    ? isDark
+                                      ? 'bg-emerald-950/20 border-emerald-500/40 text-slate-100'
+                                      : 'bg-emerald-50 border-emerald-400 text-slate-900'
+                                    : isCancelled
+                                    ? isDark
+                                      ? 'bg-slate-900/40 border-slate-800 opacity-60 text-slate-400'
+                                      : 'bg-slate-100 border-slate-300 opacity-60 text-slate-500'
+                                    : isToday
+                                    ? isDark
+                                      ? 'bg-amber-950/20 border-amber-500/80 text-white'
+                                      : 'bg-amber-50 border-amber-400 text-slate-900'
+                                    : isDark
+                                    ? 'bg-[#121522] border-sky-500/30 text-white'
+                                    : 'bg-white border-sky-200 text-slate-900'
+                                }`}
+                              >
+                                {/* Header do Card: App, Descrição, Data & Status */}
+                                <div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-base font-black border ${
+                                        isRealized
+                                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                                          : isCancelled
+                                          ? 'bg-slate-800 border-slate-700 text-slate-400'
+                                          : 'bg-sky-500/20 border-sky-500/40 text-sky-400'
+                                      }`}>
+                                        {item.app === 'iFood'
+                                          ? '🔴'
+                                          : item.app === '99Moto'
+                                          ? '🟡'
+                                          : item.app === 'Uber Flash'
+                                          ? '⚫'
+                                          : item.app === 'Rappi'
+                                          ? '🟠'
+                                          : item.app === 'Frete'
+                                          ? '📦'
+                                          : '🛵'}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className={`text-xs sm:text-sm font-black truncate ${isCancelled ? 'line-through' : ''}`}>
+                                            {item.description}
+                                          </span>
+                                          {item.app && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-700/40">
+                                              {item.app}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] font-bold flex-wrap">
+                                          <span className="text-slate-400">
+                                            📅 {formatPtBrDate(item.date)}
+                                          </span>
+                                          {isPending && (
+                                            isToday ? (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                                🚨 Hoje
+                                              </span>
+                                            ) : daysDiff === 1 ? (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                                📅 Amanhã
+                                              </span>
+                                            ) : daysDiff > 1 ? (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-500/15 text-slate-300">
+                                                em {daysDiff} dias
+                                              </span>
+                                            ) : isPast ? (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                                ⚠️ Data passou
+                                              </span>
+                                            ) : null
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Status Badge */}
+                                    <div className="shrink-0 text-right">
+                                      {isRealized ? (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                          ✅ Recebido
+                                        </span>
+                                      ) : isCancelled ? (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-slate-800 text-slate-400 border border-slate-700">
+                                          🚫 Cancelado
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-sky-500/20 text-sky-400 border border-sky-500/40">
+                                          ⏳ Previsto
+                                        </span>
+                                      )}
+                                      <div className={`text-base sm:text-lg font-black tabular-nums mt-1 ${
+                                        isCancelled
+                                          ? 'line-through text-slate-500'
+                                          : isRealized
+                                          ? 'text-emerald-400'
+                                          : 'text-[#FF6A1A]'
+                                      }`}>
+                                        {fmtMoney(item.amount)}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {item.notes && (
+                                    <div className={`mt-2 p-2 rounded-xl text-xs font-medium ${surfaceSubtle}`}>
+                                      <span className={mutedText}>Obs: </span>
+                                      <span>{item.notes}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Rodapé com Ações Rápidas */}
+                                <div className="pt-2.5 border-t border-slate-800/40 flex items-center justify-between gap-2 flex-wrap">
+                                  {isPending && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConvertProjectedToReal(item)}
+                                      className="py-1.5 px-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer transition-colors flex items-center gap-1.5 shadow-xs"
+                                      title="Confirmar que o ganho foi recebido e lançar nos seus ganhos reais do mês"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>Confirmar Recebimento (Lançar Ganho)</span>
+                                    </button>
+                                  )}
+
+                                  {isRealized && (
+                                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>Já computado no seu faturamento real</span>
+                                    </span>
+                                  )}
+
+                                  <div className="flex items-center gap-1.5 ml-auto">
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditProjectedRevenueModal(item)}
+                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:text-white cursor-pointer transition-colors`}
+                                      title="Editar previsão"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleProjectedCancelled(item.id)}
+                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} ${
+                                        isCancelled ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-400 hover:text-white'
+                                      } cursor-pointer transition-colors`}
+                                      title={isCancelled ? 'Reativar previsão' : 'Anular previsão'}
+                                    >
+                                      {isCancelled ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteProjectedRevenue(item.id)}
+                                      className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-rose-400 hover:text-rose-300 cursor-pointer transition-colors`}
+                                      title="Excluir previsão"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             {/* ================= SUB-ABA: DESPESAS DA MOTO & CUSTOS OPERACIONAIS ================= */}
             {billingSubTab === 'despesas_moto' && (
               <div className="flex flex-col gap-4 sm:gap-6">
@@ -10102,7 +10894,8 @@ export default function App() {
                           const monthlyCost = (item as any).monthlyCost ?? Number(item.monthlyAmount || 0);
                           const totalCost = (item as any).totalCost ?? (item.totalCost || monthlyCost);
                           const expectedVal = item.recurrenceType === 'interval_days' && totalCost > 0 ? totalCost : monthlyCost;
-                          const remainingVal = Math.max(0, expectedVal - totalPaid);
+                          const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(selectedFinanceMonth || todayStr().slice(0, 7)));
+                          const remainingVal = isExplicitlyUnpaid ? expectedVal : Math.max(0, expectedVal - totalPaid);
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
@@ -10149,11 +10942,18 @@ export default function App() {
                                             A cada {item.intervalDays} dias
                                           </span>
                                         )}
-                                        {isPaid && (
-                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                                            ✓ Quitado
-                                          </span>
-                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleBikeExpensePaidStatus(item.id, selectedFinanceMonth)}
+                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border ${
+                                            isPaid
+                                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+                                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                                          }`}
+                                          title={isPaid ? 'Quitado no mês. Clique para alternar para pendente' : 'Pendente no mês. Clique para marcar como quitado'}
+                                        >
+                                          {isPaid ? '✓ Quitado' : '⏳ A Pagar'}
+                                        </button>
                                       </div>
                                     </div>
                                   </div>
@@ -10218,23 +11018,23 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Ações: Lançar Gasto, Editar e Excluir */}
+                              {/* Ações: Lançar Gasto, Duplicar, Editar e Excluir */}
                               <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-800/30">
                                 {isPaid ? (
                                   <button
                                     type="button"
-                                    onClick={() => openNewBikePaymentModal(item)}
-                                    className="p-1.5 rounded-lg text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1 transition-colors"
-                                    title="Esta despesa já foi quitada neste mês. Clique para lançar outro pagamento"
+                                    onClick={() => duplicateBikeExpense(item)}
+                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-black bg-sky-500/15 border border-sky-500/40 text-sky-400 hover:bg-sky-500/25 cursor-pointer flex items-center gap-1.5 transition-all shadow-xs active:scale-95"
+                                    title="Despesa quitada no mês. Clique para duplicar esta despesa e criar uma nova"
                                   >
-                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    <span>✓ Quitado (+ Lançar Outro)</span>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Duplicar Despesa</span>
                                   </button>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => openNewBikePaymentModal(item)}
-                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
                                     title="Registrar pagamento ou compra desta peça como gasto real"
                                   >
                                     <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -10244,11 +11044,11 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => openEditBikeExpenseModal(item)}
-                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] cursor-pointer flex items-center gap-1`}
-                                  title="Editar prazo, ciclo de dias e valor desta despesa"
+                                  className={`p-1.5 sm:p-2 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-[#FF6A1A] text-[#FF6A1A] cursor-pointer flex items-center justify-center transition-colors`}
+                                  title="Editar despesa da moto"
+                                  aria-label="Editar"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Editar</span>
                                 </button>
                                 {deletingBikeId === item.id ? (
                                   <div className="flex items-center gap-1 animate-in fade-in duration-150">
@@ -10262,7 +11062,7 @@ export default function App() {
                                       title="Confirmar exclusão desta despesa"
                                     >
                                       <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                                      <span>Sim, Excluir</span>
+                                      <span>Sim</span>
                                     </button>
                                     <button
                                       type="button"
@@ -10270,18 +11070,18 @@ export default function App() {
                                       className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
                                       title="Cancelar"
                                     >
-                                      Cancelar
+                                      ✕
                                     </button>
                                   </div>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => setDeletingBikeId(item.id)}
-                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
-                                    title="Excluir esta despesa"
+                                    className={`p-1.5 sm:p-2 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center justify-center transition-colors`}
+                                    title="Excluir despesa da moto"
+                                    aria-label="Excluir"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
-                                    <span>Excluir</span>
                                   </button>
                                 )}
                               </div>
@@ -10700,7 +11500,8 @@ export default function App() {
                           const expectedVal = item.recurrenceType === 'interval_days' && item.totalCost && item.totalCost > 0
                             ? item.totalCost
                             : Number(item.monthlyAmount || 0);
-                          const remainingVal = Math.max(0, expectedVal - totalPaid);
+                          const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(selectedFinanceMonth || todayStr().slice(0, 7)));
+                          const remainingVal = isExplicitlyUnpaid ? expectedVal : Math.max(0, expectedVal - totalPaid);
                           const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
@@ -10748,11 +11549,18 @@ export default function App() {
                                             A cada {item.intervalDays} dias
                                           </span>
                                         )}
-                                        {isPaid && (
-                                          <span className="inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                                            ✓ Quitado
-                                          </span>
-                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleHouseholdExpensePaidStatus(item.id, selectedFinanceMonth)}
+                                          className={`inline-block text-[10px] font-black px-1.5 py-0.5 rounded-md cursor-pointer transition-colors border ${
+                                            isPaid
+                                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+                                              : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                                          }`}
+                                          title={isPaid ? 'Quitado no mês. Clique para alternar para pendente' : 'Pendente no mês. Clique para marcar como quitado'}
+                                        >
+                                          {isPaid ? '✓ Quitado' : '⏳ A Pagar'}
+                                        </button>
                                       </div>
                                     </div>
                                   </div>
@@ -10814,18 +11622,18 @@ export default function App() {
                                 {isPaid ? (
                                   <button
                                     type="button"
-                                    onClick={() => openNewHouseholdPaymentModal(item)}
-                                    className="p-1.5 rounded-lg text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1 transition-colors"
-                                    title="Esta conta já foi quitada neste mês. Clique para lançar outro pagamento"
+                                    onClick={() => duplicateHouseholdExpense(item)}
+                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-black bg-sky-500/15 border border-sky-500/40 text-sky-400 hover:bg-sky-500/25 cursor-pointer flex items-center gap-1.5 transition-all shadow-xs active:scale-95"
+                                    title="Conta quitada no mês. Clique para duplicar esta conta e criar uma nova"
                                   >
-                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    <span>✓ Quitado (+ Lançar Outro)</span>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Duplicar Despesa</span>
                                   </button>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => openNewHouseholdPaymentModal(item)}
-                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-emerald-500 text-emerald-400 cursor-pointer flex items-center gap-1`}
+                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
                                     title="Registrar pagamento desta conta como gasto real"
                                   >
                                     <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -10835,11 +11643,11 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => openEditHouseholdExpenseModal(item)}
-                                  className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-blue-500 text-blue-400 cursor-pointer flex items-center gap-1`}
+                                  className={`p-1.5 sm:p-2 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-blue-500 text-blue-400 cursor-pointer flex items-center justify-center transition-colors`}
                                   title="Editar prazo, ciclo de dias e valor desta conta"
+                                  aria-label="Editar"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Editar</span>
                                 </button>
                                 {deletingHouseholdId === item.id ? (
                                   <div className="flex items-center gap-1 animate-in fade-in duration-150">
@@ -10853,7 +11661,7 @@ export default function App() {
                                       title="Confirmar exclusão desta conta"
                                     >
                                       <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                                      <span>Sim, Excluir</span>
+                                      <span>Sim</span>
                                     </button>
                                     <button
                                       type="button"
@@ -10861,18 +11669,18 @@ export default function App() {
                                       className={`px-2 py-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} text-slate-300 hover:text-white cursor-pointer`}
                                       title="Cancelar"
                                     >
-                                      Cancelar
+                                      ✕
                                     </button>
                                   </div>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => setDeletingHouseholdId(item.id)}
-                                    className={`p-1.5 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center gap-1`}
+                                    className={`p-1.5 sm:p-2 rounded-lg text-xs font-bold ${surfaceSubtle} hover:border-rose-500 text-rose-400 cursor-pointer flex items-center justify-center transition-colors`}
                                     title="Excluir esta conta"
+                                    aria-label="Excluir"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
-                                    <span>Excluir</span>
                                   </button>
                                 )}
                               </div>
@@ -17543,7 +18351,272 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL GLOBAL DA CALCULADORA INTELIGENTE */}
+      {/* MODAL DE ADICIONAR / EDITAR FATURAMENTO FUTURO PREVISTO */}
+      {showProjectedModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          onClick={() => setShowProjectedModal(false)}
+        >
+          <div
+            className={`w-full max-w-lg rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl border ${surfaceCard} my-auto animate-in fade-in zoom-in-95 duration-200`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-sky-500/15 border border-sky-500/40 flex items-center justify-center text-sky-400 text-xl shrink-0">
+                  🔮
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-sky-400">
+                    Projeção Financeira
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black leading-tight text-slate-900 dark:text-white">
+                    {editingProjectedId ? 'Editar Faturamento Previsto' : 'Lançar Faturamento Futuro'}
+                  </h3>
+                  <p className={`text-xs mt-0.5 ${mutedText}`}>
+                    Ganhos que você planeja receber ou corridas já agendadas
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProjectedModal(false)}
+                className={`p-2 rounded-xl shrink-0 cursor-pointer ${surfaceSubtle} hover:text-white`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-4">
+              {/* 1. Data Prevista */}
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Data Prevista do Recebimento:
+                </label>
+                <input
+                  type="date"
+                  value={projectedDate}
+                  onChange={e => setProjectedDate(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                />
+                {/* Atalhos Rápidos de Data */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setProjectedDate(todayStr())}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Hoje
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 1);
+                      setProjectedDate(d.toISOString().slice(0, 10));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Amanhã
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      const day = d.getDay();
+                      const diff = (5 - day + 7) % 7 || 7; // Próxima Sexta
+                      d.setDate(d.getDate() + diff);
+                      setProjectedDate(d.toISOString().slice(0, 10));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Sexta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      const day = d.getDay();
+                      const diff = (6 - day + 7) % 7 || 7; // Próximo Sábado
+                      d.setDate(d.getDate() + diff);
+                      setProjectedDate(d.toISOString().slice(0, 10));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Sábado
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      const day = d.getDay();
+                      const diff = (0 - day + 7) % 7 || 7; // Próximo Domingo
+                      d.setDate(d.getDate() + diff);
+                      setProjectedDate(d.toISOString().slice(0, 10));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    Domingo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 7);
+                      setProjectedDate(d.toISOString().slice(0, 10));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                  >
+                    +7 dias
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Valor Previsto */}
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Valor Previsto a Receber (R$):
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="1"
+                  placeholder="0,00"
+                  value={projectedAmount}
+                  onChange={e => setProjectedAmount(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-base font-black tabular-nums outline-none text-[#FF6A1A] ${inputSurface}`}
+                />
+                {/* Valores Rápidos */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                  {[50, 100, 150, 200, 250, 300, 500].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setProjectedAmount(String(val))}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#FF6A1A]/10 text-[#FF6A1A] border border-[#FF6A1A]/30 hover:bg-[#FF6A1A]/20 cursor-pointer"
+                    >
+                      R$ {val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Descrição / Motivo */}
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Descrição da Previsão:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Entrega agendada Loja X, Turno Domingo, etc."
+                  value={projectedDescription}
+                  onChange={e => setProjectedDescription(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                />
+                {/* Sugestões Rápidas */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                  {[
+                    'Entrega Agendada',
+                    'Turno Fim de Semana',
+                    'Frete Particular',
+                    'Fixo Semanal',
+                    'Meta do Dia',
+                  ].map(sug => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => setProjectedDescription(sug)}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4. Aplicativo / Origem */}
+              <div>
+                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
+                  Canal / Aplicativo de Origem:
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { id: 'Particular', name: 'Particular', icon: '🛵' },
+                    { id: 'iFood', name: 'iFood', icon: '🔴' },
+                    { id: '99Moto', name: '99Moto', icon: '🟡' },
+                    { id: 'Uber Flash', name: 'Uber Flash', icon: '⚫' },
+                    { id: 'Rappi', name: 'Rappi', icon: '🟠' },
+                    { id: 'Frete', name: 'Frete', icon: '📦' },
+                    { id: 'Fixo', name: 'Fixo Semanal', icon: '💼' },
+                    { id: 'Outro', name: 'Outro', icon: '✨' },
+                  ].map(app => (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => setProjectedApp(app.id)}
+                      className={`p-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer border transition-all ${
+                        projectedApp === app.id
+                          ? 'bg-sky-500/20 border-sky-400 text-sky-300 scale-102'
+                          : `${surfaceSubtle} border-transparent hover:border-slate-700`
+                      }`}
+                    >
+                      <span className="text-base">{app.icon}</span>
+                      <span className="text-[10px] truncate max-w-full">{app.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 5. Observações Opcionais */}
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Observações (Opcional):
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Detalhes do trajeto, horário ou notas adicionais..."
+                  value={projectedNotes}
+                  onChange={e => setProjectedNotes(e.target.value)}
+                  className={`w-full px-3.5 py-2 rounded-xl text-xs font-medium outline-none resize-none ${inputSurface}`}
+                />
+              </div>
+            </div>
+
+            {/* Rodapé do Modal */}
+            <div className="flex items-center gap-2.5 pt-3 border-t border-slate-800/40">
+              {editingProjectedId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDeleteProjectedRevenue(editingProjectedId);
+                    setShowProjectedModal(false);
+                  }}
+                  className="py-3 px-3.5 rounded-xl text-xs font-black bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/25 cursor-pointer flex items-center gap-1.5 transition-colors shrink-0"
+                  title="Excluir previsão"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Excluir</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowProjectedModal(false)}
+                className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProjectedRevenue}
+                className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+              >
+                <Check className="w-4 h-4 stroke-[2.5]" />
+                <span>Salvar Faturamento Previsto</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <QuickCalculatorModal
         isOpen={quickCalcState.isOpen}
         title={quickCalcState.title}
