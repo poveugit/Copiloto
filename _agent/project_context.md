@@ -406,3 +406,16 @@
   - Testes automatizados (`npx tsx`): `verify_gps_odometer.ts` (**5/5** cenários: deriva parado, torre celular inicial, rota em L 1 km a 1 Hz, passos curtos de 4,5 m sem perda e recuperação pós-túnel/idle decay), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**).
   - Compilação Java Android (`.\gradlew.bat compileReleaseJavaWithJavac` com Adoptium JDK 21): `BUILD SUCCESSFUL in 1m 15s`.
   - **APK Release (12/11/2026 20:29)**: `npm run build` (`3.11s`), `npx cap sync android` (`2.1s`) e `.\gradlew.bat assembleRelease` (`BUILD SUCCESSFUL in 3m 1s`) -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.901` bytes / `4,37 MB`), assinado com `release-key.jks`.
+
+## Saldo Líquido com Centavos no Painel e Botões Flutuantes Circulares (12/11/2026)
+- **Saldo Líquido com Centavos (`src/App.tsx`)**:
+  - Adicionado `fmtMoneyWithOptionalCents(v)` (linhas 1106–1116) que exibe exatamente 2 casas decimais (`R$ 1.250,45`) quando houver centavos (`Math.round(Math.abs(num) * 100) % 100 !== 0`) e 0 casas decimais para valores inteiros exatos (`R$ 1.250`).
+  - Atualizado o destaque de `Saldo Atual do Motoboy` no Painel (`AnimatedNumber` de `curBalance`) para usar `fmtCurrencyExact` durante toda a animação quando `curBalance` possuir centavos (evitando saltos de layout no frame final) e `fmtMoney` quando inteiro, além de `fmtMoneyWithOptionalCents(Math.max(0, curBalance))` na legenda da barra de reserva logo abaixo.
+- **Botões Flutuantes Circulares (`src/App.tsx`)**:
+  - Removidos os rótulos de texto (`Voz` / `Ouvindo...` e `Novo Registro` / `Fechar`) dos dois botões flutuantes no canto inferior direito.
+  - Convertidos os dois botões (Ditar por Voz e `+` / Cockpit de Registros) para botões circulares simétricos (`w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full flex items-center justify-center shrink-0`), mantendo o ícone `<Mic />` e o ícone `<Plus />` (com rotação suave `rotate-45` ao abrir).
+- **Validação e APK Release**:
+  - `npx tsc --noEmit`: 0 erros.
+  - `npm run build`: `dist/` gerado em `5.42s`.
+  - Testes automatizados (`npx tsx` / `node`): `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**), `verify_expense_deletion.ts` (**6/6**) e verificação de `fmtMoneyWithOptionalCents` (**8/8** cenários).
+  - `npx cap sync android` (`3.267s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 2m` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.965` bytes, `12/11/2026 21:48:39`), assinado com `release-key.jks`.

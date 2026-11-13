@@ -1103,6 +1103,18 @@ function fmtMoney(v: number): string {
   return 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+function fmtMoneyWithOptionalCents(v: number): string {
+  const num = Number.isFinite(v) ? v : 0;
+  const hasCents = Math.round(Math.abs(num) * 100) % 100 !== 0;
+  return (
+    'R$ ' +
+    num.toLocaleString('pt-BR', {
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: hasCents ? 2 : 0,
+    })
+  );
+}
+
 function fmtCurrencyExact(v: number): string {
   return 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -7201,8 +7213,12 @@ export default function App() {
                         <div className="mt-1 flex items-baseline gap-2 flex-wrap">
                           <AnimatedNumber
                             value={curBalance}
-                            formatter={fmtMoney}
-                            className={`text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight ${
+                            formatter={v =>
+                              Math.round(Math.abs(curBalance || 0) * 100) % 100 !== 0
+                                ? fmtCurrencyExact(v)
+                                : fmtMoney(v)
+                            }
+                            className={`text-3xl min-[380px]:text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight ${
                               isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                             }`}
                           />
@@ -7539,7 +7555,7 @@ export default function App() {
                           />
                         </div>
                         <div className={`flex items-center justify-between text-[10px] font-bold mt-2 tabular-nums ${mutedText}`}>
-                          <span>Saldo: {fmtMoney(Math.max(0, curBalance))}</span>
+                          <span>Saldo: {fmtMoneyWithOptionalCents(Math.max(0, curBalance))}</span>
                           <button
                             type="button"
                             onClick={() => setShowReserveBreakdown(prev => !prev)}
@@ -15098,7 +15114,7 @@ export default function App() {
 
       {/* FLOATING ACTION BUTTONS: DITAR POR VOZ + NOVO REGISTRO (Acima da barra de navegação, lado direito) */}
       <div
-        className={`fixed right-4 sm:right-6 ${showQuickRegisterCockpit ? 'z-50' : 'z-40'} flex items-center gap-2`}
+        className={`fixed right-4 sm:right-6 ${showQuickRegisterCockpit ? 'z-50' : 'z-40'} flex items-center gap-2.5`}
         style={{
           bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
         }}
@@ -15110,9 +15126,9 @@ export default function App() {
             if (showQuickRegisterCockpit) closeQuickRegisterCockpit(true);
             handleTriggerVoiceDictation();
           }}
-          title="Ditar Corrida ou Gasto por Voz (Hands-Free)"
-          aria-label="Ditar por Voz"
-          className={`h-11 sm:h-12 px-3 sm:px-3.5 rounded-2xl shadow-lg border transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+          title={isRecordingVoice ? 'Ouvindo comando de voz...' : 'Ditar Corrida ou Gasto por Voz (Hands-Free)'}
+          aria-label={isRecordingVoice ? 'Ouvindo comando de voz' : 'Ditar por Voz'}
+          className={`w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full shadow-lg border transition-all flex items-center justify-center shrink-0 cursor-pointer active:scale-95 ${
             isRecordingVoice
               ? 'bg-rose-500 text-white border-rose-300 animate-pulse ring-4 ring-rose-500/30'
               : isDark
@@ -15120,10 +15136,7 @@ export default function App() {
               : 'bg-white text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-orange-50 shadow-md'
           }`}
         >
-          <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
-          <span className="text-xs font-black hidden xs:inline">
-            {isRecordingVoice ? 'Ouvindo...' : 'Voz'}
-          </span>
+          <Mic className={`w-5 h-5 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
         </button>
 
         {/* Novo Registro Button (Abre / Fecha Cockpit de Lançamentos) */}
@@ -15134,13 +15147,18 @@ export default function App() {
               ? closeQuickRegisterCockpit()
               : openQuickRegisterCockpit()
           }
+          title={
+            showQuickRegisterCockpit && !isQuickRegisterClosing
+              ? 'Fechar Cockpit de Registros'
+              : 'Novo Registro'
+          }
           aria-label={
             showQuickRegisterCockpit && !isQuickRegisterClosing
               ? 'Fechar Cockpit de Registros'
               : 'Novo Registro'
           }
           aria-expanded={showQuickRegisterCockpit && !isQuickRegisterClosing}
-          className={`h-11 sm:h-12 px-4 sm:px-5 text-xs sm:text-sm font-black rounded-2xl shadow-lg transition-all duration-200 flex items-center gap-2 cursor-pointer active:scale-95 border ${
+          className={`w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full shadow-lg transition-all duration-200 flex items-center justify-center shrink-0 cursor-pointer active:scale-95 border ${
             showQuickRegisterCockpit && !isQuickRegisterClosing
               ? isDark
                 ? 'bg-neutral-900 text-white border-neutral-700 hover:bg-neutral-800 shadow-black/40'
@@ -15149,11 +15167,10 @@ export default function App() {
           }`}
         >
           <Plus
-            className={`w-4 h-4 sm:w-5 sm:h-5 stroke-[2.8] transition-transform duration-300 ${
+            className={`w-6 h-6 stroke-[2.8] transition-transform duration-300 ${
               showQuickRegisterCockpit && !isQuickRegisterClosing ? 'rotate-45' : 'rotate-0'
             }`}
           />
-          <span>{showQuickRegisterCockpit && !isQuickRegisterClosing ? 'Fechar' : 'Novo Registro'}</span>
         </button>
       </div>
 
