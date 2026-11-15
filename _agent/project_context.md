@@ -419,3 +419,18 @@
   - `npm run build`: `dist/` gerado em `5.42s`.
   - Testes automatizados (`npx tsx` / `node`): `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**), `verify_expense_deletion.ts` (**6/6**) e verificação de `fmtMoneyWithOptionalCents` (**8/8** cenários).
   - `npx cap sync android` (`3.267s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 2m` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.965` bytes, `12/11/2026 21:48:39`), assinado com `release-key.jks`.
+
+## Calendário Livre nas Despesas da Moto/Casa e Edição de Canal/Aplicativo de Origem (15/11/2026)
+- **Seleção Livre de Dias no Calendário para Moto e Casa (`src/App.tsx`, `src/services/supabaseSync.ts`)**:
+  - Estendido `ExpenseRecurrenceType` com `'calendar_dates'` e adicionado `selectedDates?: string[]` em `BikeExpenseItem` e `HouseholdExpenseItem`.
+  - Removidos os modos antigos de seleção de data (`A cada X dias`, `Todo Mês` e `Data Fixa` com `<input type="date">` / `dueDay`) dos modais de edição/criação de despesa da **Moto** (`showBikeModal`) e da **Casa** (`showHouseholdModal`).
+  - Substituídos pelo componente compartilhado `renderExpenseAmountAndCalendar` / `renderFreeCalendarTrigger` + modal minimalista unificado de calendário (`calendarPickerTarget`: `'projected' | 'bike' | 'household'`), permitindo selecionar livremente quaisquer dias do mês (com navegação de mês, `Marcar Todos os Dias do Mês`, `Limpar` e `Confirmar Dias`).
+  - Atualizado `getExpenseDueInfo`, `deriveSeedCalendarDatesForExpense`, `normalizeCalendarExpenseDates`, `saveBikeExpense`, `saveHouseholdExpense` e os alertas de contas vencendo hoje no Painel para refletir exatamente os dias marcados no calendário (preservando `paidMonths`/`unpaidMonths`).
+- **Botão de Edição de Ícone e Texto em "Canal / Aplicativo de Origem" (`src/App.tsx`)**:
+  - Extraído `DEFAULT_PROJECTED_CHANNELS` com resolução dinâmica via `projectedChannels` e `resolveProjectedChannel` usando `dbState.appOverrides` (chaves `proj_<id>` sincronizadas na nuvem).
+  - Adicionado botão `Editar Origem` / `Concluir Edição` ao lado do título `Canal / Aplicativo de Origem:` no modal de Faturamento Previsto, abrindo editor inline com campo de ícone/emoji, atalhos de emojis, campo de texto, `Restaurar Padrão` e `Salvar Origem`, refletindo imediatamente nos cards e na conversão para corrida real.
+- **Validação**:
+  - `npx tsc --noEmit`: 0 erros.
+  - `npm run build`: `vite build` concluído em `3.81s`.
+  - Testes automatizados (`npx tsx`): `verify_calendar_expenses_and_channels.ts` (**6/6**), `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**) aprovados.
+  - `npx cap sync android` (`2.399s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 2m` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.973` bytes, `15/11/2026 18:45:53`), assinado com `release-key.jks`.

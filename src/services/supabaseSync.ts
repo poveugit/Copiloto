@@ -239,7 +239,7 @@ export interface ShiftDefinition {
 
 export type BikeExpenseCategory = 'combustivel' | 'manutencao' | 'documentacao' | 'seguro' | 'equipamento' | 'outros';
 
-export type ExpenseRecurrenceType = 'monthly' | 'interval_days' | 'specific_date';
+export type ExpenseRecurrenceType = 'monthly' | 'interval_days' | 'specific_date' | 'calendar_dates';
 
 export interface BikeExpenseItem {
   id: string;
@@ -252,6 +252,7 @@ export interface BikeExpenseItem {
   totalCost?: number;
   lastPaidDate?: string;
   nextDueDate?: string;
+  selectedDates?: string[];
   icon?: string;
   isActive: boolean;
   isCustomEdited?: boolean;
@@ -393,6 +394,7 @@ export interface HouseholdExpenseItem {
   totalCost?: number;
   lastPaidDate?: string;
   nextDueDate?: string;
+  selectedDates?: string[];
   icon?: string;
   isActive: boolean;
   isCustomEdited?: boolean;

@@ -205,6 +205,17 @@ const BASE_SHIFTS: ShiftDefinition[] = [
   { id: 'ajuste', name: 'Ajuste Automático' },
 ];
 
+const DEFAULT_PROJECTED_CHANNELS = [
+  { id: 'Particular', name: 'Particular', icon: '🛵' },
+  { id: 'iFood', name: 'iFood', icon: '🔴' },
+  { id: '99Moto', name: '99Moto', icon: '🟡' },
+  { id: 'Uber Flash', name: 'Uber Flash', icon: '⚫' },
+  { id: 'Rappi', name: 'Rappi', icon: '🟠' },
+  { id: 'Frete', name: 'Frete', icon: '📦' },
+  { id: 'Fixo', name: 'Fixo Semanal', icon: '💼' },
+  { id: 'Outro', name: 'Outro', icon: '✨' },
+] as const;
+
 interface FreeNumberInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> {
   value: number | string | undefined | null;
@@ -742,6 +753,35 @@ interface ExpenseDueInfo {
   isPaid?: boolean;
 }
 
+function deriveSeedCalendarDatesForExpense(item: {
+  selectedDates?: string[];
+  recurrenceType?: ExpenseRecurrenceType;
+  nextDueDate?: string;
+  dueDay?: number;
+}): string[] {
+  if (Array.isArray(item.selectedDates) && item.selectedDates.length > 0) {
+    return Array.from(
+      new Set(item.selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+    ).sort();
+  }
+  if (
+    (item.recurrenceType === 'specific_date' || item.recurrenceType === 'interval_days') &&
+    item.nextDueDate &&
+    /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
+  ) {
+    return [item.nextDueDate];
+  }
+  const dayNum = Number(item.dueDay);
+  if (Number.isFinite(dayNum) && dayNum >= 1 && dayNum <= 31) {
+    const now = new Date();
+    const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const clampedDay = Math.min(dayNum, daysInCurrentMonth);
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return [`${ym}-${String(clampedDay).padStart(2, '0')}`];
+  }
+  return [];
+}
+
 function getExpenseDueInfo(
   item: {
     id?: string;
@@ -753,6 +793,7 @@ function getExpenseDueInfo(
     monthlyAmount?: number;
     lastPaidDate?: string;
     nextDueDate?: string;
+    selectedDates?: string[];
     paidMonths?: string[];
     unpaidMonths?: string[];
   },
@@ -810,6 +851,122 @@ function getExpenseDueInfo(
   // Se targetYM for um mês futuro ou passado em relação ao mês atual do relógio
   const isFutureMonth = Boolean(targetYM && targetYM > currentYM);
   const isPastMonth = Boolean(targetYM && targetYM < currentYM);
+
+  // Datas selecionadas livremente no calendário
+  const validCalendarDates = Array.isArray(item.selectedDates)
+    ? Array.from(new Set(item.selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))).sort()
+    : [];
+
+  if (validCalendarDates.length > 0) {
+    const monthDates = validCalendarDates.filter(d => d.startsWith(ym));
+    if (isFutureMonth) {
+      if (monthDates.length > 0) {
+        const firstDate = monthDates[0];
+        const daysDiff = calculateDaysDifference(today, firstDate);
+        return {
+          label: `📅 ${monthDates.length} ${monthDates.length === 1 ? 'dia' : 'dias'} · Próx: ${formatPtBrDate(firstDate)}`,
+          daysRemaining: daysDiff,
+          status: 'future',
+          targetDateStr: firstDate,
+          badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+          detailNote: `${monthDates.length} dia(s) no calendário`,
+          timelineSortKey: daysDiff,
+          paidAmount: 0,
+          remainingAmount: expectedVal,
+          isPaid: false,
+        };
+      }
+      return {
+        label: `📅 ${validCalendarDates.length} ${validCalendarDates.length === 1 ? 'dia' : 'dias'} em outro mês`,
+        daysRemaining: 99,
+        status: 'future',
+        targetDateStr: validCalendarDates[0],
+        badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
+        detailNote: 'Sem dias neste mês',
+        timelineSortKey: 99,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
+      };
+    }
+
+    if (isPastMonth && monthDates.length === 0) {
+      return {
+        label: '📅 Sem dias marcados neste mês',
+        daysRemaining: 99,
+        status: 'future',
+        targetDateStr: today,
+        badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
+        detailNote: 'Sem dias neste mês',
+        timelineSortKey: 99,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
+      };
+    }
+
+    if (!isPastMonth) {
+      const pool = monthDates.length > 0 ? monthDates : validCalendarDates;
+      if (pool.includes(today)) {
+        return {
+          label: `🚨 Vence Hoje (${formatPtBrDate(today)})!`,
+          daysRemaining: 0,
+          status: 'today',
+          targetDateStr: today,
+          badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
+          detailNote: pool.length > 1 ? `${pool.length} dias no calendário` : 'Marcado no calendário',
+          timelineSortKey: 0,
+          paidAmount: 0,
+          remainingAmount: expectedVal,
+          isPaid: false,
+        };
+      }
+      const upcoming = pool.find(d => d > today);
+      if (upcoming) {
+        const daysDiff = calculateDaysDifference(today, upcoming);
+        if (daysDiff <= 7) {
+          return {
+            label: `⚠️ Em ${daysDiff} ${daysDiff === 1 ? 'dia' : 'dias'} (${formatPtBrDate(upcoming)})${pool.length > 1 ? ` · ${pool.length}d` : ''}`,
+            daysRemaining: daysDiff,
+            status: 'near',
+            targetDateStr: upcoming,
+            badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
+            detailNote: `${pool.length} dia(s) no calendário`,
+            timelineSortKey: daysDiff,
+            paidAmount: 0,
+            remainingAmount: expectedVal,
+            isPaid: false,
+          };
+        }
+        return {
+          label: `📅 Em ${daysDiff} dias (${formatPtBrDate(upcoming)})${pool.length > 1 ? ` · ${pool.length}d` : ''}`,
+          daysRemaining: daysDiff,
+          status: 'future',
+          targetDateStr: upcoming,
+          badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+          detailNote: `${pool.length} dia(s) no calendário`,
+          timelineSortKey: daysDiff,
+          paidAmount: 0,
+          remainingAmount: expectedVal,
+          isPaid: false,
+        };
+      }
+      const latestPast = pool[pool.length - 1];
+      const daysDiff = calculateDaysDifference(today, latestPast);
+      return {
+        label: `🚨 Venceu há ${Math.abs(daysDiff)} ${Math.abs(daysDiff) === 1 ? 'dia' : 'dias'} (${formatPtBrDate(latestPast)})`,
+        daysRemaining: daysDiff,
+        status: 'overdue',
+        targetDateStr: latestPast,
+        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+        detailNote: `${pool.length} dia(s) no calendário`,
+        timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
+      };
+    }
+  }
 
   if (isFutureMonth && targetYM) {
     const [fy, fm] = targetYM.split('-').map(Number);
@@ -1151,16 +1308,20 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'projecao' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
 
-  // Estados de Faturamento Futuro Previsto
+  // Estados de Faturamento Futuro Previsto & Calendário Compartilhado
   const [showProjectedModal, setShowProjectedModal] = useState<boolean>(false);
-  const [showProjectedCalendarModal, setShowProjectedCalendarModal] = useState<boolean>(false);
-  const [projectedCalendarMonth, setProjectedCalendarMonth] = useState<string>(() => todayStr().slice(0, 7));
+  const [calendarPickerTarget, setCalendarPickerTarget] = useState<'projected' | 'bike' | 'household' | null>(null);
+  const [calendarPickerMonth, setCalendarPickerMonth] = useState<string>(() => todayStr().slice(0, 7));
   const [projectedSelectedDates, setProjectedSelectedDates] = useState<string[]>([]);
   const [editingProjectedId, setEditingProjectedId] = useState<string | null>(null);
   const [projectedDailyRate, setProjectedDailyRate] = useState<string>('');
   const [projectedAmount, setProjectedAmount] = useState<string>('');
   const [projectedDescription, setProjectedDescription] = useState<string>('');
   const [projectedApp, setProjectedApp] = useState<string>('Particular');
+  const [isEditingProjectedChannels, setIsEditingProjectedChannels] = useState<boolean>(false);
+  const [editingProjectedChannelId, setEditingProjectedChannelId] = useState<string | null>(null);
+  const [editingProjectedChannelName, setEditingProjectedChannelName] = useState<string>('');
+  const [editingProjectedChannelIcon, setEditingProjectedChannelIcon] = useState<string>('🛵');
   const [projectedNotes, setProjectedNotes] = useState<string>('');
   const [projectedStatusFilter, setProjectedStatusFilter] = useState<'all' | 'pending' | 'realized' | 'cancelled'>('all');
   const [deletingProjectedId, setDeletingProjectedId] = useState<string | null>(null);
@@ -1651,6 +1812,28 @@ export default function App() {
     const combined = [...base, ...custom];
     return combined.length > 0 ? combined : BASE_APPS;
   }, [dbState.appOverrides, dbState.customApps, dbState.deletedAppIds]);
+
+  const projectedChannels = useMemo(() => {
+    const overrides = dbState.appOverrides || {};
+    return DEFAULT_PROJECTED_CHANNELS.map(ch => {
+      const ov = overrides[`proj_${ch.id}`];
+      return ov
+        ? { id: ch.id, name: ov.name || ch.name, icon: ov.icon || ch.icon, isOverridden: true }
+        : { id: ch.id, name: ch.name, icon: ch.icon, isOverridden: false };
+    });
+  }, [dbState.appOverrides]);
+
+  const resolveProjectedChannel = useCallback(
+    (appVal?: string) => {
+      const target = (appVal || '').trim();
+      if (target) {
+        const match = projectedChannels.find(c => c.id === target || c.name === target);
+        if (match) return match;
+      }
+      return projectedChannels[0] || { id: 'Particular', name: 'Particular', icon: '🛵', isOverridden: false };
+    },
+    [projectedChannels]
+  );
 
   const allShifts = useMemo(() => {
     const deleted = new Set(dbState.deletedShiftIds || []);
@@ -2532,22 +2715,45 @@ export default function App() {
     setShowNewBikeCatInput(false);
   };
 
+  const normalizeCalendarExpenseDates = (
+    selectedDates?: string[],
+    fallbackDueDate?: string,
+    fallbackDueDay: number = 15
+  ) => {
+    const today = todayStr();
+    const sortedDates = Array.from(
+      new Set((selectedDates || []).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+    ).sort();
+    const primaryDate =
+      sortedDates.find(d => d >= today) || sortedDates[sortedDates.length - 1] || '';
+    const dueDay = primaryDate
+      ? Number(primaryDate.slice(8, 10))
+      : Math.max(1, Math.min(31, Number(fallbackDueDay) || 15));
+    return {
+      sortedDates,
+      nextDueDate: primaryDate || fallbackDueDate || addDaysToDateStr(today, 30),
+      dueDay,
+      recurrenceType: (sortedDates.length > 0 ? 'calendar_dates' : 'monthly') as ExpenseRecurrenceType,
+    };
+  };
+
   const openNewBikeExpenseModal = () => {
     setEditingBikeItem(null);
     setShowNewBikeCatInput(false);
     setNewBikeCatName('');
-    const today = todayStr();
+    setCalendarPickerTarget(null);
     setBikeDraft({
       id: 'bike_' + Date.now(),
       name: '',
       category: 'manutencao',
       monthlyAmount: 0,
-      recurrenceType: 'interval_days',
-      intervalDays: 90,
+      recurrenceType: 'calendar_dates',
+      intervalDays: 30,
       totalCost: 0,
-      lastPaidDate: today,
-      nextDueDate: addDaysToDateStr(today, 90),
-      dueDay: 15,
+      selectedDates: [],
+      lastPaidDate: undefined,
+      nextDueDate: '',
+      dueDay: new Date().getDate(),
       icon: '🏍️',
       isActive: true,
     });
@@ -2557,6 +2763,7 @@ export default function App() {
   const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
     setShowNewBikeCatInput(false);
     setNewBikeCatName('');
+    setCalendarPickerTarget(null);
     const rawList =
       Array.isArray(dbState.bikeExpenses)
         ? dbState.bikeExpenses
@@ -2564,31 +2771,18 @@ export default function App() {
     const rawItem = rawList.find(b => b.id === item.id) || item;
 
     setEditingBikeItem(rawItem);
-    const today = todayStr();
-    const recType: ExpenseRecurrenceType =
-      rawItem.recurrenceType || (rawItem.intervalDays ? 'interval_days' : 'monthly');
-    const intDays = Math.max(1, Number(rawItem.intervalDays) || 30);
     const rawMonthly = Math.max(0, Number(rawItem.monthlyAmount) || 0);
-    const tCost =
-      rawItem.totalCost !== undefined && Number(rawItem.totalCost) > 0
-        ? Number(rawItem.totalCost)
-        : Math.round((rawMonthly * (intDays / 30)) * 100) / 100;
-    const mAmt =
-      recType === 'interval_days' && tCost > 0
-        ? Math.round(((tCost / intDays) * 30) * 100) / 100
-        : rawMonthly;
-    const lastPaid = rawItem.lastPaidDate || today;
-    const nextDue = rawItem.nextDueDate || addDaysToDateStr(lastPaid, intDays);
+    const rawTotal = Math.max(0, Number(rawItem.totalCost) || 0);
+    const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
+    const seededDates = deriveSeedCalendarDatesForExpense(rawItem);
 
     setBikeDraft({
       ...rawItem,
-      monthlyAmount: mAmt,
-      recurrenceType: recType,
-      intervalDays: intDays,
-      totalCost: tCost,
-      lastPaidDate: lastPaid,
-      nextDueDate: nextDue,
-      dueDay: rawItem.dueDay || 15,
+      monthlyAmount: initialAmount,
+      totalCost: initialAmount,
+      recurrenceType: 'calendar_dates',
+      selectedDates: seededDates,
+      dueDay: rawItem.dueDay || (seededDates[0] ? Number(seededDates[0].slice(8, 10)) : 15),
       isCustomEdited: true,
     });
     setShowBikeModal(true);
@@ -2599,28 +2793,27 @@ export default function App() {
       ? [...dbState.bikeExpenses]
       : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
 
-    const recType: ExpenseRecurrenceType = bikeDraft.recurrenceType || 'monthly';
-    const intDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-    const totalCostVal = Math.max(0, Number(bikeDraft.totalCost) || 0);
-    const computedMonthly =
-      recType === 'interval_days' && totalCostVal > 0
-        ? Math.round(((totalCostVal / intDays) * 30) * 100) / 100
-        : Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
+    const amountVal = Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
+    const normalizedDates = normalizeCalendarExpenseDates(
+      bikeDraft.selectedDates,
+      bikeDraft.nextDueDate,
+      bikeDraft.dueDay || 15
+    );
 
     const sanitized: BikeExpenseItem = {
       id: bikeDraft.id || 'bike_' + Date.now(),
       name: bikeDraft.name.trim() || 'Despesa da Moto',
       category: bikeDraft.category || 'outros',
-      monthlyAmount: computedMonthly,
-      recurrenceType: recType,
-      dueDay: Math.max(1, Math.min(31, Number(bikeDraft.dueDay) || 15)),
-      intervalDays: intDays,
-      totalCost: recType === 'interval_days' ? (totalCostVal > 0 ? totalCostVal : computedMonthly) : totalCostVal,
-      lastPaidDate: bikeDraft.lastPaidDate || todayStr(),
-      nextDueDate:
-        recType === 'interval_days'
-          ? bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), intDays)
-          : bikeDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
+      monthlyAmount: amountVal,
+      recurrenceType: normalizedDates.recurrenceType,
+      dueDay: normalizedDates.dueDay,
+      intervalDays: bikeDraft.intervalDays || 30,
+      totalCost: amountVal,
+      lastPaidDate: bikeDraft.lastPaidDate,
+      nextDueDate: normalizedDates.nextDueDate,
+      selectedDates: normalizedDates.sortedDates,
+      paidMonths: editingBikeItem?.paidMonths ?? bikeDraft.paidMonths,
+      unpaidMonths: editingBikeItem?.unpaidMonths ?? bikeDraft.unpaidMonths,
       icon: bikeDraft.icon?.trim() || '🏍️',
       isActive: bikeDraft.isActive !== false,
       isCustomEdited: true,
@@ -2640,11 +2833,11 @@ export default function App() {
     let maintChanged = false;
 
     const lowerName = sanitized.name.toLowerCase();
-    const effectiveCost = totalCostVal > 0 ? totalCostVal : computedMonthly;
+    const effectiveCost = amountVal;
 
     // Sincronizar IPVA
     if (sanitized.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
-      const annualVal = totalCostVal > 0 ? totalCostVal : Math.round(computedMonthly * 12);
+      const annualVal = Math.round(amountVal * 12);
       if (annualVal > 0) {
         updatedPlan.ipvaAnnual = annualVal;
         planChanged = true;
@@ -2652,7 +2845,7 @@ export default function App() {
     }
     // Sincronizar Licenciamento
     if (lowerName.includes('licenciamento')) {
-      const licVal = totalCostVal > 0 ? totalCostVal : Math.round(computedMonthly * 12);
+      const licVal = Math.round(amountVal * 12);
       if (licVal > 0) {
         updatedPlan.licensingAnnual = licVal;
         planChanged = true;
@@ -2660,9 +2853,8 @@ export default function App() {
     }
     // Sincronizar Seguro / MEI
     if (sanitized.id === 'seguro_rastreador' || lowerName.includes('seguro') || lowerName.includes('rastreador')) {
-      const insMonthly = computedMonthly > 0 ? computedMonthly : Math.round(totalCostVal / 12);
-      if (insMonthly > 0) {
-        updatedPlan.insuranceOrMeiMonthly = insMonthly;
+      if (amountVal > 0) {
+        updatedPlan.insuranceOrMeiMonthly = amountVal;
         planChanged = true;
       }
     }
@@ -2953,18 +3145,19 @@ export default function App() {
     setEditingHouseholdItem(null);
     setShowNewHouseholdCatInput(false);
     setNewHouseholdCatName('');
-    const today = todayStr();
+    setCalendarPickerTarget(null);
     setHouseholdDraft({
       id: 'house_' + Date.now(),
       name: '',
       category: 'moradia',
       monthlyAmount: 0,
-      recurrenceType: 'monthly',
+      recurrenceType: 'calendar_dates',
       intervalDays: 30,
       totalCost: 0,
-      lastPaidDate: today,
-      nextDueDate: addDaysToDateStr(today, 30),
-      dueDay: 10,
+      selectedDates: [],
+      lastPaidDate: undefined,
+      nextDueDate: '',
+      dueDay: new Date().getDate(),
       icon: '🏠',
       isActive: true,
     });
@@ -2975,22 +3168,19 @@ export default function App() {
     setEditingHouseholdItem(item);
     setShowNewHouseholdCatInput(false);
     setNewHouseholdCatName('');
-    const today = todayStr();
-    const recType: ExpenseRecurrenceType = item.recurrenceType || (item.intervalDays ? 'interval_days' : 'monthly');
-    const intDays = Math.max(1, Number(item.intervalDays) || 30);
-    const mAmt = Math.max(0, Number(item.monthlyAmount) || 0);
-    const tCost = item.totalCost !== undefined ? Number(item.totalCost) : Math.round((mAmt * (intDays / 30)) * 100) / 100;
-    const lastPaid = item.lastPaidDate || today;
-    const nextDue = item.nextDueDate || addDaysToDateStr(lastPaid, intDays);
+    setCalendarPickerTarget(null);
+    const rawMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
+    const rawTotal = Math.max(0, Number(item.totalCost) || 0);
+    const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
+    const seededDates = deriveSeedCalendarDatesForExpense(item);
 
     setHouseholdDraft({
       ...item,
-      recurrenceType: recType,
-      intervalDays: intDays,
-      totalCost: tCost,
-      lastPaidDate: lastPaid,
-      nextDueDate: nextDue,
-      dueDay: item.dueDay || 10,
+      monthlyAmount: initialAmount,
+      totalCost: initialAmount,
+      recurrenceType: 'calendar_dates',
+      selectedDates: seededDates,
+      dueDay: item.dueDay || (seededDates[0] ? Number(seededDates[0].slice(8, 10)) : 10),
     });
     setShowHouseholdModal(true);
   };
@@ -3000,28 +3190,27 @@ export default function App() {
       ? [...dbState.householdExpenses]
       : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
 
-    const recType: ExpenseRecurrenceType = householdDraft.recurrenceType || 'monthly';
-    const intDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-    const totalCostVal = Math.max(0, Number(householdDraft.totalCost) || 0);
-    const computedMonthly =
-      recType === 'interval_days' && totalCostVal > 0
-        ? Math.round(((totalCostVal / intDays) * 30) * 100) / 100
-        : Math.max(0, Number(householdDraft.monthlyAmount) || 0);
+    const amountVal = Math.max(0, Number(householdDraft.monthlyAmount) || 0);
+    const normalizedDates = normalizeCalendarExpenseDates(
+      householdDraft.selectedDates,
+      householdDraft.nextDueDate,
+      householdDraft.dueDay || 10
+    );
 
     const sanitized: HouseholdExpenseItem = {
       id: householdDraft.id || 'house_' + Date.now(),
       name: householdDraft.name.trim() || 'Despesa Doméstica',
       category: householdDraft.category || 'outros',
-      monthlyAmount: computedMonthly,
-      recurrenceType: recType,
-      dueDay: Math.max(1, Math.min(31, Number(householdDraft.dueDay) || 10)),
-      intervalDays: intDays,
-      totalCost: recType === 'interval_days' ? (totalCostVal > 0 ? totalCostVal : computedMonthly) : totalCostVal,
-      lastPaidDate: householdDraft.lastPaidDate || todayStr(),
-      nextDueDate:
-        recType === 'interval_days'
-          ? householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), intDays)
-          : householdDraft.nextDueDate || addDaysToDateStr(todayStr(), 30),
+      monthlyAmount: amountVal,
+      recurrenceType: normalizedDates.recurrenceType,
+      dueDay: normalizedDates.dueDay,
+      intervalDays: householdDraft.intervalDays || 30,
+      totalCost: amountVal,
+      lastPaidDate: householdDraft.lastPaidDate,
+      nextDueDate: normalizedDates.nextDueDate,
+      selectedDates: normalizedDates.sortedDates,
+      paidMonths: editingHouseholdItem?.paidMonths ?? householdDraft.paidMonths,
+      unpaidMonths: editingHouseholdItem?.unpaidMonths ?? householdDraft.unpaidMonths,
       icon: householdDraft.icon?.trim() || '🏠',
       isActive: householdDraft.isActive !== false,
       isCustomEdited: true,
@@ -3093,7 +3282,7 @@ export default function App() {
       selectedMonthFinancials.historicalDailyAvg > 0
         ? selectedMonthFinancials.historicalDailyAvg
         : 0;
-    setProjectedCalendarMonth((defaultDate || today).slice(0, 7));
+    setCalendarPickerMonth((defaultDate || today).slice(0, 7));
     setProjectedSelectedDates(initialDates);
     setProjectedDailyRate(suggestedDaily > 0 ? String(suggestedDaily) : '');
     setProjectedAmount(
@@ -3103,8 +3292,10 @@ export default function App() {
     );
     setProjectedDescription('');
     setProjectedApp('Particular');
+    setIsEditingProjectedChannels(false);
+    setEditingProjectedChannelId(null);
     setProjectedNotes('');
-    setShowProjectedCalendarModal(false);
+    setCalendarPickerTarget(null);
     setShowProjectedModal(true);
   };
 
@@ -3117,14 +3308,16 @@ export default function App() {
         : item.date
         ? [item.date]
         : [todayStr()];
-    setProjectedCalendarMonth((initialDates[0] || todayStr()).slice(0, 7));
+    setCalendarPickerMonth((initialDates[0] || todayStr()).slice(0, 7));
     setProjectedSelectedDates(initialDates);
     setProjectedDailyRate(String(item.dailyRate || bal.dailyRate || item.amount));
     setProjectedAmount(String(item.amount));
     setProjectedDescription(item.description);
-    setProjectedApp(item.app || 'Particular');
+    setProjectedApp(resolveProjectedChannel(item.app).id);
+    setIsEditingProjectedChannels(false);
+    setEditingProjectedChannelId(null);
     setProjectedNotes(item.notes || '');
-    setShowProjectedCalendarModal(false);
+    setCalendarPickerTarget(null);
     setShowProjectedModal(true);
   };
 
@@ -3207,7 +3400,7 @@ export default function App() {
       ),
     });
 
-    setShowProjectedCalendarModal(false);
+    setCalendarPickerTarget(null);
     setShowProjectedModal(false);
     setEditingProjectedId(null);
   };
@@ -3215,10 +3408,11 @@ export default function App() {
   const handleConvertProjectedToReal = (item: ProjectedRevenueItem) => {
     const bal = computeProjectedRevenueBalance(item, todayStr());
     const realizedAmt = bal.remainingAmount > 0 ? bal.remainingAmount : Number(item.amount) || 0;
+    const resolvedChannel = resolveProjectedChannel(item.app);
     const newEntry: RideEntry = {
       id: Date.now(),
       date: item.date || todayStr(),
-      app: item.app || 'Particular',
+      app: resolvedChannel.name || 'Particular',
       shift: 'integral',
       km: 0,
       revenue: realizedAmt,
@@ -3917,6 +4111,33 @@ export default function App() {
     });
     setEditingAppId(null);
     setEntryModalFeedback(`Aplicativo/Local "${trimmed}" atualizado!`);
+  };
+
+  const handleSaveProjectedChannelEdit = () => {
+    if (!editingProjectedChannelId || !editingProjectedChannelName.trim()) return;
+    const trimmed = editingProjectedChannelName.trim();
+    const iconVal = editingProjectedChannelIcon.trim() || '🛵';
+    const nextAppOverrides = {
+      ...(dbState.appOverrides || {}),
+      [`proj_${editingProjectedChannelId}`]: { name: trimmed, icon: iconVal },
+    };
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      appOverrides: nextAppOverrides,
+    });
+    setEditingProjectedChannelId(null);
+    setIsEditingProjectedChannels(false);
+  };
+
+  const handleResetProjectedChannelEdit = (channelId: string) => {
+    const nextAppOverrides = { ...(dbState.appOverrides || {}) };
+    delete nextAppOverrides[`proj_${channelId}`];
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      appOverrides: nextAppOverrides,
+    });
+    setEditingProjectedChannelId(null);
+    setIsEditingProjectedChannels(false);
   };
 
   const handleDeleteApp = (idToDelete: string) => {
@@ -5860,6 +6081,161 @@ export default function App() {
     }
   }, [activeTab, aiFinancialAdvice, isAiFinancialLoading, handleAskFinancialAI]);
 
+  const renderFreeCalendarTrigger = ({
+    label,
+    dates,
+    target,
+    emptyHint,
+    accentClass,
+  }: {
+    label: string;
+    dates: string[];
+    target: 'projected' | 'bike' | 'household';
+    emptyHint: string;
+    accentClass: 'orange' | 'blue';
+  }) => {
+    const isOrange = accentClass === 'orange';
+    const activeBorder = isOrange ? 'border-[#FF6A1A]/60' : 'border-blue-500/60';
+    const hoverBorder = isOrange ? 'hover:border-[#FF6A1A]' : 'hover:border-blue-500';
+    const iconBoxActive = isOrange ? 'border-[#FF6A1A]/50 text-[#FF6A1A]' : 'border-blue-500/50 text-blue-400';
+    const badgeColor = isOrange
+      ? 'border-[#FF6A1A]/50 text-[#FF6A1A]'
+      : 'border-blue-500/50 text-blue-400';
+    const countColor = isOrange ? 'text-[#FF6A1A]' : 'text-blue-400';
+
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <label className={`text-xs font-bold ${mutedText}`}>{label}</label>
+          <span className={`text-[11px] font-black ${countColor}`}>
+            {dates.length} dia{dates.length === 1 ? '' : 's'} selecionado{dates.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            const fallbackMonth = (dates[0] || todayStr()).slice(0, 7);
+            setCalendarPickerMonth(fallbackMonth);
+            setCalendarPickerTarget(target);
+          }}
+          className={`w-full p-3.5 rounded-2xl bg-transparent border ${
+            dates.length > 0 ? activeBorder : dividerBorder
+          } ${hoverBorder} transition-colors text-left cursor-pointer flex items-center justify-between gap-3`}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={`w-10 h-10 rounded-xl bg-transparent border ${
+                dates.length > 0 ? iconBoxActive : `${dividerBorder} ${mutedText}`
+              } flex items-center justify-center shrink-0`}
+            >
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className={`text-xs sm:text-sm font-black ${primaryText}`}>
+                {dates.length > 0
+                  ? `${dates.length} dia${dates.length === 1 ? '' : 's'} marcado${dates.length === 1 ? '' : 's'} no calendário`
+                  : 'Abrir Calendário e Selecionar Dias'}
+              </div>
+              <div className={`text-[11px] mt-0.5 truncate ${mutedText}`}>
+                {dates.length > 0
+                  ? `${dates
+                      .slice(0, 5)
+                      .map(d => d.slice(8, 10) + '/' + d.slice(5, 7))
+                      .join(', ')}${dates.length > 5 ? ` +${dates.length - 5} dias` : ''}`
+                  : emptyHint}
+              </div>
+            </div>
+          </div>
+          <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg bg-transparent border ${badgeColor} shrink-0`}>
+            Calendário
+          </span>
+        </button>
+      </div>
+    );
+  };
+
+  const renderExpenseAmountAndCalendar = ({
+    accentClass,
+    valueLabel,
+    calcTitle,
+    step,
+    amount,
+    dates,
+    target,
+    calendarLabel,
+    onChangeAmount,
+  }: {
+    accentClass: 'orange' | 'blue';
+    valueLabel: string;
+    calcTitle: string;
+    step: string;
+    amount: number;
+    dates: string[];
+    target: 'bike' | 'household';
+    calendarLabel: string;
+    onChangeAmount: (nextVal: number) => void;
+  }) => {
+    const isOrange = accentClass === 'orange';
+    const textAccent = isOrange ? 'text-[#FF6A1A]' : 'text-blue-400';
+    const calcBtnHover = isOrange
+      ? 'hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A]'
+      : 'hover:border-blue-400 hover:bg-blue-400/10 text-blue-400';
+
+    return (
+      <>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className={`block text-xs font-bold ${mutedText}`}>{valueLabel}</label>
+            <button
+              type="button"
+              onClick={() => {
+                openQuickCalculator(calcTitle, amount, valStr => {
+                  onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+                });
+              }}
+              className={`text-[11px] font-bold ${textAccent} hover:underline flex items-center gap-1 cursor-pointer`}
+            >
+              <Calculator className="w-3 h-3" />
+              <span>Calc</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <FreeNumberInput
+              step={step}
+              value={amount}
+              onValueChange={val => onChangeAmount(Math.max(0, val))}
+              className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                openQuickCalculator(calcTitle, amount, valStr => {
+                  onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+                });
+              }}
+              className={`p-2.5 rounded-xl border border-slate-700/60 ${calcBtnHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+              title="Calcular Valor"
+            >
+              <Calculator className="w-4 h-4" />
+            </button>
+          </div>
+          <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+            Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+          </span>
+        </div>
+
+        {renderFreeCalendarTrigger({
+          label: calendarLabel,
+          dates,
+          target,
+          emptyHint: 'Toque para escolher livremente quaisquer dias do mês',
+          accentClass,
+        })}
+      </>
+    );
+  };
+
   // ================= DEDICATED LOGIN & CADASTRO SCREEN =================
   if (showAuthScreen || !currentUser) {
     return (
@@ -7284,6 +7660,9 @@ export default function App() {
 
                         const houseDueToday = activeHouse.filter(h => {
                           const due = getExpenseDueInfo(h);
+                          if (Array.isArray(h.selectedDates) && h.selectedDates.length > 0) {
+                            return due.status === 'today';
+                          }
                           const day = Number(h.dueDay) || 10;
                           return due.status === 'today' || day === curDay;
                         });
@@ -7310,6 +7689,9 @@ export default function App() {
 
                         const bikeDueToday = activeBike.filter(b => {
                           const due = getExpenseDueInfo(b);
+                          if (Array.isArray(b.selectedDates) && b.selectedDates.length > 0) {
+                            return due.status === 'today';
+                          }
                           const day = Number(b.dueDay) || 10;
                           return due.status === 'today' || (b.recurrenceType === 'monthly' && day === curDay);
                         });
@@ -10499,6 +10881,7 @@ export default function App() {
                             const isRealized = item.status === 'realized';
                             const isPending = item.status === 'pending';
                             const headlineAmount = isPending ? bal.remainingAmount : bal.totalAmount;
+                            const resolvedChannel = resolveProjectedChannel(item.app);
 
                             return (
                               <div
@@ -10524,17 +10907,7 @@ export default function App() {
                                           ? `${dividerBorder} text-slate-400`
                                           : 'border-sky-500/40 text-sky-400'
                                       }`}>
-                                        {item.app === 'iFood'
-                                          ? '🔴'
-                                          : item.app === '99Moto'
-                                          ? '🟡'
-                                          : item.app === 'Uber Flash'
-                                          ? '⚫'
-                                          : item.app === 'Rappi'
-                                          ? '🟠'
-                                          : item.app === 'Frete'
-                                          ? '📦'
-                                          : '🛵'}
+                                        {resolvedChannel.icon}
                                       </div>
                                       <div className="min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
@@ -10543,7 +10916,7 @@ export default function App() {
                                           </span>
                                           {item.app && (
                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-transparent border ${dividerBorder} ${mutedText}`}>
-                                              {item.app}
+                                              {resolvedChannel.name}
                                             </span>
                                           )}
                                         </div>
@@ -17455,396 +17828,18 @@ export default function App() {
                 />
               </div>
 
-              {/* SELETOR DE TIPO DE VENCIMENTO / CICLO */}
-              <div>
-                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
-                  Como funciona o prazo / vencimento desta despesa?
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'interval_days', label: '🔄 A cada X dias', desc: 'Peças, óleo, relação, pneus' },
-                    { id: 'monthly', label: '📅 Todo Mês', desc: 'Dia fixo (1 a 31)' },
-                    { id: 'specific_date', label: '🎯 Data Fixa', desc: 'Data específica' },
-                  ].map(opt => {
-                    const isSel = (bikeDraft.recurrenceType || 'monthly') === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          const newType = opt.id as ExpenseRecurrenceType;
-                          const intDays = Math.max(1, Number(bikeDraft.intervalDays) || 90);
-                          const mAmt = Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
-                          const tCost =
-                            newType === 'interval_days' && (!bikeDraft.totalCost || bikeDraft.totalCost <= 0)
-                              ? Math.round((mAmt * (intDays / 30)) * 100) / 100
-                              : bikeDraft.totalCost || mAmt;
-                          setBikeDraft({
-                            ...bikeDraft,
-                            recurrenceType: newType,
-                            intervalDays: intDays,
-                            totalCost: tCost,
-                            nextDueDate: bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), intDays),
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          isSel
-                            ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
-                            : `${surfaceSubtle} hover:border-slate-600`
-                        }`}
-                      >
-                        <div className="text-xs font-black leading-tight">{opt.label}</div>
-                        <div className={`text-[10px] mt-0.5 truncate ${isSel ? 'text-[#FF6A1A]/90' : mutedText}`}>
-                          {opt.desc}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
-              {(bikeDraft.recurrenceType || 'monthly') === 'interval_days' && (
-                <div className={`p-3.5 rounded-2xl border space-y-3.5 bg-transparent ${
-                  isDark ? 'border-[#FF6A1A]/30' : 'border-orange-200'
-                }`}>
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-black text-[#FF6A1A]">
-                        Troca / Vencimento a cada quantos dias?
-                      </label>
-                      <span className={`text-[10px] font-bold ${mutedText}`}>
-                        Atalhos rápidos:
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
-                      {[1, 2, 7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => {
-                            const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
-                            const nextM = tCost > 0 ? Math.round(((tCost / d) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
-                            const baseDate = bikeDraft.lastPaidDate || todayStr();
-                            setBikeDraft({
-                              ...bikeDraft,
-                              intervalDays: d,
-                              monthlyAmount: nextM,
-                              nextDueDate: addDaysToDateStr(baseDate, d),
-                            });
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[11px] font-black cursor-pointer transition-all border ${
-                            Number(bikeDraft.intervalDays) === d
-                              ? 'bg-[#FF6A1A] text-black border-[#FF6A1A]'
-                              : `${surfaceSubtle} hover:border-slate-600`
-                          }`}
-                        >
-                          {d === 1 ? '1d (Diário)' : `${d}d`}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                          Intervalo em Dias (Personalizado)
-                        </label>
-                        <FreeNumberInput
-                          step="1"
-                          value={bikeDraft.intervalDays || 90}
-                          onValueChange={val => {
-                            const cleanDays = Math.max(1, Math.round(val));
-                            const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
-                            const nextM = tCost > 0 ? Math.round(((tCost / cleanDays) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
-                            const baseDate = bikeDraft.lastPaidDate || todayStr();
-                            setBikeDraft({
-                              ...bikeDraft,
-                              intervalDays: cleanDays,
-                              monthlyAmount: nextM,
-                              nextDueDate: addDaysToDateStr(baseDate, cleanDays),
-                            });
-                          }}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className={`block text-[11px] font-bold ${mutedText}`}>
-                            Valor por Abastecimento / Troca (R$)
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = bikeDraft.totalCost ?? bikeDraft.monthlyAmount;
-                              openQuickCalculator('Valor da Manutenção / Troca', cur, valStr => {
-                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
-                                const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                                setBikeDraft({
-                                  ...bikeDraft,
-                                  totalCost: cleanCost,
-                                  monthlyAmount: nextM,
-                                });
-                              });
-                            }}
-                            className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
-                          >
-                            <Calculator className="w-3 h-3" />
-                            <span>Calc</span>
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <FreeNumberInput
-                            step="5"
-                            value={bikeDraft.totalCost ?? bikeDraft.monthlyAmount}
-                            onValueChange={val => {
-                              const cleanCost = Math.max(0, val);
-                              const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                              const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                              setBikeDraft({
-                                ...bikeDraft,
-                                totalCost: cleanCost,
-                                monthlyAmount: nextM,
-                              });
-                            }}
-                            className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = bikeDraft.totalCost ?? bikeDraft.monthlyAmount;
-                              openQuickCalculator('Valor da Manutenção / Troca', cur, valStr => {
-                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
-                                const cleanDays = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                                setBikeDraft({
-                                  ...bikeDraft,
-                                  totalCost: cleanCost,
-                                  monthlyAmount: nextM,
-                                });
-                              });
-                            }}
-                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                            title="Calcular Valor"
-                          >
-                            <Calculator className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/40">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className={`text-[11px] font-bold ${mutedText}`}>
-                          Última Troca / Início do Ciclo
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const t = todayStr();
-                            const d = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                            setBikeDraft({
-                              ...bikeDraft,
-                              lastPaidDate: t,
-                              nextDueDate: addDaysToDateStr(t, d),
-                            });
-                          }}
-                          className="text-[10px] font-black text-[#FF6A1A] hover:underline cursor-pointer"
-                        >
-                          Usar Hoje
-                        </button>
-                      </div>
-                      <input
-                        type="date"
-                        value={bikeDraft.lastPaidDate || todayStr()}
-                        onChange={e => {
-                          const newStart = e.target.value;
-                          const d = Math.max(1, Number(bikeDraft.intervalDays) || 30);
-                          setBikeDraft({
-                            ...bikeDraft,
-                            lastPaidDate: newStart,
-                            nextDueDate: addDaysToDateStr(newStart, d),
-                          });
-                        }}
-                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                        Próxima Troca / Vencimento
-                      </label>
-                      <input
-                        type="date"
-                        value={bikeDraft.nextDueDate || addDaysToDateStr(bikeDraft.lastPaidDate || todayStr(), bikeDraft.intervalDays || 90)}
-                        onChange={e => {
-                          const newDue = e.target.value;
-                          const diff = Math.max(1, calculateDaysDifference(bikeDraft.lastPaidDate || todayStr(), newDue));
-                          const tCost = Math.max(0, Number(bikeDraft.totalCost) || 0);
-                          const nextM = tCost > 0 ? Math.round(((tCost / diff) * 30) * 100) / 100 : bikeDraft.monthlyAmount;
-                          setBikeDraft({
-                            ...bikeDraft,
-                            nextDueDate: newDue,
-                            intervalDays: diff,
-                            monthlyAmount: nextM,
-                          });
-                        }}
-                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Resumo Automático do Rateio */}
-                  <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                    isDark ? 'bg-[#FF6A1A]/10 border-[#FF6A1A]/30' : 'bg-orange-50 border-orange-200'
-                  }`}>
-                    <div>
-                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                        Reserva Mensal Equivalente (a cada {bikeDraft.intervalDays || 30} dias):
-                      </span>
-                      <span className="font-black text-[#FF6A1A] text-sm tabular-nums">
-                        {fmtCurrencyExact(bikeDraft.monthlyAmount)}/mês
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Separar por dia:</span>
-                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
-                        {fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {(bikeDraft.recurrenceType || 'monthly') === 'monthly' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`block text-xs font-bold ${mutedText}`}>
-                        Valor Mensal Estimado (R$)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor Mensal Estimado (R$)', bikeDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Calculator className="w-3 h-3" />
-                        <span>Calc</span>
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <FreeNumberInput
-                        step="5"
-                        value={bikeDraft.monthlyAmount}
-                        onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
-                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor Mensal Estimado (R$)', bikeDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                        title="Calcular Valor Mensal"
-                      >
-                        <Calculator className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Dia Fixo do Vencimento no Mês
-                    </label>
-                    <FreeNumberInput
-                      step="1"
-                      value={bikeDraft.dueDay || 15}
-                      onValueChange={val => setBikeDraft({ ...bikeDraft, dueDay: Math.max(1, Math.min(31, val)) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Dia do mês (1 a 31)
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {(bikeDraft.recurrenceType || 'monthly') === 'specific_date' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`block text-xs font-bold ${mutedText}`}>
-                        Valor para Reservar por Mês (R$)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor para Reservar (R$)', bikeDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Calculator className="w-3 h-3" />
-                        <span>Calc</span>
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <FreeNumberInput
-                        step="5"
-                        value={bikeDraft.monthlyAmount}
-                        onValueChange={val => setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val })}
-                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor para Reservar (R$)', bikeDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setBikeDraft({ ...bikeDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                        title="Calcular Valor"
-                      >
-                        <Calculator className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Rateio: ~{fmtCurrencyExact((Number(bikeDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Data Específica do Vencimento
-                    </label>
-                    <input
-                      type="date"
-                      value={bikeDraft.nextDueDate || addDaysToDateStr(todayStr(), 30)}
-                      onChange={e => setBikeDraft({ ...bikeDraft, nextDueDate: e.target.value })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Data exata prevista no calendário
-                    </span>
-                  </div>
-                </div>
-              )}
+              {renderExpenseAmountAndCalendar({
+                accentClass: 'orange',
+                valueLabel: 'Valor Mensal / Despesa (R$)',
+                calcTitle: 'Valor da Despesa da Moto (R$)',
+                step: '5',
+                amount: bikeDraft.monthlyAmount,
+                dates: bikeDraft.selectedDates || [],
+                target: 'bike',
+                calendarLabel: 'Dias de pagamento / troca no calendário:',
+                onChangeAmount: val =>
+                  setBikeDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+              })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
@@ -18052,396 +18047,18 @@ export default function App() {
                 />
               </div>
 
-              {/* SELETOR DE TIPO DE VENCIMENTO / CICLO */}
-              <div>
-                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
-                  Como funciona o vencimento desta despesa?
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'monthly', label: '📅 Todo Mês', desc: 'Dia fixo (1 a 31)' },
-                    { id: 'interval_days', label: '🔄 A cada X dias', desc: 'Ex: Gás, feira, compras' },
-                    { id: 'specific_date', label: '🎯 Data Fixa', desc: 'Data específica' },
-                  ].map(opt => {
-                    const isSel = (householdDraft.recurrenceType || 'monthly') === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          const newType = opt.id as ExpenseRecurrenceType;
-                          const intDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                          const mAmt = Math.max(0, Number(householdDraft.monthlyAmount) || 0);
-                          const tCost =
-                            newType === 'interval_days' && (!householdDraft.totalCost || householdDraft.totalCost <= 0)
-                              ? Math.round((mAmt * (intDays / 30)) * 100) / 100
-                              : householdDraft.totalCost || mAmt;
-                          setHouseholdDraft({
-                            ...householdDraft,
-                            recurrenceType: newType,
-                            intervalDays: intDays,
-                            totalCost: tCost,
-                            nextDueDate: householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), intDays),
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          isSel
-                            ? 'bg-blue-500/15 border-blue-500 text-blue-400'
-                            : `${surfaceSubtle} hover:border-slate-600`
-                        }`}
-                      >
-                        <div className="text-xs font-black leading-tight">{opt.label}</div>
-                        <div className={`text-[10px] mt-0.5 truncate ${isSel ? 'text-blue-400/90' : mutedText}`}>
-                          {opt.desc}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* CAMPOS DINÂMICOS CONFORME O TIPO DE VENCIMENTO */}
-              {(householdDraft.recurrenceType || 'monthly') === 'interval_days' && (
-                <div className={`p-3.5 rounded-2xl border space-y-3.5 bg-transparent ${
-                  isDark ? 'border-blue-500/30' : 'border-blue-200'
-                }`}>
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-black text-blue-400">
-                        Compra / Vencimento a cada quantos dias?
-                      </label>
-                      <span className={`text-[10px] font-bold ${mutedText}`}>
-                        Atalhos rápidos:
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
-                      {[7, 15, 30, 45, 60, 90, 120, 180, 365].map(d => (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => {
-                            const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
-                            const nextM = tCost > 0 ? Math.round(((tCost / d) * 30) * 100) / 100 : householdDraft.monthlyAmount;
-                            const baseDate = householdDraft.lastPaidDate || todayStr();
-                            setHouseholdDraft({
-                              ...householdDraft,
-                              intervalDays: d,
-                              monthlyAmount: nextM,
-                              nextDueDate: addDaysToDateStr(baseDate, d),
-                            });
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[11px] font-black cursor-pointer transition-all border ${
-                            Number(householdDraft.intervalDays) === d
-                              ? 'bg-blue-600 text-white border-blue-500'
-                              : `${surfaceSubtle} hover:border-slate-600`
-                          }`}
-                        >
-                          {d}d
-                        </button>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                          Intervalo em Dias (Personalizado)
-                        </label>
-                        <FreeNumberInput
-                          step="5"
-                          value={householdDraft.intervalDays || 45}
-                          onValueChange={val => {
-                            const cleanDays = Math.max(1, Math.round(val));
-                            const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
-                            const nextM = tCost > 0 ? Math.round(((tCost / cleanDays) * 30) * 100) / 100 : householdDraft.monthlyAmount;
-                            const baseDate = householdDraft.lastPaidDate || todayStr();
-                            setHouseholdDraft({
-                              ...householdDraft,
-                              intervalDays: cleanDays,
-                              monthlyAmount: nextM,
-                              nextDueDate: addDaysToDateStr(baseDate, cleanDays),
-                            });
-                          }}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className={`block text-[11px] font-bold ${mutedText}`}>
-                            Valor da Compra / Conta (R$)
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = householdDraft.totalCost ?? householdDraft.monthlyAmount;
-                              openQuickCalculator('Valor da Compra / Conta (R$)', cur, valStr => {
-                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
-                                const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                                setHouseholdDraft({
-                                  ...householdDraft,
-                                  totalCost: cleanCost,
-                                  monthlyAmount: nextM,
-                                });
-                              });
-                            }}
-                            className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                          >
-                            <Calculator className="w-3 h-3" />
-                            <span>Calc</span>
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <FreeNumberInput
-                            step="10"
-                            value={householdDraft.totalCost ?? householdDraft.monthlyAmount}
-                            onValueChange={val => {
-                              const cleanCost = Math.max(0, val);
-                              const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                              const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                              setHouseholdDraft({
-                                ...householdDraft,
-                                totalCost: cleanCost,
-                                monthlyAmount: nextM,
-                              });
-                            }}
-                            className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cur = householdDraft.totalCost ?? householdDraft.monthlyAmount;
-                              openQuickCalculator('Valor da Compra / Conta (R$)', cur, valStr => {
-                                const cleanCost = Math.max(0, parseFloat(valStr) || 0);
-                                const cleanDays = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                                const nextM = Math.round(((cleanCost / cleanDays) * 30) * 100) / 100;
-                                setHouseholdDraft({
-                                  ...householdDraft,
-                                  totalCost: cleanCost,
-                                  monthlyAmount: nextM,
-                                });
-                              });
-                            }}
-                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                            title="Calcular Valor"
-                          >
-                            <Calculator className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/40">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className={`text-[11px] font-bold ${mutedText}`}>
-                          Último Pagamento / Compra
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const t = todayStr();
-                            const d = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                            setHouseholdDraft({
-                              ...householdDraft,
-                              lastPaidDate: t,
-                              nextDueDate: addDaysToDateStr(t, d),
-                            });
-                          }}
-                          className="text-[10px] font-black text-blue-400 hover:underline cursor-pointer"
-                        >
-                          Usar Hoje
-                        </button>
-                      </div>
-                      <input
-                        type="date"
-                        value={householdDraft.lastPaidDate || todayStr()}
-                        onChange={e => {
-                          const newStart = e.target.value;
-                          const d = Math.max(1, Number(householdDraft.intervalDays) || 30);
-                          setHouseholdDraft({
-                            ...householdDraft,
-                            lastPaidDate: newStart,
-                            nextDueDate: addDaysToDateStr(newStart, d),
-                          });
-                        }}
-                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                        Próximo Vencimento / Compra
-                      </label>
-                      <input
-                        type="date"
-                        value={householdDraft.nextDueDate || addDaysToDateStr(householdDraft.lastPaidDate || todayStr(), householdDraft.intervalDays || 45)}
-                        onChange={e => {
-                          const newDue = e.target.value;
-                          const diff = Math.max(1, calculateDaysDifference(householdDraft.lastPaidDate || todayStr(), newDue));
-                          const tCost = Math.max(0, Number(householdDraft.totalCost) || 0);
-                          const nextM = tCost > 0 ? Math.round(((tCost / diff) * 30) * 100) / 100 : householdDraft.monthlyAmount;
-                          setHouseholdDraft({
-                            ...householdDraft,
-                            nextDueDate: newDue,
-                            intervalDays: diff,
-                            monthlyAmount: nextM,
-                          });
-                        }}
-                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Resumo Automático do Rateio */}
-                  <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                    isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
-                  }`}>
-                    <div>
-                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                        Reserva Mensal Equivalente (a cada {householdDraft.intervalDays || 30} dias):
-                      </span>
-                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
-                        {fmtCurrencyExact(householdDraft.monthlyAmount)}/mês
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-[10px] font-bold block ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Separar por dia:</span>
-                      <span className={`font-black text-sm tabular-nums ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
-                        {fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {(householdDraft.recurrenceType || 'monthly') === 'monthly' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`block text-xs font-bold ${mutedText}`}>
-                        Valor Mensal (R$)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor Mensal da Conta (R$)', householdDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Calculator className="w-3 h-3" />
-                        <span>Calc</span>
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <FreeNumberInput
-                        step="10"
-                        value={householdDraft.monthlyAmount}
-                        onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
-                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor Mensal da Conta (R$)', householdDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                        title="Calcular Valor Mensal"
-                      >
-                        <Calculator className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Dia Fixo do Vencimento no Mês
-                    </label>
-                    <FreeNumberInput
-                      step="1"
-                      value={householdDraft.dueDay || 10}
-                      onValueChange={val => setHouseholdDraft({ ...householdDraft, dueDay: Math.max(1, Math.min(31, val)) })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                    />
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Dia do mês em que a conta vence (1 a 31)
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {(householdDraft.recurrenceType || 'monthly') === 'specific_date' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`block text-xs font-bold ${mutedText}`}>
-                        Valor para Reservar por Mês (R$)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor para Reservar (R$)', householdDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Calculator className="w-3 h-3" />
-                        <span>Calc</span>
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <FreeNumberInput
-                        step="10"
-                        value={householdDraft.monthlyAmount}
-                        onValueChange={val => setHouseholdDraft({ ...householdDraft, monthlyAmount: Math.max(0, val), totalCost: Math.max(0, val) })}
-                        className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openQuickCalculator('Valor para Reservar (R$)', householdDraft.monthlyAmount, valStr => {
-                            const val = Math.max(0, parseFloat(valStr) || 0);
-                            setHouseholdDraft({ ...householdDraft, monthlyAmount: val, totalCost: val });
-                          });
-                        }}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                        title="Calcular Valor"
-                      >
-                        <Calculator className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Rateio: ~{fmtCurrencyExact((Number(householdDraft.monthlyAmount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                      Data Específica do Vencimento
-                    </label>
-                    <input
-                      type="date"
-                      value={householdDraft.nextDueDate || addDaysToDateStr(todayStr(), 30)}
-                      onChange={e => setHouseholdDraft({ ...householdDraft, nextDueDate: e.target.value })}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                    />
-                    <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-                      Data exata prevista no calendário
-                    </span>
-                  </div>
-                </div>
-              )}
+              {renderExpenseAmountAndCalendar({
+                accentClass: 'blue',
+                valueLabel: 'Valor Mensal / Conta (R$)',
+                calcTitle: 'Valor da Conta da Casa (R$)',
+                step: '10',
+                amount: householdDraft.monthlyAmount,
+                dates: householdDraft.selectedDates || [],
+                target: 'household',
+                calendarLabel: 'Dias de vencimento / pagamento no calendário:',
+                onChangeAmount: val =>
+                  setHouseholdDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+              })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
@@ -18640,54 +18257,13 @@ export default function App() {
 
             <div className="py-4 space-y-4">
               {/* 1. Seleção Livre dos Dias que Irá Rodar via Modal de Calendário */}
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <label className={`text-xs font-bold ${mutedText}`}>
-                    Dias que irá rodar no mês:
-                  </label>
-                  <span className="text-[11px] font-black text-[#FF6A1A]">
-                    {projectedSelectedDates.length} dia{projectedSelectedDates.length === 1 ? '' : 's'} selecionado{projectedSelectedDates.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const fallbackMonth = (projectedSelectedDates[0] || todayStr()).slice(0, 7);
-                    setProjectedCalendarMonth(fallbackMonth);
-                    setShowProjectedCalendarModal(true);
-                  }}
-                  className={`w-full p-3.5 rounded-2xl bg-transparent border ${
-                    projectedSelectedDates.length > 0 ? 'border-[#FF6A1A]/60' : dividerBorder
-                  } hover:border-[#FF6A1A] transition-colors text-left cursor-pointer flex items-center justify-between gap-3`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-10 h-10 rounded-xl bg-transparent border ${
-                      projectedSelectedDates.length > 0 ? 'border-[#FF6A1A]/50 text-[#FF6A1A]' : `${dividerBorder} ${mutedText}`
-                    } flex items-center justify-center shrink-0`}>
-                      <Calendar className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className={`text-xs sm:text-sm font-black ${primaryText}`}>
-                        {projectedSelectedDates.length > 0
-                          ? `${projectedSelectedDates.length} dia${projectedSelectedDates.length === 1 ? '' : 's'} selecionado${projectedSelectedDates.length === 1 ? '' : 's'} no calendário`
-                          : 'Abrir Calendário e Selecionar Dias'}
-                      </div>
-                      <div className={`text-[11px] mt-0.5 truncate ${mutedText}`}>
-                        {projectedSelectedDates.length > 0
-                          ? `${projectedSelectedDates
-                              .slice(0, 5)
-                              .map(d => d.slice(8, 10) + '/' + d.slice(5, 7))
-                              .join(', ')}${projectedSelectedDates.length > 5 ? ` +${projectedSelectedDates.length - 5} dias` : ''}`
-                          : 'Toque para escolher livremente quaisquer dias do mês'}
-                      </div>
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-transparent border border-[#FF6A1A]/50 text-[#FF6A1A] shrink-0">
-                    Calendário
-                  </span>
-                </button>
-              </div>
+              {renderFreeCalendarTrigger({
+                label: 'Dias que irá rodar no mês:',
+                dates: projectedSelectedDates,
+                target: 'projected',
+                emptyHint: 'Toque para escolher livremente quaisquer dias do mês',
+                accentClass: 'orange',
+              })}
 
               {/* 2. Valor da Diária Prevista (R$/dia) */}
               <div>
@@ -18828,37 +18404,149 @@ export default function App() {
 
               {/* 4. Aplicativo / Origem */}
               <div>
-                <label className={`block text-xs font-bold mb-1.5 ${mutedText}`}>
-                  Canal / Aplicativo de Origem:
-                </label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {[
-                    { id: 'Particular', name: 'Particular', icon: '🛵' },
-                    { id: 'iFood', name: 'iFood', icon: '🔴' },
-                    { id: '99Moto', name: '99Moto', icon: '🟡' },
-                    { id: 'Uber Flash', name: 'Uber Flash', icon: '⚫' },
-                    { id: 'Rappi', name: 'Rappi', icon: '🟠' },
-                    { id: 'Frete', name: 'Frete', icon: '📦' },
-                    { id: 'Fixo', name: 'Fixo Semanal', icon: '💼' },
-                    { id: 'Outro', name: 'Outro', icon: '✨' },
-                  ].map(app => (
-                    <button
-                      key={app.id}
-                      type="button"
-                      onClick={() => setProjectedApp(app.id)}
-                      className={`p-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer border transition-all ${
-                        projectedApp === app.id
-                          ? isDark
-                            ? 'bg-sky-500/20 border-sky-400 text-sky-300 scale-102'
-                            : 'bg-sky-100 border-sky-500 text-sky-800 font-black scale-102'
-                          : `${surfaceSubtle} border-transparent hover:border-slate-700`
-                      }`}
-                    >
-                      <span className="text-base">{app.icon}</span>
-                      <span className="text-[10px] truncate max-w-full">{app.name}</span>
-                    </button>
-                  ))}
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className={`text-xs font-bold ${mutedText}`}>
+                    Canal / Aplicativo de Origem:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isEditingProjectedChannels) {
+                        setIsEditingProjectedChannels(false);
+                        setEditingProjectedChannelId(null);
+                      } else {
+                        const activeChannel = resolveProjectedChannel(projectedApp);
+                        setIsEditingProjectedChannels(true);
+                        setEditingProjectedChannelId(activeChannel.id);
+                        setEditingProjectedChannelName(activeChannel.name);
+                        setEditingProjectedChannelIcon(activeChannel.icon || '🛵');
+                      }
+                    }}
+                    className={`text-[11px] font-bold flex items-center gap-1 px-2.5 py-1 rounded-lg cursor-pointer transition-colors ${
+                      isEditingProjectedChannels
+                        ? 'bg-[#FF6A1A] text-black'
+                        : `${surfaceSubtle} text-[#FF6A1A] hover:border-[#FF6A1A]`
+                    }`}
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>{isEditingProjectedChannels ? 'Concluir Edição' : 'Editar Origem'}</span>
+                  </button>
                 </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {projectedChannels.map(app => {
+                    const isSelected = projectedApp === app.id;
+                    const isBeingEdited = isEditingProjectedChannels && editingProjectedChannelId === app.id;
+                    return (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => {
+                          setProjectedApp(app.id);
+                          if (isEditingProjectedChannels) {
+                            setEditingProjectedChannelId(app.id);
+                            setEditingProjectedChannelName(app.name);
+                            setEditingProjectedChannelIcon(app.icon || '🛵');
+                          }
+                        }}
+                        className={`p-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 cursor-pointer border transition-all relative ${
+                          isBeingEdited
+                            ? 'ring-2 ring-[#FF6A1A] bg-[#FF6A1A]/15 border-[#FF6A1A] text-[#FF6A1A]'
+                            : isSelected
+                            ? isDark
+                              ? 'bg-sky-500/20 border-sky-400 text-sky-300 scale-102'
+                              : 'bg-sky-100 border-sky-500 text-sky-800 font-black scale-102'
+                            : `${surfaceSubtle} border-transparent hover:border-slate-700`
+                        }`}
+                      >
+                        {isEditingProjectedChannels && (
+                          <Edit3 className="w-2.5 h-2.5 absolute top-1.5 right-1.5 opacity-75 text-[#FF6A1A]" />
+                        )}
+                        <span className="text-base">{app.icon}</span>
+                        <span className="text-[10px] truncate max-w-full">{app.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {isEditingProjectedChannels && editingProjectedChannelId && (
+                  <div className={`mt-2.5 p-3 rounded-2xl border border-[#FF6A1A]/50 ${surfaceSubtle} flex flex-col gap-2.5`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold text-[#FF6A1A]">
+                        Editar Ícone e Texto da Origem
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingProjectedChannelId(null);
+                          setIsEditingProjectedChannels(false);
+                        }}
+                        className={`p-1 rounded-lg ${mutedText} hover:text-current cursor-pointer`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={editingProjectedChannelIcon}
+                        onChange={e => setEditingProjectedChannelIcon(e.target.value)}
+                        placeholder="🛵"
+                        className={`w-12 px-2 py-2 rounded-xl text-center text-sm font-bold outline-none ${inputSurface}`}
+                        title="Ícone / Emoji"
+                      />
+                      <input
+                        type="text"
+                        value={editingProjectedChannelName}
+                        onChange={e => setEditingProjectedChannelName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveProjectedChannelEdit();
+                          }
+                        }}
+                        placeholder="Nome do canal / origem"
+                        className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                      {['🛵', '🔴', '🟡', '⚫', '🟠', '🟢', '🔵', '📦', '💼', '🍕', '🍔', '🏍️', '🚀', '✨'].map(ic => (
+                        <button
+                          key={ic}
+                          type="button"
+                          onClick={() => setEditingProjectedChannelIcon(ic)}
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm cursor-pointer border shrink-0 transition-all ${
+                            editingProjectedChannelIcon === ic
+                              ? 'bg-[#FF6A1A] border-[#FF6A1A] text-black scale-105'
+                              : `bg-transparent ${dividerBorder} hover:border-[#FF6A1A]/50`
+                          }`}
+                        >
+                          {ic}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      {dbState.appOverrides?.[`proj_${editingProjectedChannelId}`] ? (
+                        <button
+                          type="button"
+                          onClick={() => handleResetProjectedChannelEdit(editingProjectedChannelId)}
+                          className={`px-3 py-1.5 rounded-xl text-[11px] font-bold bg-transparent border ${dividerBorder} ${mutedText} hover:text-current cursor-pointer`}
+                        >
+                          Restaurar Padrão
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleSaveProjectedChannelEdit}
+                        className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black cursor-pointer flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Salvar Origem</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 5. Observações Opcionais */}
@@ -18912,9 +18600,16 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL MINIMALISTA DE CALENDÁRIO PARA SELEÇÃO LIVRE DE DIAS */}
-      {showProjectedCalendarModal && (() => {
-        const [calY, calM] = projectedCalendarMonth.split('-').map(Number);
+      {/* MODAL MINIMALISTA DE CALENDÁRIO COMPARTILHADO PARA SELEÇÃO LIVRE DE DIAS */}
+      {calendarPickerTarget && (() => {
+        const currentSelectedDates =
+          calendarPickerTarget === 'projected'
+            ? projectedSelectedDates
+            : calendarPickerTarget === 'bike'
+            ? bikeDraft.selectedDates || []
+            : householdDraft.selectedDates || [];
+
+        const [calY, calM] = calendarPickerMonth.split('-').map(Number);
         const yearNum = calY || new Date().getFullYear();
         const monthNum = calM || new Date().getMonth() + 1;
         const firstWeekday = new Date(yearNum, monthNum - 1, 1).getDay();
@@ -18927,50 +18622,73 @@ export default function App() {
         for (let d = 1; d <= daysInMonth; d++) {
           monthAllDates.push(`${monthPrefix}-${String(d).padStart(2, '0')}`);
         }
-        const selectedSet = new Set(projectedSelectedDates);
+        const selectedSet = new Set(currentSelectedDates);
         const allMonthSelected = monthAllDates.every(d => selectedSet.has(d));
         const selectedInCurrentMonthCount = monthAllDates.filter(d => selectedSet.has(d)).length;
 
-        const updateSelectedAndTotal = (nextDates: string[]) => {
+        const applySelectedDates = (nextDates: string[]) => {
           const sorted = Array.from(new Set(nextDates)).sort();
-          setProjectedSelectedDates(sorted);
-          const rate = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
-          if (rate > 0) {
-            setProjectedAmount(
-              sorted.length > 0 ? String(Math.round(sorted.length * rate * 100) / 100) : ''
-            );
+          if (calendarPickerTarget === 'projected') {
+            setProjectedSelectedDates(sorted);
+            const rate = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
+            if (rate > 0) {
+              setProjectedAmount(
+                sorted.length > 0 ? String(Math.round(sorted.length * rate * 100) / 100) : ''
+              );
+            }
+          } else if (calendarPickerTarget === 'bike') {
+            setBikeDraft(prev => ({
+              ...prev,
+              selectedDates: sorted,
+              recurrenceType: 'calendar_dates',
+            }));
+          } else {
+            setHouseholdDraft(prev => ({
+              ...prev,
+              selectedDates: sorted,
+              recurrenceType: 'calendar_dates',
+            }));
           }
         };
 
         const toggleDaySelection = (ymd: string) => {
           if (selectedSet.has(ymd)) {
-            updateSelectedAndTotal(projectedSelectedDates.filter(d => d !== ymd));
+            applySelectedDates(currentSelectedDates.filter(d => d !== ymd));
           } else {
-            updateSelectedAndTotal([...projectedSelectedDates, ymd]);
+            applySelectedDates([...currentSelectedDates, ymd]);
           }
         };
 
         const toggleSelectWholeMonth = () => {
           if (allMonthSelected) {
-            updateSelectedAndTotal(projectedSelectedDates.filter(d => !d.startsWith(monthPrefix)));
+            applySelectedDates(currentSelectedDates.filter(d => !d.startsWith(monthPrefix)));
           } else {
-            updateSelectedAndTotal([...projectedSelectedDates, ...monthAllDates]);
+            applySelectedDates([...currentSelectedDates, ...monthAllDates]);
           }
         };
 
         const stepCalendarMonth = (delta: number) => {
           const next = new Date(yearNum, monthNum - 1 + delta, 1);
-          setProjectedCalendarMonth(
+          setCalendarPickerMonth(
             `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
           );
         };
 
-        const dailyRatePreview = parseFloat(projectedDailyRate.replace(',', '.')) || 0;
+        const dailyRatePreview =
+          calendarPickerTarget === 'projected'
+            ? parseFloat(projectedDailyRate.replace(',', '.')) || 0
+            : 0;
+        const subtitle =
+          calendarPickerTarget === 'projected'
+            ? 'Toque nos dias em que você irá rodar'
+            : calendarPickerTarget === 'bike'
+            ? 'Toque nos dias desta despesa da moto'
+            : 'Toque nos dias desta despesa da casa';
 
         return (
           <div
             className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
-            onClick={() => setShowProjectedCalendarModal(false)}
+            onClick={() => setCalendarPickerTarget(null)}
           >
             <div
               className={`w-full max-w-md rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${modalSurface} my-auto animate-in fade-in zoom-in-95 duration-200`}
@@ -18987,13 +18705,13 @@ export default function App() {
                       Selecionar Dias no Calendário
                     </h3>
                     <p className={`text-[11px] mt-0.5 ${mutedText}`}>
-                      Toque nos dias em que você irá rodar
+                      {subtitle}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowProjectedCalendarModal(false)}
+                  onClick={() => setCalendarPickerTarget(null)}
                   className={`p-2 rounded-xl shrink-0 cursor-pointer bg-transparent border ${dividerBorder} ${mutedText} hover:text-current`}
                 >
                   <X className="w-4 h-4" />
@@ -19044,13 +18762,13 @@ export default function App() {
                   {allMonthSelected ? 'Desmarcar Mês Inteiro' : 'Marcar Todos os Dias do Mês'}
                 </button>
 
-                {projectedSelectedDates.length > 0 && (
+                {currentSelectedDates.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => updateSelectedAndTotal([])}
+                    onClick={() => applySelectedDates([])}
                     className={`px-3 py-1.5 rounded-xl text-[11px] font-bold bg-transparent border ${dividerBorder} ${mutedText} hover:border-rose-500/60 hover:text-rose-400 cursor-pointer transition-colors`}
                   >
-                    Limpar ({projectedSelectedDates.length})
+                    Limpar ({currentSelectedDates.length})
                   </button>
                 )}
               </div>
@@ -19101,17 +18819,17 @@ export default function App() {
               <div className={`mt-4 pt-3.5 border-t ${dividerBorder} flex items-center justify-between gap-3 flex-wrap`}>
                 <div className="text-xs">
                   <div className={`font-black ${primaryText}`}>
-                    {projectedSelectedDates.length} dia{projectedSelectedDates.length === 1 ? '' : 's'} selecionado{projectedSelectedDates.length === 1 ? '' : 's'}
+                    {currentSelectedDates.length} dia{currentSelectedDates.length === 1 ? '' : 's'} selecionado{currentSelectedDates.length === 1 ? '' : 's'}
                   </div>
-                  {dailyRatePreview > 0 && projectedSelectedDates.length > 0 && (
+                  {dailyRatePreview > 0 && currentSelectedDates.length > 0 && (
                     <div className="text-[11px] font-bold text-sky-400">
-                      Total: {fmtMoney(Math.round(projectedSelectedDates.length * dailyRatePreview * 100) / 100)}
+                      Total: {fmtMoney(Math.round(currentSelectedDates.length * dailyRatePreview * 100) / 100)}
                     </div>
                   )}
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowProjectedCalendarModal(false)}
+                  onClick={() => setCalendarPickerTarget(null)}
                   className="px-4 py-2.5 rounded-xl text-xs font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] cursor-pointer transition-colors flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4 stroke-[2.5]" />
