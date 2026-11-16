@@ -280,6 +280,7 @@ export interface AppDefinition {
 export interface CategoryDefinition {
   id: string;
   name: string;
+  icon?: string;
 }
 
 export interface ShiftDefinition {
@@ -287,7 +288,17 @@ export interface ShiftDefinition {
   name: string;
 }
 
-export type BikeExpenseCategory = 'combustivel' | 'manutencao' | 'documentacao' | 'seguro' | 'equipamento' | 'outros';
+export type BikeExpenseCategory =
+  | 'combustivel'
+  | 'manutencao'
+  | 'pecas'
+  | 'documentacao'
+  | 'seguro'
+  | 'equipamento'
+  | 'alimentacao'
+  | 'emergencia'
+  | 'imprevisto_mecanico'
+  | 'outros';
 
 export type ExpenseRecurrenceType = 'monthly' | 'interval_days' | 'specific_date' | 'calendar_dates';
 
@@ -570,9 +581,11 @@ export interface LocalRoomDatabaseState {
   projectedRevenues?: ProjectedRevenueItem[];
   customApps: AppDefinition[];
   customCategories: CategoryDefinition[];
+  customIcons?: string[];
   appOverrides: Record<string, { name: string; icon: string }>;
   customShifts?: ShiftDefinition[];
   shiftOverrides?: Record<string, { name: string }>;
+  deletedCategoryIds?: string[];
   deletedShiftIds?: string[];
   deletedAppIds?: string[];
   deletedEntryIds?: number[];
@@ -917,9 +930,11 @@ export async function runWorkManagerCloudSync(
     financialPlan: state.financialPlan || DEFAULT_FINANCIAL_PLAN,
     customApps: state.customApps || [],
     customCategories: state.customCategories || [],
+    customIcons: state.customIcons || [],
     appOverrides: state.appOverrides || {},
     customShifts: state.customShifts || [],
     shiftOverrides: state.shiftOverrides || {},
+    deletedCategoryIds: state.deletedCategoryIds || [],
     deletedShiftIds: state.deletedShiftIds || [],
     deletedAppIds: state.deletedAppIds || [],
     deletedEntryIds: state.deletedEntryIds || [],
@@ -1436,6 +1451,21 @@ function combineSnapshotsList(
     s => s.deletedProjectedRevenueIds,
     s => s.projectedRevenues
   );
+  const delCategories = collectDeletedConfigIds(
+    s => s.deletedCategoryIds,
+    s => s.customCategories
+  );
+  const combinedCustomIcons = Array.from(
+    new Set(valid.flatMap(s => (Array.isArray(s.customIcons) ? s.customIcons : [])).filter(Boolean))
+  );
+  const catCombinedMap = new Map<string, CategoryDefinition>();
+  for (const s of [...sorted].reverse()) {
+    for (const c of s.customCategories || []) {
+      if (c && c.id && !delCategories.has(String(c.id))) {
+        catCombinedMap.set(String(c.id), c);
+      }
+    }
+  }
 
   const projMap = new Map<string, ProjectedRevenueItem>();
   for (const s of sorted) {
@@ -1470,6 +1500,9 @@ function combineSnapshotsList(
     householdExpenses: bestHousehold,
     bikeExpenses: bestBike,
     projectedRevenues: Array.from(projMap.values()),
+    customCategories: Array.from(catCombinedMap.values()),
+    customIcons: combinedCustomIcons,
+    deletedCategoryIds: Array.from(delCategories),
     deletedEntryIds: Array.from(delEntries),
     deletedExpenseIds: Array.from(delExpenses),
     deletedBikeExpenseIds: Array.from(delBike),
@@ -1816,9 +1849,11 @@ export async function fetchRemoteCloudData(
             : Array.isArray(snap.customCategories)
             ? snap.customCategories
             : [],
+          customIcons: Array.isArray(snap.customIcons) ? snap.customIcons : [],
           appOverrides: settings?.app_overrides || snap.appOverrides || {},
           customShifts: Array.isArray(snap.customShifts) ? snap.customShifts : [],
           shiftOverrides: snap.shiftOverrides || {},
+          deletedCategoryIds: Array.isArray(snap.deletedCategoryIds) ? snap.deletedCategoryIds : [],
           deletedShiftIds: Array.isArray(snap.deletedShiftIds) ? snap.deletedShiftIds : [],
           deletedAppIds: Array.isArray(snap.deletedAppIds) ? snap.deletedAppIds : [],
           deletedEntryIds: Array.from(deletedEntrySet),
@@ -1882,6 +1917,19 @@ export async function uploadLocalDataToCloud(
       ...(localState.deletedProjectedRevenueIds || []).map(String),
       ...(remote?.deletedProjectedRevenueIds || []).map(String),
     ])
+  );
+  const deletedCategoryIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedCategoryIds || []).map(String),
+      ...(remote?.deletedCategoryIds || []).map(String),
+    ])
+  );
+  const delCategorySet = new Set(deletedCategoryIds);
+  const mergedUploadCats = (localState.customCategories || []).filter(
+    c => c && !delCategorySet.has(String(c.id))
+  );
+  const mergedUploadIcons = Array.from(
+    new Set([...(remote?.customIcons || []), ...(localState.customIcons || [])].filter(Boolean))
   );
   const delEntrySet = new Set(deletedEntryIds);
   const delExpenseSet = new Set(deletedExpenseIds);
@@ -1967,6 +2015,9 @@ export async function uploadLocalDataToCloud(
     householdExpenses: finalHouseholdExpenses,
     bikeExpenses: finalBikeExpenses,
     projectedRevenues: mergedUploadProjected,
+    customCategories: mergedUploadCats,
+    customIcons: mergedUploadIcons,
+    deletedCategoryIds,
     deletedEntryIds,
     deletedExpenseIds,
     deletedBikeExpenseIds,
@@ -2142,13 +2193,23 @@ export async function downloadCloudDataToLocal(
   };
 
   // Merge customApps, customCategories, customShifts
+  const deletedCategoryIds = Array.from(
+    new Set<string>([
+      ...(localState.deletedCategoryIds || []).map(String),
+      ...(remote.deletedCategoryIds || []).map(String),
+    ])
+  );
+  const delCategorySet = new Set(deletedCategoryIds);
+  const mergedDownloadIcons = Array.from(
+    new Set([...(localState.customIcons || []), ...(remote.customIcons || [])].filter(Boolean))
+  );
   const appMap = new Map<string, AppDefinition>();
   for (const a of [...(localState.customApps || []), ...(remote.customApps || [])]) {
     if (a && a.id) appMap.set(a.id, a);
   }
   const catMap = new Map<string, CategoryDefinition>();
   for (const c of [...(localState.customCategories || []), ...(remote.customCategories || [])]) {
-    if (c && c.id) catMap.set(c.id, c);
+    if (c && c.id && !delCategorySet.has(String(c.id))) catMap.set(c.id, c);
   }
   const shiftMap = new Map<string, ShiftDefinition>();
   for (const s of [...(localState.customShifts || []), ...(remote.customShifts || [])]) {
@@ -2265,9 +2326,11 @@ export async function downloadCloudDataToLocal(
     },
     customApps: Array.from(appMap.values()),
     customCategories: Array.from(catMap.values()),
+    customIcons: mergedDownloadIcons,
     customShifts: Array.from(shiftMap.values()),
     appOverrides: { ...(localState.appOverrides || {}), ...(remote.appOverrides || {}) },
     shiftOverrides: { ...(localState.shiftOverrides || {}), ...(remote.shiftOverrides || {}) },
+    deletedCategoryIds,
     deletedEntryIds,
     deletedExpenseIds,
     deletedBikeExpenseIds,

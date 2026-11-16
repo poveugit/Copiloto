@@ -428,9 +428,11 @@ function createCleanDatabaseState(bikeModelName?: string): LocalRoomDatabaseStat
     projectedRevenues: [],
     customApps: [],
     customCategories: [],
+    customIcons: [],
     appOverrides: {},
     customShifts: [],
     shiftOverrides: {},
+    deletedCategoryIds: [],
     deletedShiftIds: [],
     deletedAppIds: [],
     deletedEntryIds: [],
@@ -579,9 +581,11 @@ function loadDatabaseForUser(user: UserProfile | null): LocalRoomDatabaseState {
         projectedRevenues: projectedList,
         customApps: Array.isArray(parsed.customApps) ? parsed.customApps : [],
         customCategories: Array.isArray(parsed.customCategories) ? parsed.customCategories : [],
+        customIcons: Array.isArray(parsed.customIcons) ? parsed.customIcons : [],
         appOverrides: parsed.appOverrides || {},
         customShifts: Array.isArray(parsed.customShifts) ? parsed.customShifts : [],
         shiftOverrides: parsed.shiftOverrides || {},
+        deletedCategoryIds: Array.isArray(parsed.deletedCategoryIds) ? parsed.deletedCategoryIds : [],
         deletedShiftIds: Array.isArray(parsed.deletedShiftIds) ? parsed.deletedShiftIds : [],
         deletedAppIds: Array.isArray(parsed.deletedAppIds) ? parsed.deletedAppIds : [],
         deletedEntryIds: Array.isArray(parsed.deletedEntryIds) ? parsed.deletedEntryIds : [],
@@ -1441,8 +1445,16 @@ export default function App() {
   });
   const [showNewBikeCatInput, setShowNewBikeCatInput] = useState<boolean>(false);
   const [newBikeCatName, setNewBikeCatName] = useState<string>('');
+  const [newBikeCatIcon, setNewBikeCatIcon] = useState<string>('📁');
+  const [editingBikeCatId, setEditingBikeCatId] = useState<string | null>(null);
   const [showNewHouseholdCatInput, setShowNewHouseholdCatInput] = useState<boolean>(false);
   const [newHouseholdCatName, setNewHouseholdCatName] = useState<string>('');
+  const [newHouseholdCatIcon, setNewHouseholdCatIcon] = useState<string>('📁');
+  const [editingHouseholdCatId, setEditingHouseholdCatId] = useState<string | null>(null);
+  const [showBikeCustomIconInput, setShowBikeCustomIconInput] = useState<boolean>(false);
+  const [bikeCustomIconDraft, setBikeCustomIconDraft] = useState<string>('');
+  const [showHouseCustomIconInput, setShowHouseCustomIconInput] = useState<boolean>(false);
+  const [houseCustomIconDraft, setHouseCustomIconDraft] = useState<string>('');
   const [selectedFinanceMonth, setSelectedFinanceMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -2808,26 +2820,150 @@ export default function App() {
     setIsEditingFuelCard(false);
   };
 
-  // ================= BIKE / DESPESAS DA MOTO HANDLERS =================
-  const handleAddBikeCategory = () => {
-    const trimmed = newBikeCatName.trim();
+  // ================= CUSTOM CATEGORIES & ICONS CRUD (MOTO + CASA) =================
+  const saveCustomCategoryForTarget = (target: 'bike' | 'household') => {
+    const rawName = target === 'bike' ? newBikeCatName : newHouseholdCatName;
+    const rawIcon = target === 'bike' ? newBikeCatIcon : newHouseholdCatIcon;
+    const editingId = target === 'bike' ? editingBikeCatId : editingHouseholdCatId;
+    const trimmed = rawName.trim();
     if (!trimmed) return;
-    const existing = (dbState.customCategories || []).find(
-      c => c.name.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (existing) {
-      setBikeDraft(prev => ({ ...prev, category: existing.id as any }));
-      setNewBikeCatName('');
-      setShowNewBikeCatInput(false);
+    const cleanIcon = rawIcon.trim() || '📁';
+    const currentCats = dbState.customCategories || [];
+    const nextIcons = Array.from(new Set([...(dbState.customIcons || []), cleanIcon].filter(Boolean)));
+
+    const resetEditor = () => {
+      if (target === 'bike') {
+        setNewBikeCatName('');
+        setNewBikeCatIcon('📁');
+        setEditingBikeCatId(null);
+        setShowNewBikeCatInput(false);
+      } else {
+        setNewHouseholdCatName('');
+        setNewHouseholdCatIcon('📁');
+        setEditingHouseholdCatId(null);
+        setShowNewHouseholdCatInput(false);
+      }
+    };
+
+    if (editingId) {
+      const nextCats = currentCats.map(c =>
+        c.id === editingId ? { ...c, name: trimmed, icon: cleanIcon } : c
+      );
+      persistAndEnqueueWorkManager({
+        ...dbState,
+        customCategories: nextCats,
+        customIcons: nextIcons,
+      });
+      if (target === 'bike' && bikeDraft.category === editingId) {
+        setBikeDraft(prev => ({ ...prev, icon: cleanIcon }));
+      }
+      if (target === 'household' && householdDraft.category === editingId) {
+        setHouseholdDraft(prev => ({ ...prev, icon: cleanIcon }));
+      }
+      resetEditor();
       return;
     }
-    const id = 'cat_' + Date.now();
-    const nextCats = [...(dbState.customCategories || []), { id, name: trimmed }];
-    persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
-    setBikeDraft(prev => ({ ...prev, category: id as any }));
-    setNewBikeCatName('');
-    setShowNewBikeCatInput(false);
+
+    const existing = currentCats.find(c => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) {
+      const existingIcon = existing.icon || cleanIcon;
+      if (target === 'bike') {
+        setBikeDraft(prev => ({ ...prev, category: existing.id as any, icon: existingIcon }));
+      } else {
+        setHouseholdDraft(prev => ({ ...prev, category: existing.id as any, icon: existingIcon }));
+      }
+      resetEditor();
+      return;
+    }
+
+    const id = (target === 'household' ? 'cat_h_' : 'cat_') + Date.now();
+    const nextCats = [...currentCats, { id, name: trimmed, icon: cleanIcon }];
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      customCategories: nextCats,
+      customIcons: nextIcons,
+      deletedCategoryIds: (dbState.deletedCategoryIds || []).filter(d => d !== id),
+    });
+    if (target === 'bike') {
+      setBikeDraft(prev => ({ ...prev, category: id as any, icon: cleanIcon }));
+    } else {
+      setHouseholdDraft(prev => ({ ...prev, category: id as any, icon: cleanIcon }));
+    }
+    resetEditor();
   };
+
+  const startEditCustomCategory = (target: 'bike' | 'household', cat: CategoryDefinition) => {
+    if (target === 'bike') {
+      setEditingBikeCatId(cat.id);
+      setNewBikeCatName(cat.name);
+      setNewBikeCatIcon(cat.icon || '📁');
+      setShowNewBikeCatInput(true);
+    } else {
+      setEditingHouseholdCatId(cat.id);
+      setNewHouseholdCatName(cat.name);
+      setNewHouseholdCatIcon(cat.icon || '📁');
+      setShowNewHouseholdCatInput(true);
+    }
+  };
+
+  const handleDeleteCustomCategory = (catId: string) => {
+    const nextCats = (dbState.customCategories || []).filter(c => c.id !== catId);
+    const nextDeletedIds = Array.from(new Set([...(dbState.deletedCategoryIds || []), catId]));
+    const nextBikeExpenses = Array.isArray(dbState.bikeExpenses)
+      ? dbState.bikeExpenses.map(b => (b.category === catId ? { ...b, category: 'outros' as any } : b))
+      : dbState.bikeExpenses;
+    const nextHouseExpenses = Array.isArray(dbState.householdExpenses)
+      ? dbState.householdExpenses.map(h =>
+          (h.category as string) === catId ? { ...h, category: 'outros' as any } : h
+        )
+      : dbState.householdExpenses;
+
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      customCategories: nextCats,
+      deletedCategoryIds: nextDeletedIds,
+      ...(nextBikeExpenses ? { bikeExpenses: nextBikeExpenses } : {}),
+      ...(nextHouseExpenses ? { householdExpenses: nextHouseExpenses } : {}),
+    });
+
+    if (bikeDraft.category === catId) {
+      setBikeDraft(prev => ({ ...prev, category: 'outros' }));
+    }
+    if ((householdDraft.category as string) === catId) {
+      setHouseholdDraft(prev => ({ ...prev, category: 'outros' }));
+    }
+    if (bikeCategoryFilter === catId) setBikeCategoryFilter('all');
+    if (householdCategoryFilter === catId) setHouseholdCategoryFilter('all');
+    if (editingBikeCatId === catId) {
+      setEditingBikeCatId(null);
+      setNewBikeCatName('');
+      setNewBikeCatIcon('📁');
+    }
+    if (editingHouseholdCatId === catId) {
+      setEditingHouseholdCatId(null);
+      setNewHouseholdCatName('');
+      setNewHouseholdCatIcon('📁');
+    }
+  };
+
+  const handleAddCustomEmojiIcon = (target: 'bike' | 'household', rawIcon: string) => {
+    const clean = rawIcon.trim();
+    if (!clean) return;
+    const nextIcons = Array.from(new Set([...(dbState.customIcons || []), clean]));
+    persistAndEnqueueWorkManager({ ...dbState, customIcons: nextIcons });
+    if (target === 'bike') {
+      setBikeDraft(prev => ({ ...prev, icon: clean }));
+      setBikeCustomIconDraft('');
+      setShowBikeCustomIconInput(false);
+    } else {
+      setHouseholdDraft(prev => ({ ...prev, icon: clean }));
+      setHouseCustomIconDraft('');
+      setShowHouseCustomIconInput(false);
+    }
+  };
+
+  // ================= BIKE / DESPESAS DA MOTO HANDLERS =================
+  const handleAddBikeCategory = () => saveCustomCategoryForTarget('bike');
 
   const normalizeCalendarExpenseDates = (
     selectedDates?: string[],
@@ -2854,7 +2990,11 @@ export default function App() {
   const openNewBikeExpenseModal = () => {
     setEditingBikeItem(null);
     setShowNewBikeCatInput(false);
+    setEditingBikeCatId(null);
     setNewBikeCatName('');
+    setNewBikeCatIcon('📁');
+    setShowBikeCustomIconInput(false);
+    setBikeCustomIconDraft('');
     setCalendarPickerTarget(null);
     setBikeDraft({
       id: 'bike_' + Date.now(),
@@ -2876,7 +3016,11 @@ export default function App() {
 
   const openEditBikeExpenseModal = (item: BikeExpenseItem) => {
     setShowNewBikeCatInput(false);
+    setEditingBikeCatId(null);
     setNewBikeCatName('');
+    setNewBikeCatIcon('📁');
+    setShowBikeCustomIconInput(false);
+    setBikeCustomIconDraft('');
     setCalendarPickerTarget(null);
     const rawList =
       Array.isArray(dbState.bikeExpenses)
@@ -3226,30 +3370,16 @@ export default function App() {
   };
 
   // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
-  const handleAddHouseholdCategory = () => {
-    const trimmed = newHouseholdCatName.trim();
-    if (!trimmed) return;
-    const existing = (dbState.customCategories || []).find(
-      c => c.name.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (existing) {
-      setHouseholdDraft(prev => ({ ...prev, category: existing.id as any }));
-      setNewHouseholdCatName('');
-      setShowNewHouseholdCatInput(false);
-      return;
-    }
-    const id = 'cat_h_' + Date.now();
-    const nextCats = [...(dbState.customCategories || []), { id, name: trimmed }];
-    persistAndEnqueueWorkManager({ ...dbState, customCategories: nextCats });
-    setHouseholdDraft(prev => ({ ...prev, category: id as any }));
-    setNewHouseholdCatName('');
-    setShowNewHouseholdCatInput(false);
-  };
+  const handleAddHouseholdCategory = () => saveCustomCategoryForTarget('household');
 
   const openNewHouseholdExpenseModal = () => {
     setEditingHouseholdItem(null);
     setShowNewHouseholdCatInput(false);
+    setEditingHouseholdCatId(null);
     setNewHouseholdCatName('');
+    setNewHouseholdCatIcon('📁');
+    setShowHouseCustomIconInput(false);
+    setHouseCustomIconDraft('');
     setCalendarPickerTarget(null);
     setHouseholdDraft({
       id: 'house_' + Date.now(),
@@ -3272,7 +3402,11 @@ export default function App() {
   const openEditHouseholdExpenseModal = (item: HouseholdExpenseItem) => {
     setEditingHouseholdItem(item);
     setShowNewHouseholdCatInput(false);
+    setEditingHouseholdCatId(null);
     setNewHouseholdCatName('');
+    setNewHouseholdCatIcon('📁');
+    setShowHouseCustomIconInput(false);
+    setHouseCustomIconDraft('');
     setCalendarPickerTarget(null);
     const rawMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
     const rawTotal = Math.max(0, Number(item.totalCost) || 0);
@@ -5349,7 +5483,7 @@ export default function App() {
     const baseMaintCostPerKm = maintBreakdown.reduce((s, m) => s + m.costPerKm, 0);
     const baseDailyMaintWear = baseMaintCostPerKm * dailyKm;
     const extraBufferPct = Math.max(0, Math.min(25, Number(finPlan.maintenanceExtraBufferPct) || 0));
-    const extraDailyMaintBuffer = dailyGross * (extraBufferPct / 100);
+    let extraDailyMaintBuffer = dailyGross * (extraBufferPct / 100);
     let dailyMaintReserve = baseDailyMaintWear + extraDailyMaintBuffer;
     let monthlyMaintReserve = dailyMaintReserve * workDaysPerMonth;
     let maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
@@ -5357,9 +5491,9 @@ export default function App() {
     // 3. Alimentação na Rua (Almoço + Lanche / Água / Café)
     const dailyLunch = Math.max(0, Number(finPlan.dailyLunchBudget) || 0);
     const dailySnack = Math.max(0, Number(finPlan.dailySnackBudget) || 0);
-    const dailyFoodCost = dailyLunch + dailySnack;
-    const monthlyFoodCost = dailyFoodCost * workDaysPerMonth;
-    const foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
+    let dailyFoodCost = dailyLunch + dailySnack;
+    let monthlyFoodCost = dailyFoodCost * workDaysPerMonth;
+    let foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
 
     // 4. Documentação da Moto (IPVA, Licenciamento, MEI/Seguro, CNH/Taxas)
     const ipvaAnnual = Math.max(0, Number(finPlan.ipvaAnnual) || 0);
@@ -5538,7 +5672,12 @@ export default function App() {
     const customCatIdSet = new Set(customCategoryList.map(c => c.id));
     const customCatNameSet = new Set(customCategoryList.map(c => c.name.toLowerCase()));
 
-    // Sincroniza Combustível, Documentação/Seguro e Manutenção/Peças diretamente com os cards ativos da moto para que a soma bata 100%
+    let hasFoodFromBikeExpenses = false;
+    let hasEmergencyFromBikeExpenses = false;
+    let emergencyBikeDaily = 0;
+    let emergencyBikeMonthly = 0;
+
+    // Sincroniza Combustível, Documentação/Seguro, Alimentação na Rua, Emergência e Manutenção diretamente com os cards ativos da moto
     if (activeEnrichedBikeExpenses.length > 0) {
       const isFuelItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
         b.id === 'combustivel_mensal' ||
@@ -5557,13 +5696,33 @@ export default function App() {
           b.name.toLowerCase().includes('licenciamento') ||
           b.name.toLowerCase().includes('seguro'));
 
+      const isFoodItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+        !isFuelItem(b) &&
+        !isDocsItem(b) &&
+        (b.category === 'alimentacao' ||
+          b.name.toLowerCase().includes('alimenta') ||
+          b.name.toLowerCase().includes('almoço') ||
+          b.name.toLowerCase().includes('marmita') ||
+          b.name.toLowerCase().includes('lanche') ||
+          b.name.toLowerCase().includes('café'));
+
+      const isEmergencyItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+        !isFuelItem(b) &&
+        !isDocsItem(b) &&
+        !isFoodItem(b) &&
+        (b.category === 'emergencia' ||
+          b.name.toLowerCase().includes('reserva de emergência') ||
+          b.name.toLowerCase().includes('emergência'));
+
       const isCustomCatBike = (b: typeof activeEnrichedBikeExpenses[number]) =>
         customCatIdSet.has(b.category) || customCatNameSet.has((b.category || '').toLowerCase());
 
       const fuelItems = activeEnrichedBikeExpenses.filter(isFuelItem);
       const docsItems = activeEnrichedBikeExpenses.filter(isDocsItem);
+      const foodItems = activeEnrichedBikeExpenses.filter(isFoodItem);
+      const emergencyItems = activeEnrichedBikeExpenses.filter(isEmergencyItem);
       const maintItems = activeEnrichedBikeExpenses.filter(
-        b => !isFuelItem(b) && !isDocsItem(b) && !isCustomCatBike(b)
+        b => !isFuelItem(b) && !isDocsItem(b) && !isFoodItem(b) && !isEmergencyItem(b) && !isCustomCatBike(b)
       );
 
       if (fuelItems.length > 0) {
@@ -5577,6 +5736,26 @@ export default function App() {
         monthlyDocsReserve = docsItems.reduce((sum, d) => sum + d.monthlyCost, 0);
         weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
         docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
+      }
+
+      if (foodItems.length > 0) {
+        hasFoodFromBikeExpenses = true;
+        dailyFoodCost = foodItems.reduce((sum, f) => sum + f.dailyRateio, 0);
+        monthlyFoodCost = foodItems.reduce((sum, f) => sum + f.monthlyCost, 0);
+        foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
+      }
+
+      if (emergencyItems.length > 0) {
+        hasEmergencyFromBikeExpenses = true;
+        emergencyBikeDaily = emergencyItems.reduce((sum, e) => sum + e.dailyRateio, 0);
+        emergencyBikeMonthly = emergencyItems.reduce((sum, e) => sum + e.monthlyCost, 0);
+      }
+
+      const extraMaintItems = maintItems.filter(
+        m => m.category === 'imprevisto_mecanico' || m.name.toLowerCase().includes('imprevisto')
+      );
+      if (extraMaintItems.length > 0) {
+        extraDailyMaintBuffer = extraMaintItems.reduce((sum, m) => sum + m.dailyRateio, 0);
       }
 
       if (maintItems.length > 0) {
@@ -5721,7 +5900,7 @@ export default function App() {
       const pctOfGross = dailyGross > 0 ? Math.round((dailyCost / dailyGross) * 100) : 0;
       const targetTab: 'despesas_moto' | 'despesas_casa' =
         houseMatches.length > 0 && bikeMatches.length === 0 ? 'despesas_casa' : 'despesas_moto';
-      const icon = bikeMatches[0]?.icon || houseMatches[0]?.icon || '📁';
+      const icon = cat.icon || bikeMatches[0]?.icon || houseMatches[0]?.icon || '📁';
 
       return {
         id: cat.id,
@@ -5738,15 +5917,23 @@ export default function App() {
     const standardHouseholdMonthly = Math.max(0, monthlyHouseholdCost - totalCustomHouseMonthly);
     const standardHousePct = dailyGross > 0 ? Math.round((standardHouseholdDaily / dailyGross) * 100) : 0;
 
-    // Subtotal Moto & Operação (Custos Operacionais da Moto + Alimentação no Turno de Rua)
-    const dailyBikeCostsTotal = unifiedDailyBikeReserve + dailyFoodCost;
-    const monthlyBikeCostsTotal = unifiedMonthlyBikeTotal + monthlyFoodCost;
+    // Subtotal Moto & Operação (Custos Operacionais da Moto + Alimentação no Turno de Rua, sem contar Reserva de Emergência duas vezes)
+    const legacyFoodDaily = hasFoodFromBikeExpenses ? 0 : dailyFoodCost;
+    const legacyFoodMonthly = hasFoodFromBikeExpenses ? 0 : monthlyFoodCost;
+    const dailyBikeCostsTotal = Math.max(0, unifiedDailyBikeReserve - emergencyBikeDaily) + legacyFoodDaily;
+    const monthlyBikeCostsTotal = Math.max(0, unifiedMonthlyBikeTotal - emergencyBikeMonthly) + legacyFoodMonthly;
     const bikePctOfGross = dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
 
     // 6. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
-    const emergencyPct = Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0));
-    const dailyEmergencyReserve = dailyGross * (emergencyPct / 100);
-    const monthlyEmergencyReserve = dailyEmergencyReserve * workDaysPerMonth;
+    const dailyEmergencyReserve = hasEmergencyFromBikeExpenses
+      ? emergencyBikeDaily
+      : dailyGross * (Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0)) / 100);
+    const monthlyEmergencyReserve = hasEmergencyFromBikeExpenses
+      ? emergencyBikeMonthly
+      : dailyEmergencyReserve * workDaysPerMonth;
+    const emergencyPct = hasEmergencyFromBikeExpenses
+      ? (dailyGross > 0 ? Math.round((dailyEmergencyReserve / dailyGross) * 100) : 0)
+      : Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0));
     const emergencyIn6Months = monthlyEmergencyReserve * 6;
     const emergencyIn12Months = monthlyEmergencyReserve * 12;
 
@@ -6401,6 +6588,391 @@ export default function App() {
           accentClass,
         })}
       </>
+    );
+  };
+
+  const renderCustomCategoryPanel = ({
+    target,
+    selectedCategoryId,
+    isOpen,
+    onToggleOpen,
+    accentClass,
+    selectedDraftIcon,
+    onSelectCategoryId,
+    childrenSelect,
+  }: {
+    target: 'bike' | 'household';
+    selectedCategoryId: string;
+    isOpen: boolean;
+    onToggleOpen: () => void;
+    accentClass: 'orange' | 'blue';
+    selectedDraftIcon?: string;
+    onSelectCategoryId: (nextId: string) => void;
+    childrenSelect: React.ReactNode;
+  }) => {
+    const isOrange = accentClass === 'orange';
+    const accentText = isOrange ? 'text-[#FF6A1A]' : 'text-blue-400';
+    const accentBorder = isOrange ? 'border-[#FF6A1A]/50' : 'border-blue-400/50';
+    const accentBtn = isOrange ? 'bg-[#FF6A1A] text-black' : 'bg-blue-600 text-white';
+    const accentHover = isOrange
+      ? 'hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A]'
+      : 'hover:border-blue-400 hover:bg-blue-400/10 text-blue-400';
+    const customCats = dbState.customCategories || [];
+    const selectedCustomCat = customCats.find(c => c.id === selectedCategoryId);
+    const catName = target === 'bike' ? newBikeCatName : newHouseholdCatName;
+    const catIcon = target === 'bike' ? newBikeCatIcon : newHouseholdCatIcon;
+    const editingId = target === 'bike' ? editingBikeCatId : editingHouseholdCatId;
+
+    const setCatName = (v: string) =>
+      target === 'bike' ? setNewBikeCatName(v) : setNewHouseholdCatName(v);
+    const setCatIcon = (v: string) =>
+      target === 'bike' ? setNewBikeCatIcon(v) : setNewHouseholdCatIcon(v);
+    const cancelEditing = () => {
+      if (target === 'bike') {
+        setEditingBikeCatId(null);
+        setNewBikeCatName('');
+        setNewBikeCatIcon('📁');
+        setShowNewBikeCatInput(false);
+      } else {
+        setEditingHouseholdCatId(null);
+        setNewHouseholdCatName('');
+        setNewHouseholdCatIcon('📁');
+        setShowNewHouseholdCatInput(false);
+      }
+    };
+
+    const quickCatIcons = Array.from(
+      new Set([
+        '📁',
+        '🔧',
+        '⛽',
+        '🍱',
+        '🛞',
+        '🏠',
+        '🛒',
+        '⚡',
+        '💧',
+        '🛡️',
+        '💊',
+        '🚗',
+        '🎓',
+        '🐾',
+        '✨',
+        ...(dbState.customIcons || []),
+        ...(catIcon ? [catIcon] : []),
+        ...(selectedDraftIcon ? [selectedDraftIcon] : []),
+      ])
+    );
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className={`block text-xs font-bold ${mutedText}`}>Categoria</label>
+          <button
+            type="button"
+            onClick={() => {
+              if (editingId) {
+                cancelEditing();
+              } else {
+                onToggleOpen();
+              }
+            }}
+            className={`text-[11px] font-bold ${accentText} hover:underline flex items-center gap-1 cursor-pointer`}
+            title="Criar, editar ou excluir categorias"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{isOpen ? 'Fechar' : '+ Nova Categoria'}</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {childrenSelect}
+          {selectedCustomCat && (
+            <>
+              <button
+                type="button"
+                onClick={() => startEditCustomCategory(target, selectedCustomCat)}
+                className={`p-2.5 rounded-xl border border-slate-700/60 ${accentHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                title={`Editar categoria "${selectedCustomCat.name}"`}
+                aria-label={`Editar categoria ${selectedCustomCat.name}`}
+              >
+                <Edit3 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteCustomCategory(selectedCustomCat.id)}
+                className={`p-2.5 rounded-xl border border-rose-500/40 text-rose-400 hover:bg-rose-500/15 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                title={`Excluir categoria "${selectedCustomCat.name}"`}
+                aria-label={`Excluir categoria ${selectedCustomCat.name}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={onToggleOpen}
+            className={`p-2.5 rounded-xl border border-slate-700/60 ${accentHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+            title="Gerenciar / Nova Categoria"
+            aria-label="Gerenciar / Nova Categoria"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {isOpen && (
+          <div className={`mt-2 p-2.5 rounded-xl border ${accentBorder} ${surfaceSubtle} flex flex-col gap-2.5`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className={`text-[11px] font-black ${accentText}`}>
+                {editingId
+                  ? 'Editar Categoria'
+                  : target === 'bike'
+                  ? 'Criar Nova Categoria da Moto'
+                  : 'Criar Nova Categoria Doméstica'}
+              </span>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (target === 'bike') {
+                      setEditingBikeCatId(null);
+                      setNewBikeCatName('');
+                      setNewBikeCatIcon('📁');
+                    } else {
+                      setEditingHouseholdCatId(null);
+                      setNewHouseholdCatName('');
+                      setNewHouseholdCatIcon('📁');
+                    }
+                  }}
+                  className={`text-[10px] font-bold underline cursor-pointer ${mutedText}`}
+                >
+                  + Criar outra
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={catName}
+                onChange={e => setCatName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveCustomCategoryForTarget(target);
+                  }
+                }}
+                placeholder={
+                  target === 'bike'
+                    ? 'Ex: Borracharia, Estética, Adesivos...'
+                    : 'Ex: Educação, Pets, Lazer, Vestuário...'
+                }
+                className={`flex-1 min-w-0 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+              />
+              <button
+                type="button"
+                onClick={() => saveCustomCategoryForTarget(target)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold ${accentBtn} cursor-pointer shrink-0 flex items-center gap-1 shadow-sm`}
+              >
+                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>{editingId ? 'Atualizar' : 'Salvar'}</span>
+              </button>
+            </div>
+
+            <div>
+              <span className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                Ícone da categoria (toque ou digite um emoji):
+              </span>
+              <div className="flex items-center gap-1 flex-wrap">
+                {quickCatIcons.map(ic => (
+                  <button
+                    key={'cat_ic_' + ic}
+                    type="button"
+                    onClick={() => setCatIcon(ic)}
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm cursor-pointer border transition-all ${
+                      catIcon === ic
+                        ? `${accentBtn} border-transparent font-black`
+                        : `${surfaceSubtle} hover:border-slate-500`
+                    }`}
+                  >
+                    {ic}
+                  </button>
+                ))}
+                <input
+                  type="text"
+                  maxLength={8}
+                  value={quickCatIcons.includes(catIcon) ? '' : catIcon}
+                  onChange={e => {
+                    const val = e.target.value.trim();
+                    if (val) setCatIcon(val);
+                  }}
+                  placeholder="+😀"
+                  title="Digite ou cole qualquer emoji como ícone da categoria"
+                  className={`w-12 px-1.5 py-1 rounded-lg text-xs text-center font-bold outline-none ${inputSurface}`}
+                />
+              </div>
+            </div>
+
+            {customCats.length > 0 && (
+              <div className="pt-2 border-t border-slate-800/40 flex flex-col gap-1.5">
+                <span className={`text-[10px] font-bold ${mutedText}`}>
+                  Suas categorias criadas ({customCats.length}):
+                </span>
+                <div className="flex flex-col gap-1 max-h-32 overflow-y-auto pr-0.5">
+                  {customCats.map(cat => (
+                    <div
+                      key={'manage_cat_' + cat.id}
+                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
+                        selectedCategoryId === cat.id ? accentBorder : dividerBorder
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelectCategoryId(cat.id)}
+                        className="flex items-center gap-1.5 min-w-0 text-left text-xs font-bold cursor-pointer flex-1 truncate"
+                        title="Selecionar esta categoria"
+                      >
+                        <span>{cat.icon || '📁'}</span>
+                        <span className="truncate">{cat.name}</span>
+                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => startEditCustomCategory(target, cat)}
+                          className={`p-1 rounded-md ${accentHover} cursor-pointer`}
+                          title={`Editar ${cat.name}`}
+                          aria-label={`Editar ${cat.name}`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomCategory(cat.id)}
+                          className="p-1 rounded-md text-rose-400 hover:bg-rose-500/15 cursor-pointer"
+                          title={`Excluir ${cat.name}`}
+                          aria-label={`Excluir ${cat.name}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderExpenseIconPicker = ({
+    target,
+    defaultIcons,
+    selectedIcon,
+    onSelectIcon,
+    accentClass,
+  }: {
+    target: 'bike' | 'household';
+    defaultIcons: string[];
+    selectedIcon?: string;
+    onSelectIcon: (icon: string) => void;
+    accentClass: 'orange' | 'blue';
+  }) => {
+    const isOrange = accentClass === 'orange';
+    const isInputOpen = target === 'bike' ? showBikeCustomIconInput : showHouseCustomIconInput;
+    const draftIcon = target === 'bike' ? bikeCustomIconDraft : houseCustomIconDraft;
+    const setInputOpen = (fn: (p: boolean) => boolean) =>
+      target === 'bike' ? setShowBikeCustomIconInput(fn) : setShowHouseCustomIconInput(fn);
+    const setDraftIcon = (val: string) =>
+      target === 'bike' ? setBikeCustomIconDraft(val) : setHouseCustomIconDraft(val);
+
+    const allIcons = Array.from(
+      new Set([
+        ...defaultIcons,
+        ...(dbState.customIcons || []),
+        ...(selectedIcon ? [selectedIcon] : []),
+      ])
+    );
+
+    const activeClasses = isOrange
+      ? 'bg-[#FF6A1A] border-[#FF6A1A] text-black scale-110 font-black'
+      : 'bg-blue-600 border-blue-400 text-white scale-110';
+    const addBtnClasses = isOrange
+      ? 'border-[#FF6A1A]/50 text-[#FF6A1A] hover:bg-[#FF6A1A]/10'
+      : 'border-blue-400/50 text-blue-400 hover:bg-blue-400/10';
+    const confirmBtnClasses = isOrange ? 'bg-[#FF6A1A] text-black' : 'bg-blue-600 text-white';
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className={`block text-xs font-bold ${mutedText}`}>
+            Ícone Representativo
+          </label>
+          <button
+            type="button"
+            onClick={() => setInputOpen(prev => !prev)}
+            className={`text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
+              isOrange ? 'text-[#FF6A1A]' : 'text-blue-400'
+            } hover:underline`}
+            title="Adicionar novo emoji/ícone personalizado"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{isInputOpen ? 'Fechar' : '+ Novo Ícone'}</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+          {allIcons.map(ic => (
+            <button
+              key={ic}
+              type="button"
+              onClick={() => onSelectIcon(ic)}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg cursor-pointer border transition-all shrink-0 ${
+                selectedIcon === ic ? activeClasses : `${surfaceSubtle} hover:border-slate-600`
+              }`}
+            >
+              {ic}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setInputOpen(prev => !prev)}
+            className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black cursor-pointer border shrink-0 transition-colors ${addBtnClasses} ${surfaceSubtle}`}
+            title="Adicionar novo ícone"
+            aria-label="Adicionar novo ícone"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {isInputOpen && (
+          <div className="flex items-center gap-1.5 mt-2">
+            <input
+              type="text"
+              maxLength={8}
+              value={draftIcon}
+              onChange={e => setDraftIcon(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddCustomEmojiIcon(target, draftIcon);
+                }
+              }}
+              placeholder="Digite ou cole um emoji (ex: 🧰, 🍔)"
+              className={`flex-1 min-w-0 px-3 py-1.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+            />
+            <button
+              type="button"
+              onClick={() => handleAddCustomEmojiIcon(target, draftIcon)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer shrink-0 flex items-center gap-1 ${confirmBtnClasses}`}
+            >
+              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Adicionar</span>
+            </button>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -8304,7 +8876,7 @@ export default function App() {
                 <div
                   onClick={() => {
                     setActiveTab('billing');
-                    setBillingSubTab('planejamento');
+                    setBillingSubTab('despesas_moto');
                   }}
                   className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-orange-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ajustar o orçamento de alimentação na rua"
@@ -8358,7 +8930,7 @@ export default function App() {
                 <div
                   onClick={() => {
                     setActiveTab('billing');
-                    setBillingSubTab('planejamento');
+                    setBillingSubTab('despesas_moto');
                   }}
                   className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-purple-500/50 transition-all cursor-pointer flex flex-col justify-between`}
                   title="Clique para ajustar a reserva de emergência"
@@ -8479,7 +9051,7 @@ export default function App() {
                   <div
                     onClick={() => {
                       setActiveTab('billing');
-                      setBillingSubTab('planejamento');
+                      setBillingSubTab('despesas_moto');
                     }}
                     className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-purple-500/50 cursor-pointer transition-colors`}
                   >
@@ -11516,13 +12088,16 @@ export default function App() {
                           { id: 'all', label: 'Todas' },
                           { id: 'combustivel', label: '⛽ Combustível' },
                           { id: 'manutencao', label: '🔧 Peças' },
+                          { id: 'alimentacao', label: '🍱 Alimentação' },
+                          { id: 'emergencia', label: '🆘 Emergência' },
+                          { id: 'imprevisto_mecanico', label: '⚠️ Imprevisto' },
                           { id: 'documentacao', label: '📄 Docs/IPVA' },
                           { id: 'seguro', label: '🛡️ Seguro' },
                           { id: 'equipamento', label: '🪖 Equipamentos' },
                           { id: 'outros', label: 'Outros' },
                           ...(dbState.customCategories || []).map(cat => ({
                             id: cat.id,
-                            label: `📁 ${cat.name}`,
+                            label: `${cat.icon || '📁'} ${cat.name}`,
                           })),
                         ].map(cat => (
                           <button
@@ -11592,6 +12167,10 @@ export default function App() {
                           const categoryColors: Record<string, { label: string; badge: string }> = {
                             combustivel: { label: 'Combustível', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
                             manutencao: { label: 'Peças & Oficina', badge: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+                            pecas: { label: 'Peças & Reparos', badge: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+                            alimentacao: { label: 'Alimentação na Rua', badge: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+                            emergencia: { label: 'Reserva de Emergência', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
+                            imprevisto_mecanico: { label: 'Imprevisto Mecânico', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
                             documentacao: { label: 'Documentação', badge: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
                             seguro: { label: 'Seguro / Proteção', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
                             equipamento: { label: 'Equipamentos', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
@@ -11604,7 +12183,9 @@ export default function App() {
                             categoryColors[item.category] ||
                             (customBikeCatMatch
                               ? {
-                                  label: customBikeCatMatch.name,
+                                  label: customBikeCatMatch.icon
+                                    ? `${customBikeCatMatch.icon} ${customBikeCatMatch.name}`
+                                    : customBikeCatMatch.name,
                                   badge: 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30',
                                 }
                               : categoryColors.outros);
@@ -12130,7 +12711,7 @@ export default function App() {
                           { id: 'outros', label: 'Outros' },
                           ...(dbState.customCategories || []).map(cat => ({
                             id: cat.id,
-                            label: `📁 ${cat.name}`,
+                            label: `${cat.icon || '📁'} ${cat.name}`,
                           })),
                         ].map(cat => (
                           <button
@@ -12218,7 +12799,9 @@ export default function App() {
                             categoryColors[item.category] ||
                             (customHouseCatMatch
                               ? {
-                                  label: customHouseCatMatch.name,
+                                  label: customHouseCatMatch.icon
+                                    ? `${customHouseCatMatch.icon} ${customHouseCatMatch.name}`
+                                    : customHouseCatMatch.name,
                                   badge: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
                                 }
                               : categoryColors.outros);
@@ -13463,226 +14046,6 @@ export default function App() {
                         <span className="w-2.5 h-2.5 rounded-xs bg-sky-400 inline-block" />
                         <span>Média</span>
                       </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CONFIGURAÇÃO E AJUSTE DOS PARÂMETROS DAS RESERVAS (ALIMENTAÇÃO, MANUTENÇÃO E DOCUMENTOS) */}
-                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${surfaceCard}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/50">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h2 className="text-base sm:text-lg font-black flex items-center gap-2">
-                          <SlidersHorizontal className="w-5 h-5 text-[#FF6A1A]" />
-                          <span>Ajustar Parâmetros de Custos & Reservas</span>
-                        </h2>
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                          Exibidos no Topo do Início
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Ajuste seus custos diários e anuais. Os valores consolidados a reservar por dia são calculados automaticamente e exibidos em destaque no topo da Tela de Início
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('dashboard')}
-                      className="px-3.5 py-2 rounded-xl text-xs font-black bg-[#FF6A1A]/15 hover:bg-[#FF6A1A]/25 text-[#FF6A1A] border border-[#FF6A1A]/30 transition-colors cursor-pointer self-start sm:self-center flex items-center gap-1.5 shrink-0"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" />
-                      <span>Ver Cards no Início</span>
-                    </button>
-                  </div>
-
-                  {/* Banner de Direcionamento Visual */}
-                  <div className={`mt-4 p-3.5 rounded-2xl flex items-center justify-between gap-3 ${
-                    isDark ? 'bg-[#FF6A1A]/10 border border-[#FF6A1A]/30 text-amber-200' : 'bg-amber-50 border border-amber-200 text-amber-900'
-                  }`}>
-                    <div className="flex items-center gap-2.5 text-xs">
-                      <span className="text-xl shrink-0">📌</span>
-                      <div>
-                        <strong className="font-black text-[#FF6A1A]">Valores Movidos para o Topo do Início:</strong>
-                        <span className="ml-1">
-                          Alimentação na Rua ({fmtCurrencyExact(financialIntelligence.dailyFoodCost)}/dia), Manutenção ({fmtCurrencyExact(financialIntelligence.dailyMaintReserve)}/dia) e Documentos ({fmtCurrencyExact(financialIntelligence.dailyDocsReserve)}/dia) agora ficam fixados no topo do painel principal para você nunca esquecer de guardar.
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Grid de Configuração dos Custos e Reservas */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mt-4">
-                    {/* Bloco 1: Alimentação & Margem Mecânica */}
-                    <div className={`rounded-2xl p-4 sm:p-5 border bg-transparent ${dividerBorder}`}>
-                      <h3 className="text-xs font-black uppercase tracking-wider text-orange-400 flex items-center gap-1.5 mb-3">
-                        <span>🍱</span>
-                        <span>Alimentação na Rua & Segurança Mecânica</span>
-                      </h3>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Almoço / Marmita por Dia (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="1"
-                            value={finPlan.dailyLunchBudget}
-                            onValueChange={val =>
-                              updateFinancialPlan({ dailyLunchBudget: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Lanche / Café / Água por Dia (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="1"
-                            value={finPlan.dailySnackBudget}
-                            onValueChange={val =>
-                              updateFinancialPlan({ dailySnackBudget: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Reserva de Emergência (% do Bruto)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <FreeNumberInput
-                              step="1"
-                              value={finPlan.emergencyReservePct}
-                              onValueChange={val =>
-                                updateFinancialPlan({
-                                  emergencyReservePct: Math.max(0, val),
-                                })
-                              }
-                              className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                            />
-                            <span className="text-xs font-black text-purple-400 shrink-0">
-                              ={fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)}/dia
-                            </span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Margem Extra Imprevisto Mecânico (%)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <FreeNumberInput
-                              step="1"
-                              value={finPlan.maintenanceExtraBufferPct}
-                              onValueChange={val =>
-                                updateFinancialPlan({
-                                  maintenanceExtraBufferPct: Math.max(0, val),
-                                })
-                              }
-                              className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                            />
-                            <span className="text-xs font-black text-amber-400 shrink-0">
-                              +{fmtCurrencyExact(financialIntelligence.extraDailyMaintBuffer)}/dia
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Bloco 2: Documentos da Moto, IPVA & MEI */}
-                    <div className={`rounded-2xl p-4 sm:p-5 border bg-transparent ${dividerBorder}`}>
-                      <h3 className="text-xs font-black uppercase tracking-wider text-sky-400 flex items-center gap-1.5 mb-3">
-                        <span>📄</span>
-                        <span>Documentos Anuais & Obrigações (IPVA/MEI)</span>
-                      </h3>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            IPVA Anual da Moto (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="10"
-                            value={finPlan.ipvaAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ ipvaAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Licenciamento Anual CRLV-e (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="5"
-                            value={finPlan.licensingAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ licensingAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            DAS MEI / Seguro / Rastreador Mensal (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="5"
-                            value={finPlan.insuranceOrMeiMonthly}
-                            onValueChange={val =>
-                              updateFinancialPlan({ insuranceOrMeiMonthly: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className={`block text-[11px] font-bold mb-1 ${mutedText}`}>
-                            Outras Taxas Anuais / CNH / Detran (R$)
-                          </label>
-                          <FreeNumberInput
-                            step="10"
-                            value={finPlan.otherDocsAnnual}
-                            onValueChange={val =>
-                              updateFinancialPlan({ otherDocsAnnual: Math.max(0, val) })
-                            }
-                            className={`w-full px-3 py-2 rounded-xl text-sm font-black tabular-nums outline-none ${inputSurface}`}
-                          />
-                        </div>
-
-                        <div className="sm:col-span-2 pt-1 border-t border-slate-800/40">
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <label className={`text-[11px] font-bold ${mutedText}`}>
-                              Prazo até o vencimento do IPVA / Licenciamento:
-                            </label>
-                            <span className="text-xs font-black text-sky-400">
-                              {finPlan.docsTargetMonths} {finPlan.docsTargetMonths === 1 ? 'mês' : 'meses'} ({finPlan.docsTargetMonths * financialIntelligence.workDaysPerMonth} dias de trabalho)
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {[1, 2, 3, 6, 9, 12].map(mVal => (
-                              <button
-                                key={mVal}
-                                type="button"
-                                onClick={() => updateFinancialPlan({ docsTargetMonths: mVal })}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
-                                  finPlan.docsTargetMonths === mVal
-                                    ? 'bg-sky-400 text-black'
-                                    : `${surfaceSubtle} hover:border-sky-400`
-                                }`}
-                              >
-                                {mVal} {mVal === 1 ? 'mês' : 'meses'}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -16410,7 +16773,7 @@ export default function App() {
                               selectedCategory === c.id ? 'bg-[#FF6A1A] text-black' : surfaceSubtle
                             }`}
                           >
-                            {c.name}
+                            {c.icon ? `${c.icon} ${c.name}` : c.name}
                           </button>
                         ))}
                         <button
@@ -18022,104 +18385,78 @@ export default function App() {
               })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className={`block text-xs font-bold ${mutedText}`}>
-                      Categoria
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewBikeCatInput(prev => !prev)}
-                      className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
-                      title="Adicionar nova categoria de despesa"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{showNewBikeCatInput ? 'Fechar' : '+ Nova Categoria'}</span>
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1.5">
+                {renderCustomCategoryPanel({
+                  target: 'bike',
+                  selectedCategoryId: bikeDraft.category,
+                  isOpen: showNewBikeCatInput,
+                  onToggleOpen: () => setShowNewBikeCatInput(prev => !prev),
+                  accentClass: 'orange',
+                  selectedDraftIcon: bikeDraft.icon,
+                  onSelectCategoryId: nextId => {
+                    const matched = (dbState.customCategories || []).find(c => c.id === nextId);
+                    setBikeDraft(prev => ({
+                      ...prev,
+                      category: nextId as any,
+                      ...(matched?.icon ? { icon: matched.icon } : {}),
+                    }));
+                  },
+                  childrenSelect: (
                     <select
                       value={bikeDraft.category}
-                      onChange={e => setBikeDraft({ ...bikeDraft, category: e.target.value as any })}
-                      className={`flex-1 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      onChange={e => {
+                        const nextCat = e.target.value as any;
+                        const defaultIcons: Record<string, string> = {
+                          combustivel: '⛽',
+                          manutencao: '🔧',
+                          pecas: '⚙️',
+                          alimentacao: '🍱',
+                          emergencia: '🆘',
+                          imprevisto_mecanico: '⚠️',
+                          documentacao: '📄',
+                          seguro: '🛡️',
+                          equipamento: '🪖',
+                        };
+                        const customMatch = (dbState.customCategories || []).find(c => c.id === nextCat);
+                        const prevIsDefault =
+                          !bikeDraft.icon ||
+                          bikeDraft.icon === '🏍️' ||
+                          Object.values(defaultIcons).includes(bikeDraft.icon) ||
+                          (dbState.customCategories || []).some(c => c.icon === bikeDraft.icon);
+                        const suggestedIcon = customMatch?.icon || defaultIcons[nextCat];
+                        setBikeDraft({
+                          ...bikeDraft,
+                          category: nextCat,
+                          ...(prevIsDefault && suggestedIcon ? { icon: suggestedIcon } : {}),
+                        });
+                      }}
+                      className={`flex-1 min-w-0 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
                     >
                       <option value="combustivel">⛽ Combustível (Gasolina / Álcool)</option>
                       <option value="manutencao">🔧 Peças & Oficina (Óleo, Pneus, Relação)</option>
                       <option value="pecas">⚙️ Peças & Reparos</option>
+                      <option value="alimentacao">🍱 Alimentação na Rua (Almoço / Lanche / Água)</option>
+                      <option value="emergencia">🆘 Reserva de Emergência</option>
+                      <option value="imprevisto_mecanico">⚠️ Margem Extra / Imprevisto Mecânico</option>
                       <option value="documentacao">📄 Documentação (IPVA, Licenciamento)</option>
                       <option value="seguro">🛡️ Seguro & Proteção Veicular</option>
                       <option value="equipamento">🪖 Equipamentos (Capacete, Capa, Luvas)</option>
                       <option value="outros">✨ Outros Cuidados & Lavagem</option>
                       {(dbState.customCategories || []).map(cat => (
                         <option key={cat.id} value={cat.id}>
-                          📁 {cat.name}
+                          {cat.icon || '📁'} {cat.name}
                         </option>
                       ))}
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewBikeCatInput(prev => !prev)}
-                      className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                      title="Adicionar Nova Categoria"
-                      aria-label="Adicionar Nova Categoria"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
+                  ),
+                })}
 
-                  {showNewBikeCatInput && (
-                    <div className={`mt-2 p-2.5 rounded-xl border border-[#FF6A1A]/50 ${surfaceSubtle} flex flex-col gap-2`}>
-                      <span className="text-[11px] font-black text-[#FF6A1A]">
-                        Criar Nova Categoria de Despesa da Moto
-                      </span>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newBikeCatName}
-                          onChange={e => setNewBikeCatName(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddBikeCategory();
-                            }
-                          }}
-                          placeholder="Ex: Borracharia, Adesivos, Estética..."
-                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddBikeCategory}
-                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#FF6A1A] text-black cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
-                        >
-                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                          <span>Salvar</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Ícone Representativo
-                  </label>
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
-                    {['🏍️', '⛽', '🛢️', '🛞', '⛓️', '🛑', '🛡️', '📄', '🔧', '✨', '🪖', '🛵', '🧤', '🪛', '⚙️'].map(ic => (
-                      <button
-                        key={ic}
-                        type="button"
-                        onClick={() => setBikeDraft({ ...bikeDraft, icon: ic })}
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg cursor-pointer border transition-all ${
-                          bikeDraft.icon === ic
-                            ? 'bg-[#FF6A1A] border-[#FF6A1A] text-black scale-110 font-black'
-                            : `${surfaceSubtle} hover:border-slate-600`
-                        }`}
-                      >
-                        {ic}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {renderExpenseIconPicker({
+                  target: 'bike',
+                  defaultIcons: ['🏍️', '⛽', '🛢️', '🛞', '⛓️', '🛑', '🛡️', '📄', '🔧', '🍱', '☕', '🥪', '💧', '🆘', '⚠️', '✨', '🪖', '🛵', '🧤', '🪛', '⚙️'],
+                  selectedIcon: bikeDraft.icon,
+                  onSelectIcon: ic => setBikeDraft({ ...bikeDraft, icon: ic }),
+                  accentClass: 'orange',
+                })}
               </div>
 
               <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs bg-transparent ${dividerBorder}`}>
@@ -18246,26 +18583,48 @@ export default function App() {
               })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className={`block text-xs font-bold ${mutedText}`}>
-                      Categoria
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewHouseholdCatInput(prev => !prev)}
-                      className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                      title="Adicionar nova categoria de despesa doméstica"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{showNewHouseholdCatInput ? 'Fechar' : '+ Nova Categoria'}</span>
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1.5">
+                {renderCustomCategoryPanel({
+                  target: 'household',
+                  selectedCategoryId: householdDraft.category as string,
+                  isOpen: showNewHouseholdCatInput,
+                  onToggleOpen: () => setShowNewHouseholdCatInput(prev => !prev),
+                  accentClass: 'blue',
+                  selectedDraftIcon: householdDraft.icon,
+                  onSelectCategoryId: nextId => {
+                    const matched = (dbState.customCategories || []).find(c => c.id === nextId);
+                    setHouseholdDraft(prev => ({
+                      ...prev,
+                      category: nextId as any,
+                      ...(matched?.icon ? { icon: matched.icon } : {}),
+                    }));
+                  },
+                  childrenSelect: (
                     <select
                       value={householdDraft.category}
-                      onChange={e => setHouseholdDraft({ ...householdDraft, category: e.target.value as any })}
-                      className={`flex-1 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                      onChange={e => {
+                        const nextCat = e.target.value as any;
+                        const defaultHouseIcons: Record<string, string> = {
+                          moradia: '🏠',
+                          utilidades: '⚡',
+                          alimentacao: '🛒',
+                          conectividade: '📶',
+                          saude: '💊',
+                          outros: '📄',
+                        };
+                        const customMatch = (dbState.customCategories || []).find(c => c.id === nextCat);
+                        const prevIsDefault =
+                          !householdDraft.icon ||
+                          householdDraft.icon === '🏠' ||
+                          Object.values(defaultHouseIcons).includes(householdDraft.icon) ||
+                          (dbState.customCategories || []).some(c => c.icon === householdDraft.icon);
+                        const suggestedIcon = customMatch?.icon || defaultHouseIcons[nextCat];
+                        setHouseholdDraft({
+                          ...householdDraft,
+                          category: nextCat,
+                          ...(prevIsDefault && suggestedIcon ? { icon: suggestedIcon } : {}),
+                        });
+                      }}
+                      className={`flex-1 min-w-0 px-3 py-2.5 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
                     >
                       <option value="moradia">🏠 Moradia (Aluguel, Condomínio)</option>
                       <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
@@ -18275,74 +18634,20 @@ export default function App() {
                       <option value="outros">📄 Outros Compromissos</option>
                       {(dbState.customCategories || []).map(cat => (
                         <option key={cat.id} value={cat.id}>
-                          📁 {cat.name}
+                          {cat.icon || '📁'} {cat.name}
                         </option>
                       ))}
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewHouseholdCatInput(prev => !prev)}
-                      className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-blue-400 hover:bg-blue-400/10 text-blue-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                      title="Adicionar Nova Categoria Doméstica"
-                      aria-label="Adicionar Nova Categoria Doméstica"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
+                  ),
+                })}
 
-                  {showNewHouseholdCatInput && (
-                    <div className={`mt-2 p-2.5 rounded-xl border border-blue-400/50 ${surfaceSubtle} flex flex-col gap-2`}>
-                      <span className="text-[11px] font-black text-blue-400">
-                        Criar Nova Categoria Doméstica
-                      </span>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newHouseholdCatName}
-                          onChange={e => setNewHouseholdCatName(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddHouseholdCategory();
-                            }
-                          }}
-                          placeholder="Ex: Educação, Pets, Lazer, Vestuário..."
-                          className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddHouseholdCategory}
-                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
-                        >
-                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                          <span>Salvar</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                    Ícone Representativo
-                  </label>
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
-                    {['🏠', '🛒', '⚡', '💧', '📶', '🔥', '💊', '💳', '🎓', '🛡️', '📄', '📺'].map(ic => (
-                      <button
-                        key={ic}
-                        type="button"
-                        onClick={() => setHouseholdDraft({ ...householdDraft, icon: ic })}
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg cursor-pointer border transition-all ${
-                          householdDraft.icon === ic
-                            ? 'bg-blue-600 border-blue-400 text-white scale-110'
-                            : `${surfaceSubtle} hover:border-slate-600`
-                        }`}
-                      >
-                        {ic}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {renderExpenseIconPicker({
+                  target: 'household',
+                  defaultIcons: ['🏠', '🛒', '⚡', '💧', '📶', '🔥', '💊', '💳', '🎓', '🛡️', '📄', '📺'],
+                  selectedIcon: householdDraft.icon,
+                  onSelectIcon: ic => setHouseholdDraft({ ...householdDraft, icon: ic }),
+                  accentClass: 'blue',
+                })}
               </div>
 
               <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs bg-transparent ${dividerBorder}`}>
