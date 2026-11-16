@@ -160,6 +160,7 @@ export async function sendNativeNotification(payload: NativeNotificationPayload)
         channelId: payload.channel,
         smallIcon: 'ic_stat_notify',
         sound: 'default',
+        schedule: { at: new Date(Date.now() + 50), allowWhileIdle: true },
         extra: { targetTab: payload.targetTab },
       };
 

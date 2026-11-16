@@ -39,14 +39,26 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import {
+  ADMIN_INVESTMENT_NTFY_TOPIC,
+  buildWithdrawalRequestsList,
   createInvestmentEvent,
   createPendingDeposit,
   fetchMyDeposits,
   fetchPendingDeposits,
+  fetchRecentEvents,
+  formatWithdrawalEventPayload,
   reviewDeposit,
+  reviewWithdrawalRequest,
   type InvestmentDeposit,
+  type WithdrawalRequestItem,
+  type WithdrawalStatus,
 } from '../services/investmentCloud';
-import { sendNativeNotification } from '../services/nativeNotifications';
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  sendNativeNotification,
+  type NotificationPermissionState,
+} from '../services/nativeNotifications';
 
 export interface AdminInvestmentNotification {
   id: string;
@@ -405,6 +417,14 @@ export function InvestimentosScreen({
   const [depositsLoaded, setDepositsLoaded] = useState<boolean>(false);
   const [schemaMissing, setSchemaMissing] = useState<boolean>(false);
   const [pendingForAdmin, setPendingForAdmin] = useState<InvestmentDeposit[]>([]);
+  const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequestItem[]>([]);
+  const [showWithdrawalTrackingModal, setShowWithdrawalTrackingModal] = useState<boolean>(false);
+  const [withdrawalTrackingFilter, setWithdrawalTrackingFilter] = useState<'all' | WithdrawalStatus>('all');
+  const [adminWithdrawalFilter, setAdminWithdrawalFilter] = useState<'pending' | 'all'>('pending');
+  const [reviewingWithdrawalId, setReviewingWithdrawalId] = useState<string | null>(null);
+  const [copiedWithdrawPixId, setCopiedWithdrawPixId] = useState<string | null>(null);
+  const [copiedNtfyTopic, setCopiedNtfyTopic] = useState<boolean>(false);
+  const [notifPermState, setNotifPermState] = useState<NotificationPermissionState>('granted');
   const [reviewTarget, setReviewTarget] = useState<{
     deposit: InvestmentDeposit;
     decision: 'confirmed' | 'rejected';
@@ -444,15 +464,70 @@ export function InvestimentosScreen({
     if (res.ok) setPendingForAdmin(res.data);
   }, [isAdmin]);
 
+  const refreshWithdrawalRequests = React.useCallback(async () => {
+    const res = await fetchRecentEvents(100);
+    if (res.ok) {
+      setWithdrawalRequests(buildWithdrawalRequestsList(res.data));
+    }
+  }, []);
+
+  useEffect(() => {
+    void getNotificationPermission().then(setNotifPermState).catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     void refreshMyDeposits();
     void refreshPendingForAdmin();
+    void refreshWithdrawalRequests();
     const interval = setInterval(() => {
       void refreshMyDeposits();
       void refreshPendingForAdmin();
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [refreshMyDeposits, refreshPendingForAdmin]);
+      void refreshWithdrawalRequests();
+    }, 5000);
+    const onInvSync = () => {
+      void refreshMyDeposits();
+      void refreshPendingForAdmin();
+      void refreshWithdrawalRequests();
+    };
+    window.addEventListener('mochilinha:investment-sync', onInvSync);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('mochilinha:investment-sync', onInvSync);
+    };
+  }, [refreshMyDeposits, refreshPendingForAdmin, refreshWithdrawalRequests]);
+
+  const myWithdrawalRequests = useMemo(() => {
+    const clean = currentUserEmail.trim().toLowerCase();
+    return withdrawalRequests.filter(w => w.pilotEmail === clean);
+  }, [withdrawalRequests, currentUserEmail]);
+
+  const myPendingWithdrawalsCount = useMemo(
+    () => myWithdrawalRequests.filter(w => w.status === 'pending').length,
+    [myWithdrawalRequests]
+  );
+
+  const pendingWithdrawalsForAdmin = useMemo(
+    () => withdrawalRequests.filter(w => w.status === 'pending'),
+    [withdrawalRequests]
+  );
+
+  const handleAdminReviewWithdrawal = async (
+    req: WithdrawalRequestItem,
+    decision: 'paid' | 'rejected'
+  ) => {
+    if (!isAdmin) return;
+    setReviewingWithdrawalId(req.id);
+    const res = await reviewWithdrawalRequest(req, decision, currentUserEmail);
+    setReviewingWithdrawalId(null);
+    if (res.ok) {
+      await refreshWithdrawalRequests();
+      setInvestSuccessBanner(
+        decision === 'paid'
+          ? `✅ Resgate de ${fmtBRL(req.amount)} (${req.pilotName}) marcado como PIX Pago!`
+          : `Solicitação de resgate de ${fmtBRL(req.amount)} (${req.pilotName}) recusada.`
+      );
+    }
+  };
 
   const registerInvestmentEvent = (
     eventType: string,
@@ -465,6 +540,8 @@ export function InvestimentosScreen({
       planName: plan.planName,
       shares: plan.shares,
       amount: plan.amount,
+    }).then(() => {
+      void refreshWithdrawalRequests();
     });
   };
 
@@ -1052,8 +1129,19 @@ export function InvestimentosScreen({
     }
 
     const planNamesStr = Array.from(planNamesSet).join(', ');
+    const receiptCode = 'SAQ-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    const holderName = withdrawAccountHolder.trim() || currentUserName || 'Motoboy Parceiro';
+    const bankLabel = withdrawBankName.trim() || 'Conta Bancária informada';
+
     registerInvestmentEvent('withdrawal_requested', {
-      planName: `${planNamesStr} · PIX: ${pixTrimmed} (${withdrawPixType.toUpperCase()})`,
+      planName: formatWithdrawalEventPayload({
+        planName: planNamesStr,
+        pixKey: pixTrimmed,
+        pixType: withdrawPixType,
+        accountHolder: holderName,
+        bankName: bankLabel,
+        receiptCode,
+      }),
       shares: totalShares,
       amount: totalAmount,
     });
@@ -1069,13 +1157,13 @@ export function InvestimentosScreen({
     });
 
     const receipt = {
-      id: 'SAQ-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+      id: receiptCode,
       amount: totalAmount,
       shares: totalShares,
       pixKey: pixTrimmed,
       pixType: withdrawPixType,
-      holder: withdrawAccountHolder.trim() || currentUserName || 'Motoboy Parceiro',
-      bank: withdrawBankName.trim() || 'Conta Bancária informada',
+      holder: holderName,
+      bank: bankLabel,
       planNames: planNamesStr,
       date: new Date().toLocaleDateString('pt-BR') + ' às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     };
@@ -1424,6 +1512,202 @@ export function InvestimentosScreen({
         </div>
       )}
 
+      {/* PAINEL DO ADMIN: SOLICITAÇÕES DE RESGATE PIX DOS MOTOBOYS */}
+      {isAdmin && (
+        <div
+          id="admin-withdrawals-section"
+          className={`rounded-2xl sm:rounded-3xl p-4 sm:p-5 border ${
+            pendingWithdrawalsForAdmin.length > 0 ? 'border-sky-500/50' : dividerBorder
+          } bg-transparent`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-800/60">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-transparent border border-sky-500/60 text-sky-400 flex items-center justify-center shrink-0">
+                <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-sm sm:text-base font-black">
+                    Solicitações de Resgate PIX dos Motoboys
+                  </h2>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-transparent text-sky-400 border border-sky-500/40">
+                    {pendingWithdrawalsForAdmin.length}{' '}
+                    {pendingWithdrawalsForAdmin.length === 1 ? 'Pendente' : 'Pendentes'}
+                  </span>
+                </div>
+                <p className={`text-xs mt-0.5 ${mutedText}`}>
+                  Copie a chave PIX, faça a transferência e clique em <strong>Confirmar PIX Pago</strong> para atualizar a tela de acompanhamento do motoboy e notificá-lo na hora.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap self-start sm:self-center shrink-0">
+              {notifPermState !== 'granted' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const p = await requestNotificationPermission();
+                    setNotifPermState(p);
+                    window.dispatchEvent(new CustomEvent('mochilinha:investment-sync'));
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl text-[11px] font-black bg-transparent text-amber-400 border border-amber-500/50 hover:bg-amber-500/10 cursor-pointer flex items-center gap-1"
+                >
+                  <BellRing className="w-3.5 h-3.5" />
+                  <span>Ativar Alertas Push</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    void navigator.clipboard?.writeText(`https://ntfy.sh/${ADMIN_INVESTMENT_NTFY_TOPIC}`);
+                    setCopiedNtfyTopic(true);
+                    setTimeout(() => setCopiedNtfyTopic(false), 2500);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                title="Copia o canal push ntfy.sh para alertas instantâneos mesmo com o APK fechado"
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-sky-500/50 flex items-center gap-1`}
+              >
+                <Bell className="w-3.5 h-3.5 text-sky-400" />
+                <span>{copiedNtfyTopic ? 'Canal Push Copiado!' : 'Canal Push 24h'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setAdminWithdrawalFilter(prev => (prev === 'pending' ? 'all' : 'pending'))
+                }
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-sky-500/50`}
+              >
+                {adminWithdrawalFilter === 'pending'
+                  ? `Ver Todos (${withdrawalRequests.length})`
+                  : `Só Pendentes (${pendingWithdrawalsForAdmin.length})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void refreshWithdrawalRequests()}
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-sky-500/50`}
+              >
+                🔄
+              </button>
+            </div>
+          </div>
+
+          {(() => {
+            const visibleList =
+              adminWithdrawalFilter === 'pending'
+                ? pendingWithdrawalsForAdmin
+                : withdrawalRequests;
+            if (visibleList.length === 0) {
+              return (
+                <div className={`mt-3 p-4 rounded-xl text-xs font-semibold flex items-center gap-2 bg-transparent border ${dividerBorder} ${mutedText}`}>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Nenhuma solicitação de resgate pendente no momento.</span>
+                </div>
+              );
+            }
+            return (
+              <div className="flex flex-col gap-2.5 mt-3">
+                {visibleList.map(req => {
+                  const isPending = req.status === 'pending';
+                  const statusBadge =
+                    req.status === 'paid'
+                      ? { label: '✅ PIX Pago', cls: 'text-emerald-400 border-emerald-500/40' }
+                      : req.status === 'rejected'
+                      ? { label: '❌ Recusado', cls: 'text-rose-400 border-rose-500/40' }
+                      : { label: '⏳ Aguardando PIX', cls: 'text-sky-400 border-sky-500/40' };
+                  return (
+                    <div
+                      key={req.id}
+                      className={`p-3.5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 bg-transparent ${
+                        isPending ? 'border-sky-500/40' : dividerBorder
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-2xl bg-transparent border border-sky-500/40 text-sky-400 flex items-center justify-center shrink-0">
+                          <ArrowUpRight className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm font-black">{req.pilotName}</span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-transparent border border-neutral-800 text-slate-300">
+                              {req.pilotEmail}
+                            </span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded bg-transparent border ${statusBadge.cls}`}>
+                              {statusBadge.label}
+                            </span>
+                            <span className="text-[10px] font-mono font-bold text-slate-400">
+                              #{req.receiptCode}
+                            </span>
+                          </div>
+                          <div className="text-xs font-bold mt-1 text-sky-400">
+                            {req.planName} · {req.shares} {req.shares === 1 ? 'Cota' : 'Cotas'} · Resgate:{' '}
+                            <span className="text-sm font-black">{fmtBRL(req.amount)}</span>
+                          </div>
+                          {req.pixKey && (
+                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                              <span className="text-[11px] font-mono font-bold text-emerald-400">
+                                PIX ({req.pixType.toUpperCase()}): {req.pixKey}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  try {
+                                    void navigator.clipboard?.writeText(req.pixKey);
+                                    setCopiedWithdrawPixId(req.id);
+                                    setTimeout(() => setCopiedWithdrawPixId(null), 2000);
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded border ${dividerBorder} hover:border-sky-400 cursor-pointer flex items-center gap-1`}
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>{copiedWithdrawPixId === req.id ? 'Copiada!' : 'Copiar PIX'}</span>
+                              </button>
+                            </div>
+                          )}
+                          <div className={`text-[10px] mt-0.5 ${mutedText}`}>
+                            Solicitado em {req.createdAt ? new Date(req.createdAt).toLocaleString('pt-BR') : 'Agora'}
+                            {req.reviewedAt ? ` · Analisado em ${new Date(req.reviewedAt).toLocaleString('pt-BR')}` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isPending && (
+                        <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-neutral-800/50">
+                          <button
+                            type="button"
+                            disabled={reviewingWithdrawalId === req.id}
+                            onClick={() => void handleAdminReviewWithdrawal(req, 'rejected')}
+                            className="px-3 py-2 rounded-xl text-xs font-bold bg-transparent hover:bg-rose-500/10 text-rose-400 border border-rose-500/40 cursor-pointer transition-colors"
+                          >
+                            Recusar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reviewingWithdrawalId === req.id}
+                            onClick={() => void handleAdminReviewWithdrawal(req, 'paid')}
+                            className="px-3.5 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 cursor-pointer transition-colors flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
+                            <span>Confirmar PIX Pago</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* 1. HERO HEADER & RESUMO DA CARTEIRA DE COTAS DO MOTOBOY */}
       <div className={`pb-6 border-b ${dividerBorder} relative`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-800/60 dark:border-neutral-800/60">
@@ -1444,6 +1728,29 @@ export function InvestimentosScreen({
                 Compre cotas do fundo exclusivo para entregadores, acompanhe seu rendimento diário e resgate após o prazo mínimo configurado em cada cota.
               </p>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                void refreshWithdrawalRequests();
+                setShowWithdrawalTrackingModal(true);
+              }}
+              className="px-3.5 py-2 rounded-xl text-xs font-black bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500/60 cursor-pointer flex items-center gap-1.5 transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Solicitações de Resgate</span>
+              {myWithdrawalRequests.length > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black border ${
+                  myPendingWithdrawalsCount > 0
+                    ? 'border-amber-500/60 text-amber-400'
+                    : 'border-sky-500/50 text-sky-300'
+                }`}>
+                  {myWithdrawalRequests.length}
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -3815,6 +4122,19 @@ export function InvestimentosScreen({
                 type="button"
                 onClick={() => {
                   setShowActiveInvestmentsModal(false);
+                  void refreshWithdrawalRequests();
+                  setShowWithdrawalTrackingModal(true);
+                }}
+                className="py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500/60 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Acompanhar Resgates ({myWithdrawalRequests.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowActiveInvestmentsModal(false);
                   setWithdrawTargetId('all_eligible');
                   setWithdrawReceipt(null);
                   setWithdrawError(null);
@@ -4099,22 +4419,27 @@ export function InvestimentosScreen({
                   </div>
                 </div>
 
-                <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] bg-transparent ${
-                  isDark ? 'border-sky-500/30 text-sky-300' : 'border-sky-300 text-sky-900'
-                }`}>
-                  <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
-                  <span>
-                    O Administrador recebeu uma notificação prioritária no sistema. O comprovante PIX ficará disponível assim que a transferência for efetivada.
-                  </span>
+                <div className="flex flex-col sm:flex-row gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowWithdrawalModal(false);
+                      void refreshWithdrawalRequests();
+                      setShowWithdrawalTrackingModal(true);
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Acompanhar Minhas Solicitações</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowWithdrawalModal(false)}
+                    className="flex-1 py-3 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 transition-all cursor-pointer"
+                  >
+                    Concluir / Fechar
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowWithdrawalModal(false)}
-                  className="w-full py-3 rounded-xl text-xs font-black bg-transparent hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500 transition-all cursor-pointer mt-1"
-                >
-                  Concluir / Fechar
-                </button>
               </div>
             ) : (
               /* FORMULÁRIO DE SOLICITAÇÃO DE RESGATE */
@@ -4349,16 +4674,6 @@ export function InvestimentosScreen({
                       </div>
                     )}
 
-                    {/* Aviso de Confirmação & Alta Prioridade */}
-                    <div className={`p-3 rounded-xl border flex items-start gap-2.5 text-[11px] bg-transparent ${
-                      isDark ? 'border-sky-500/30 text-sky-300' : 'border-sky-300 text-sky-900'
-                    }`}>
-                      <BellRing className={`w-4 h-4 shrink-0 mt-0.5 animate-pulse ${isDark ? 'text-sky-400' : 'text-sky-700'}`} />
-                      <span>
-                        <strong>Aviso de Notificação Instantânea:</strong> Ao enviar, o <strong>Administrador recebe um alerta prioritário imediato</strong> com sua chave PIX para efetuar o pagamento.
-                      </span>
-                    </div>
-
                     {/* Botões do Formulário */}
                     <div className="flex flex-col sm:flex-row gap-2 mt-1">
                       <button
@@ -4568,6 +4883,296 @@ export function InvestimentosScreen({
                 type="button"
                 onClick={() => setShowFundRulesModal(false)}
                 className={`py-3 px-5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-slate-500 transition-colors`}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. TELA DEDICADA DE ACOMPANHAMENTO DE SOLICITAÇÕES DE RESGATE DO MOTOBOY */}
+      {/* ========================================================================= */}
+      {showWithdrawalTrackingModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setShowWithdrawalTrackingModal(false)}
+        >
+          <div
+            className={`w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 max-h-[92vh] overflow-y-auto flex flex-col gap-4 animate-in fade-in duration-200 ${modalSurface}`}
+            style={{ paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className={`flex items-start justify-between gap-3 pb-3 border-b ${dividerBorder}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-transparent border border-sky-500/60 text-sky-400 flex items-center justify-center shrink-0">
+                  <FileText className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className={`text-base sm:text-lg font-black ${primaryText}`}>
+                      Minhas Solicitações de Resgate
+                    </h3>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded border bg-transparent text-sky-400 border-sky-500/40">
+                      {myWithdrawalRequests.length}{' '}
+                      {myWithdrawalRequests.length === 1 ? 'Registro' : 'Registros'}
+                    </span>
+                  </div>
+                  <p className={`text-xs ${mutedText}`}>
+                    Acompanhe em tempo real o andamento de cada pedido de saque PIX enviado ao Administrador
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawalTrackingModal(false)}
+                className={`p-1.5 sm:p-2 rounded-xl bg-transparent border ${dividerBorder} cursor-pointer hover:border-sky-500`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Resumo das Solicitações */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
+                <span className="text-[10px] font-bold uppercase block text-amber-400">
+                  Aguardando PIX
+                </span>
+                <span className="text-base sm:text-lg font-black tabular-nums text-amber-400">
+                  {myWithdrawalRequests.filter(w => w.status === 'pending').length}
+                </span>
+                <span className={`text-[10px] block tabular-nums ${mutedText}`}>
+                  {fmtBRL(
+                    myWithdrawalRequests
+                      .filter(w => w.status === 'pending')
+                      .reduce((s, w) => s + w.amount, 0)
+                  )}
+                </span>
+              </div>
+
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
+                <span className="text-[10px] font-bold uppercase block text-emerald-400">
+                  PIX Pagos
+                </span>
+                <span className="text-base sm:text-lg font-black tabular-nums text-emerald-400">
+                  {myWithdrawalRequests.filter(w => w.status === 'paid').length}
+                </span>
+                <span className={`text-[10px] block tabular-nums ${mutedText}`}>
+                  {fmtBRL(
+                    myWithdrawalRequests
+                      .filter(w => w.status === 'paid')
+                      .reduce((s, w) => s + w.amount, 0)
+                  )}
+                </span>
+              </div>
+
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
+                <span className="text-[10px] font-bold uppercase block text-rose-400">
+                  Recusados
+                </span>
+                <span className="text-base sm:text-lg font-black tabular-nums text-rose-400">
+                  {myWithdrawalRequests.filter(w => w.status === 'rejected').length}
+                </span>
+                <span className={`text-[10px] block tabular-nums ${mutedText}`}>
+                  {fmtBRL(
+                    myWithdrawalRequests
+                      .filter(w => w.status === 'rejected')
+                      .reduce((s, w) => s + w.amount, 0)
+                  )}
+                </span>
+              </div>
+
+              <div className={`p-3 rounded-2xl bg-transparent border ${dividerBorder}`}>
+                <span className="text-[10px] font-bold uppercase block text-sky-400">
+                  Total Solicitado
+                </span>
+                <span className="text-base sm:text-lg font-black tabular-nums text-sky-400">
+                  {fmtBRL(myWithdrawalRequests.reduce((s, w) => s + w.amount, 0))}
+                </span>
+                <span className={`text-[10px] block ${mutedText}`}>
+                  {myWithdrawalRequests.reduce((s, w) => s + w.shares, 0)} cotas
+                </span>
+              </div>
+            </div>
+
+            {/* Filtros de Status */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {[
+                  { id: 'all' as const, label: `Todas (${myWithdrawalRequests.length})` },
+                  {
+                    id: 'pending' as const,
+                    label: `⏳ Em Análise (${myWithdrawalRequests.filter(w => w.status === 'pending').length})`,
+                  },
+                  {
+                    id: 'paid' as const,
+                    label: `✅ PIX Pago (${myWithdrawalRequests.filter(w => w.status === 'paid').length})`,
+                  },
+                  {
+                    id: 'rejected' as const,
+                    label: `❌ Recusadas (${myWithdrawalRequests.filter(w => w.status === 'rejected').length})`,
+                  },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setWithdrawalTrackingFilter(tab.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer border transition-colors ${
+                      withdrawalTrackingFilter === tab.id
+                        ? 'bg-sky-500/20 text-sky-400 border-sky-500 font-black'
+                        : `bg-transparent ${dividerBorder} ${mutedText} hover:border-slate-500`
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void refreshWithdrawalRequests()}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-sky-500`}
+              >
+                🔄 Atualizar
+              </button>
+            </div>
+
+            {/* Listagem das Solicitações do Motoboy */}
+            {(() => {
+              const filtered = myWithdrawalRequests.filter(w =>
+                withdrawalTrackingFilter === 'all' ? true : w.status === withdrawalTrackingFilter
+              );
+              if (filtered.length === 0) {
+                return (
+                  <div className={`p-8 rounded-2xl border border-dashed text-center ${dividerBorder}`}>
+                    <div className="text-3xl mb-2">📋</div>
+                    <div className={`text-sm font-black ${primaryText}`}>
+                      Nenhuma solicitação de resgate encontrada
+                    </div>
+                    <p className={`text-xs mt-1 ${mutedText}`}>
+                      Quando você solicitar o saque das suas cotas liberadas, o protocolo e o status do PIX aparecerão aqui em tempo real.
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <div className="flex flex-col gap-2.5">
+                  {filtered.map(req => {
+                    const statusConfig =
+                      req.status === 'paid'
+                        ? {
+                            label: '✅ PIX Pago / Concluído',
+                            border: 'border-emerald-500/50',
+                            badge: 'text-emerald-400 border-emerald-500/40',
+                            step: 'Transferência confirmada pelo Administrador',
+                          }
+                        : req.status === 'rejected'
+                        ? {
+                            label: '❌ Solicitação Recusada',
+                            border: 'border-rose-500/50',
+                            badge: 'text-rose-400 border-rose-500/40',
+                            step: req.reviewNote ? `Motivo: ${req.reviewNote}` : 'Verifique os dados com o Administrador',
+                          }
+                        : {
+                            label: '⏳ Aguardando PIX do Admin',
+                            border: 'border-amber-500/50',
+                            badge: 'text-amber-400 border-amber-500/40',
+                            step: 'Solicitação recebida · Em análise para envio do PIX',
+                          };
+
+                    return (
+                      <div
+                        key={'track_' + req.id}
+                        className={`p-3.5 sm:p-4 rounded-2xl border bg-transparent ${statusConfig.border} flex flex-col gap-2.5 text-xs`}
+                      >
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[11px] font-black text-sky-400">
+                                #{req.receiptCode}
+                              </span>
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded border bg-transparent ${statusConfig.badge}`}>
+                                {statusConfig.label}
+                              </span>
+                            </div>
+                            <div className={`text-sm font-black mt-1 ${primaryText}`}>
+                              {req.planName}
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <div className="text-base sm:text-lg font-black tabular-nums text-emerald-400">
+                              {fmtBRL(req.amount)}
+                            </div>
+                            <div className={`text-[10px] font-bold ${mutedText}`}>
+                              {req.shares} {req.shares === 1 ? 'cota' : 'cotas'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t ${dividerBorder} text-[11px]`}>
+                          <div>
+                            <span className={mutedText}>Chave PIX destino: </span>
+                            <span className="font-mono font-bold text-sky-400">
+                              {req.pixKey ? `${req.pixKey} (${req.pixType.toUpperCase()})` : 'Não informada'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className={mutedText}>Solicitado em: </span>
+                            <span className="font-bold">
+                              {req.createdAt ? new Date(req.createdAt).toLocaleString('pt-BR') : 'Agora'}
+                            </span>
+                          </div>
+                          {req.accountHolder && (
+                            <div>
+                              <span className={mutedText}>Titular: </span>
+                              <span className="font-bold">{req.accountHolder}</span>
+                            </div>
+                          )}
+                          {req.bankName && (
+                            <div>
+                              <span className={mutedText}>Banco: </span>
+                              <span className="font-bold">{req.bankName}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className={`pt-2 border-t ${dividerBorder} flex items-center justify-between gap-2 flex-wrap text-[11px]`}>
+                          <span className={`font-semibold ${mutedText}`}>{statusConfig.step}</span>
+                          {req.reviewedAt && (
+                            <span className="font-bold text-emerald-400">
+                              Atualizado em {new Date(req.reviewedAt).toLocaleString('pt-BR')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Rodapé */}
+            <div className={`flex flex-col sm:flex-row gap-2 pt-2 border-t ${dividerBorder}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWithdrawalTrackingModal(false);
+                  setWithdrawReceipt(null);
+                  setWithdrawError(null);
+                  setShowWithdrawalModal(true);
+                }}
+                className="flex-1 py-3 px-4 rounded-xl text-xs font-black bg-transparent hover:bg-sky-500/10 text-sky-400 border border-sky-500 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <ArrowUpRight className="w-4 h-4" />
+                <span>Solicitar Novo Resgate PIX</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawalTrackingModal(false)}
+                className={`py-3 px-5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} ${secondaryText} hover:border-sky-500 transition-colors`}
               >
                 Fechar
               </button>

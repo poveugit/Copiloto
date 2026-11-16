@@ -405,6 +405,43 @@ async function startServer() {
     }
   });
 
+  // Investment Events (Solicitações de Resgate, Confirmações e Histórico)
+  app.get('/api/investment-events', (req, res) => {
+    try {
+      const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+      const store = readServerCloudStore();
+      const list: any[] = Array.isArray(store['__global_investment_events__'])
+        ? store['__global_investment_events__']
+        : [];
+      return res.json({ ok: true, data: list.slice(0, limit) });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/investment-events', (req, res) => {
+    try {
+      const { event } = req.body || {};
+      if (!event || !event.id || !event.event_type) {
+        return res.status(400).json({ ok: false, error: 'Invalid event payload' });
+      }
+      const store = readServerCloudStore();
+      const list: any[] = Array.isArray(store['__global_investment_events__'])
+        ? store['__global_investment_events__']
+        : [];
+      const row = {
+        ...event,
+        created_at: event.created_at || new Date().toISOString(),
+      };
+      const filtered = list.filter(e => String(e.id) !== String(row.id));
+      store['__global_investment_events__'] = [row, ...filtered].slice(0, 300);
+      writeServerCloudStore(store);
+      return res.json({ ok: true, data: row });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
   app.post('/api/gemini/copilot', async (req, res) => {
     try {
       const { question, context } = req.body;
