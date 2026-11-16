@@ -448,3 +448,40 @@
   - Removido o texto `Salvar Despesa da Moto` do botão de confirmação em `showBikeModal`, mantendo apenas o ícone `<Check />` com `aria-label` e `title`.
   - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.94s`) e todas as 4 suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
   - **APK Release (16/11/2026 00:24)**: `npx cap sync android` (`1.535s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 1m 44s` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.581.373` bytes, `16/11/2026 00:24:44`), assinado com `release-key.jks`.
+
+## Redesign das Abas Fixas, Filtro de Meses e Cards Clicáveis em Finanças (16/11/2026)
+- **Abas Fixas (Sticky) e Minimalistas (`src/App.tsx`)**:
+  - Removido o bloco grande de título (`Central de Finanças`) e subtexto acima das abas.
+  - Refeita a barra de sub-abas de Finanças como abas horizontais com indicador de linha inferior (`border-b-2 border-[#FF6A1A]`) fixadas via `sticky z-20` logo abaixo do cabeçalho (`top: calc(3.75rem + env(safe-area-inset-top, 0px))`), permanecendo visíveis ao rolar a página.
+- **Filtro de Meses Minimalista (`src/App.tsx`)**:
+  - Removidos o cabeçalho `Extrato Mensal & Filtro de Meses`, o parágrafo explicativo e o badge visual verde/azul (`Mês Atual em Andamento` / `Mês Fechado`), deixando apenas o seletor compacto de mês com setas Anterior/Próximo.
+- **Cards Clicáveis "1. Ganhos Totais" e "2. Gastos do Mês" + Modal Detalhado (`src/App.tsx`)**:
+  - Removidos os badges de contagem nos cards (`corridas` azul e `lançamentos` rosa).
+  - Ambos os cards agora são clicáveis (`financeDetailModal`: `'ganhos' | 'gastos' | null`) e abrem um modal com espaçamento inferior `safe-area-inset-bottom`, exibindo somente os ganhos registrados ou somente os gastos registrados do mês selecionado (com total, botão `+ Novo Ganho`/`+ Novo Gasto`, editar e excluir).
+- **Validação**:
+  - `npx tsc --noEmit`: 0 erros.
+  - `npm run build`: `vite build` concluído em `6.84s` (sem gerar APK).
+  - Suítes `npx tsx`: `verify_calendar_expenses_and_channels.ts` (**9/9**), `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**).
+
+## Calculadora de Odômetro no Campo "KM Rodados" (16/11/2026)
+- **Calculadora Inteligente por Odômetro (`src/components/QuickCalculatorModal.tsx`, `src/App.tsx`)**:
+  - Estendido `QuickCalculatorModal` com as props opcionais `unit?: 'currency' | 'km'` e `currentOdometer?: number`.
+  - Ao abrir a calculadora no campo `KM Rodados` do modal de ganhos (`openKmCalculatorWithOdometer`), exibe os campos **Odômetro Atual da Moto** (pré-preenchido com `totals.baseTotalKm`) e **Odômetro do Dia (km)**: ao digitar o odômetro atual do painel, calcula automaticamente a diferença (`day - base`), atualiza a expressão/resultado em `km` e insere no campo `KM Rodados`.
+  - Corrigido o listener global de teclado (`keydown`) em `QuickCalculatorModal.tsx` para não interceptar digitação/Backspace dentro de `<input>` e adicionado espaçamento inferior `env(safe-area-inset-bottom)`.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.55s`), verificação direta de `safeEvaluateMath` (**3/3**) e todas as 4 suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+- **Correção de Layout na Calculadora e Botão de Faturamento (16/11/2026)**:
+  - Adicionado `shrink-0` em todos os blocos do `QuickCalculatorModal.tsx` (incluindo a faixa `+ Rápido: +5 +10 +20 +50 +100` com `min-h-[32px]`) e compactado o espaçamento vertical do teclado (`keyPadPy = hasOdometerMode ? 'py-2' : 'py-2.5 sm:py-3'`) para evitar o colapso da adição rápida quando o modo odômetro estiver aberto.
+  - Adicionado `min-w-0` nas colunas da grade 2×2 e nos `<input type="number">` de **KM Rodados** e **Faturamento (R$)** em `src/App.tsx` (alinhando com `items-stretch`) para impedir o transbordo/desalinhamento do botão de calculadora em telas estreitas.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.75s`) e suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+- **Remoção do Botão "Preencher por Voz" do Modal de Corrida (16/11/2026)**:
+  - Removido o banner/botão `Preencher por Voz` de dentro de `showEntryModal` (`entryMode === 'ganho'`) acima da seleção de `Aplicativo / Local` em `src/App.tsx`, mantendo o ditado por voz disponível pelo botão flutuante circular.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.40s`) e suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+- **Remoção dos Botões de Restaurar Lista Sugerida em Despesas Moto/Casa (16/11/2026)**:
+  - Removidos os botões `Restaurar Padrão` (restaurar lista sugerida) dos cabeçalhos de **Despesas da Moto** e **Despesas da Casa**, bem como as funções `resetDefaultBikeExpenses` e `resetDefaultHouseholdExpenses` em `src/App.tsx`.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`3.23s`) e suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+- **Painel: Remoção de Ações Rápidas e Inclusão de Categorias Customizadas nas Reservas (16/11/2026)**:
+  - Removidos os botões `+ Corrida / Gasto` e `Extrato` abaixo de **Cobertura das Reservas do Mês** na aba Painel (`src/App.tsx`).
+  - Atualizado `financialIntelligence` para separar despesas de categorias criadas pelo usuário (`dbState.customCategories`) em `customCategoryReserves` (Moto e Casa, sem dupla contagem com `Manutenção` ou `Contas Casa`), exibindo-as dinamicamente no grid de **Reservas Financeiras Obrigatórias** no Painel e nos filtros/badges das abas de despesas.
+  - Removido o sufixo ` (Personalizada)` dos `<select>` de categorias nos modais de **Despesa da Moto** e **Despesa da Casa**.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.60s`) e suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+  - **APK Release (16/11/2026 09:48)**: `npx cap sync android` (`1.808s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 1m 45s` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.583.969` bytes, `16/11/2026 09:48:40`), assinado com `release-key.jks`.

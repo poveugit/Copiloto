@@ -1391,6 +1391,7 @@ export default function App() {
   // Navigation & Architecture Inspector State
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [billingSubTab, setBillingSubTab] = useState<'mensal' | 'projecao' | 'despesas_moto' | 'despesas_casa' | 'planejamento' | 'ganhos' | 'gastos'>('mensal');
+  const [financeDetailModal, setFinanceDetailModal] = useState<'ganhos' | 'gastos' | null>(null);
 
   // Estados de Faturamento Futuro Previsto & Calendário Compartilhado
   const [showProjectedModal, setShowProjectedModal] = useState<boolean>(false);
@@ -1481,22 +1482,50 @@ export default function App() {
     isOpen: boolean;
     title: string;
     initialValue: string | number;
+    unit?: 'currency' | 'km';
+    currentOdometer?: number;
     onApply: (val: string) => void;
   }>({
     isOpen: false,
     title: 'Calculadora de Valores',
     initialValue: '',
+    unit: 'currency',
+    currentOdometer: undefined,
     onApply: () => {},
   });
 
-  const openQuickCalculator = useCallback((title: string, initialValue: string | number, onApply: (val: string) => void) => {
-    setQuickCalcState({
-      isOpen: true,
-      title: title || 'Calculadora Rápida',
-      initialValue: initialValue ?? '',
-      onApply,
+  const openQuickCalculator = useCallback(
+    (
+      title: string,
+      initialValue: string | number,
+      onApply: (val: string) => void,
+      options?: { unit?: 'currency' | 'km'; currentOdometer?: number }
+    ) => {
+      setQuickCalcState({
+        isOpen: true,
+        title: title || 'Calculadora Rápida',
+        initialValue: initialValue ?? '',
+        unit: options?.unit ?? 'currency',
+        currentOdometer: options?.currentOdometer,
+        onApply,
+      });
+    },
+    []
+  );
+
+  const openKmCalculatorWithOdometer = () => {
+    const baseOdo = editingEntryId
+      ? Math.max(
+          0,
+          totals.baseTotalKm -
+            (Number(dbState.entries.find(e => e.id === editingEntryId)?.km) || 0)
+        )
+      : totals.baseTotalKm;
+    openQuickCalculator('KM Rodados', entryKm, val => setEntryKm(val), {
+      unit: 'km',
+      currentOdometer: baseOdo,
     });
-  }, []);
+  };
 
   // ================= AUTHENTICATION (LOGIN, CADASTRO, REDEFINIR SENHA & LEMBRAR DADOS) STATE =================
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getActiveSessionUser());
@@ -3012,15 +3041,6 @@ export default function App() {
     });
   };
 
-  const resetDefaultBikeExpenses = () => {
-    const defaultIds = new Set(DEFAULT_BIKE_EXPENSES.map(b => b.id));
-    persistAndEnqueueWorkManager({
-      ...dbState,
-      bikeExpenses: DEFAULT_BIKE_EXPENSES.map(b => ({ ...b })),
-      deletedBikeExpenseIds: (dbState.deletedBikeExpenseIds || []).filter(id => !defaultIds.has(String(id))),
-    });
-  };
-
   const duplicateBikeExpense = (item: BikeExpenseItem) => {
     const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
@@ -3343,17 +3363,6 @@ export default function App() {
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: list,
-    });
-  };
-
-  const resetDefaultHouseholdExpenses = () => {
-    const defaultIds = new Set(DEFAULT_HOUSEHOLD_EXPENSES.map(h => h.id));
-    persistAndEnqueueWorkManager({
-      ...dbState,
-      householdExpenses: DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h })),
-      deletedHouseholdExpenseIds: (dbState.deletedHouseholdExpenseIds || []).filter(
-        id => !defaultIds.has(String(id))
-      ),
     });
   };
 
@@ -5524,6 +5533,10 @@ export default function App() {
     const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
     const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive);
 
+    const customCategoryList = Array.isArray(dbState.customCategories) ? dbState.customCategories : [];
+    const customCatIdSet = new Set(customCategoryList.map(c => c.id));
+    const customCatNameSet = new Set(customCategoryList.map(c => c.name.toLowerCase()));
+
     // Sincroniza Combustível, Documentação/Seguro e Manutenção/Peças diretamente com os cards ativos da moto para que a soma bata 100%
     if (activeEnrichedBikeExpenses.length > 0) {
       const isFuelItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
@@ -5543,9 +5556,14 @@ export default function App() {
           b.name.toLowerCase().includes('licenciamento') ||
           b.name.toLowerCase().includes('seguro'));
 
+      const isCustomCatBike = (b: typeof activeEnrichedBikeExpenses[number]) =>
+        customCatIdSet.has(b.category) || customCatNameSet.has((b.category || '').toLowerCase());
+
       const fuelItems = activeEnrichedBikeExpenses.filter(isFuelItem);
       const docsItems = activeEnrichedBikeExpenses.filter(isDocsItem);
-      const maintItems = activeEnrichedBikeExpenses.filter(b => !isFuelItem(b) && !isDocsItem(b));
+      const maintItems = activeEnrichedBikeExpenses.filter(
+        b => !isFuelItem(b) && !isDocsItem(b) && !isCustomCatBike(b)
+      );
 
       if (fuelItems.length > 0) {
         dailyFuelCost = fuelItems.reduce((sum, f) => sum + f.dailyRateio, 0);
@@ -5676,6 +5694,49 @@ export default function App() {
     const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
 
+    // Reservas das categorias customizadas criadas pelo usuário (Moto + Casa) para exibição no Painel
+    let totalCustomHouseDaily = 0;
+    let totalCustomHouseMonthly = 0;
+    const customCategoryReserves = customCategoryList.map(cat => {
+      const catLower = cat.name.toLowerCase();
+      const bikeMatches = activeEnrichedBikeExpenses.filter(
+        b => b.category === cat.id || (b.category || '').toLowerCase() === catLower
+      );
+      const houseMatches = activeHouseholdExpenses.filter(
+        h => (h.category as string) === cat.id || String(h.category || '').toLowerCase() === catLower
+      );
+      const bikeDaily = bikeMatches.reduce((s, b) => s + b.dailyRateio, 0);
+      const bikeMonthly = bikeMatches.reduce((s, b) => s + b.monthlyCost, 0);
+      const houseMonthly = houseMatches.reduce((s, h) => s + Math.max(0, Number(h.monthlyAmount) || 0), 0);
+      const houseDaily = houseMatches.reduce((s, h) => {
+        const rateioDays = getExpenseRateioDays(h.selectedDates, workDaysPerMonth, targetFinanceYM);
+        return s + Math.max(0, Number(h.monthlyAmount) || 0) / rateioDays;
+      }, 0);
+      totalCustomHouseDaily += houseDaily;
+      totalCustomHouseMonthly += houseMonthly;
+
+      const dailyCost = bikeDaily + houseDaily;
+      const monthlyCost = bikeMonthly + houseMonthly;
+      const pctOfGross = dailyGross > 0 ? Math.round((dailyCost / dailyGross) * 100) : 0;
+      const targetTab: 'despesas_moto' | 'despesas_casa' =
+        houseMatches.length > 0 && bikeMatches.length === 0 ? 'despesas_casa' : 'despesas_moto';
+      const icon = bikeMatches[0]?.icon || houseMatches[0]?.icon || '📁';
+
+      return {
+        id: cat.id,
+        name: cat.name,
+        icon,
+        dailyCost,
+        monthlyCost,
+        pctOfGross,
+        targetTab,
+      };
+    });
+
+    const standardHouseholdDaily = Math.max(0, dailyHouseholdReserve - totalCustomHouseDaily);
+    const standardHouseholdMonthly = Math.max(0, monthlyHouseholdCost - totalCustomHouseMonthly);
+    const standardHousePct = dailyGross > 0 ? Math.round((standardHouseholdDaily / dailyGross) * 100) : 0;
+
     // Subtotal Moto & Operação (Custos Operacionais da Moto + Alimentação no Turno de Rua)
     const dailyBikeCostsTotal = unifiedDailyBikeReserve + dailyFoodCost;
     const monthlyBikeCostsTotal = unifiedMonthlyBikeTotal + monthlyFoodCost;
@@ -5787,6 +5848,10 @@ export default function App() {
       dailyHouseholdReserve,
       weeklyHouseholdReserve,
       housePctOfGross,
+      standardHouseholdDaily,
+      standardHouseholdMonthly,
+      standardHousePct,
+      customCategoryReserves,
       // Subtotais Moto e Totais Consolidados
       dailyBikeCostsTotal,
       monthlyBikeCostsTotal,
@@ -8114,34 +8179,6 @@ export default function App() {
                         )}
                       </div>
                     </div>
-
-                    {/* Botões de Ação Rápida (Sem fundo, borda fina e suave) */}
-                    <div className={`flex items-center gap-2 mt-4 pt-3 border-t ${dividerBorder}`}>
-                      <button
-                        type="button"
-                        onClick={() => openNewEntryModal('ganho', false)}
-                        className="flex-1 py-2 sm:py-2.5 px-3 rounded-xl text-xs font-black bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/60 hover:border-[#FF6A1A] transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                        <span>+ Corrida / Gasto</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveTab('billing');
-                          setBillingSubTab('ganhos');
-                        }}
-                        className={`py-2 sm:py-2.5 px-3 rounded-xl text-xs font-bold bg-transparent border transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                          isDark
-                            ? 'border-slate-800 hover:border-slate-600 text-slate-200'
-                            : 'border-slate-300 hover:border-slate-400 text-slate-800'
-                        }`}
-                      >
-                        <span>Extrato</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
                   </div>
                 );
               })()}
@@ -8304,15 +8341,15 @@ export default function App() {
                       <span className="truncate">Contas Casa</span>
                     </span>
                     <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-blue-500/30 text-blue-600 dark:text-blue-400 shrink-0">
-                      {financialIntelligence.housePctOfGross}%
+                      {financialIntelligence.standardHousePct}%
                     </span>
                   </div>
                   <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
+                    <AnimatedNumber value={financialIntelligence.standardHouseholdDaily} formatter={fmtCurrencyExact} />
                     <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                   </div>
                   <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês ↗
+                    {fmtCurrencyExact(financialIntelligence.standardHouseholdMonthly)}/mês ↗
                   </div>
                 </div>
 
@@ -8342,6 +8379,36 @@ export default function App() {
                     {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
                   </div>
                 </div>
+
+                {/* 7+. Categorias Adicionadas pelo Usuário */}
+                {financialIntelligence.customCategoryReserves.map(cat => (
+                  <div
+                    key={cat.id}
+                    onClick={() => {
+                      setActiveTab('billing');
+                      setBillingSubTab(cat.targetTab);
+                    }}
+                    className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50 transition-all cursor-pointer flex flex-col justify-between`}
+                    title={`Clique para gerenciar despesas de ${cat.name}`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                      <span className="flex items-center gap-1 text-[#FF6A1A] font-black min-w-0">
+                        <span className="shrink-0">{cat.icon}</span>
+                        <span className="truncate">{cat.name}</span>
+                      </span>
+                      <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-[#FF6A1A]/30 text-[#FF6A1A] shrink-0">
+                        {cat.pctOfGross}%
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-base font-black text-[#FF6A1A] tabular-nums mt-1.5 leading-tight">
+                      <AnimatedNumber value={cat.dailyCost} formatter={fmtCurrencyExact} />
+                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                    </div>
+                    <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
+                      {fmtCurrencyExact(cat.monthlyCost)}/mês
+                    </div>
+                  </div>
+                ))}
               </div>
 
               {/* RESUMO DA DIVISÃO POR CAIXINHA (MINIMALISTA SEM FUNDO, APENAS LINHAS E BORDAS FINAS) */}
@@ -9767,184 +9834,175 @@ export default function App() {
 
         {/* ================= ABA 3: FINANCEIRO (INTELIGÊNCIA FINANCEIRA COM IA, RESERVAS & DOCUMENTAÇÃO) ================= */}
         {activeTab === 'billing' && (
-          <div className="flex flex-col gap-5 sm:gap-6">
-            {/* TOP HEADER + SUB-NAVIGATION (Minimalista sem fundo nos botões) */}
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
-              <div>
-                <h1 className="text-xl sm:text-2xl font-black">
-                  Central de Finanças
-                </h1>
-                <p className={`text-xs mt-0.5 ${mutedText}`}>
-                  Planejamento de reservas diárias, custos e lucro real que sobra no seu bolso
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 overflow-x-auto max-w-full no-scrollbar py-0.5">
+          <div className="flex flex-col gap-4 sm:gap-5">
+            {/* SUB-NAVEGAÇÃO FIXA AO ROLAR (Sticky abaixo do cabeçalho principal, estilo abas minimalistas) */}
+            <div
+              className={`sticky z-20 -mx-3 sm:-mx-6 lg:-mx-8 -mt-1 sm:-mt-2 px-3 sm:px-6 lg:px-8 border-b backdrop-blur-md transition-colors ${
+                isDark ? 'bg-black/95 border-neutral-800/80' : 'bg-white/95 border-slate-200'
+              }`}
+              style={{
+                top: 'calc(3.75rem + env(safe-area-inset-top, 0px))',
+              }}
+            >
+              <nav
+                aria-label="Abas de Finanças"
+                className="flex items-center gap-1 sm:gap-2 overflow-x-auto max-w-full no-scrollbar"
+              >
                 {[
-                  { id: 'mensal', label: 'Ganhos do Mês & Saldo' },
-                  { id: 'projecao', label: '🔮 Faturamento Previsto' },
-                  { id: 'despesas_moto', label: '🏍️ Despesas da Moto' },
-                  { id: 'despesas_casa', label: '🏠 Despesas da Casa' },
-                  { id: 'planejamento', label: 'Planejamento & IA' },
-                  { id: 'ganhos', label: 'Ganhos por App' },
-                  { id: 'gastos', label: 'Gastos por Categoria' },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setBillingSubTab(tab.id as any)}
-                    className={`px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-transparent border ${
-                      billingSubTab === tab.id
-                        ? 'border-[#FF6A1A] text-[#FF6A1A]'
-                        : `${dividerBorder} ${mutedText} hover:text-current hover:border-[#FF6A1A]/50`
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+                  { id: 'mensal', label: 'Ganhos & Saldo', icon: '💰' },
+                  { id: 'projecao', label: 'Previsto', icon: '🔮' },
+                  { id: 'despesas_moto', label: 'Moto', icon: '🏍️' },
+                  { id: 'despesas_casa', label: 'Casa', icon: '🏠' },
+                  { id: 'planejamento', label: 'Planejamento', icon: '📊' },
+                  { id: 'ganhos', label: 'Por App', icon: '📱' },
+                  { id: 'gastos', label: 'Categorias', icon: '🧾' },
+                ].map(tab => {
+                  const isActive = billingSubTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setBillingSubTab(tab.id as any)}
+                      className={`px-2.5 sm:px-3.5 py-2.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 bg-transparent border-b-2 ${
+                        isActive
+                          ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
+                          : `border-transparent ${mutedText} hover:text-current hover:border-neutral-500/40`
+                      }`}
+                    >
+                      <span className="text-xs leading-none">{tab.icon}</span>
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
 
             {billingSubTab === 'mensal' && (
-              <div className="flex flex-col gap-5 sm:gap-6">
-                {/* 1. BARRA DE CONTROLE: SELETOR DE MÊS, FILTRO DE MESES ANTERIORES & ATALHOS (Sem card externo) */}
-                <div className={`pb-5 border-b ${dividerBorder}`}>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm sm:text-base font-black flex items-center gap-1.5">
-                          <Calendar className="w-4 h-4 text-[#FF6A1A]" />
-                          <span>Extrato Mensal & Filtro de Meses</span>
-                        </span>
-                        <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-transparent border ${
-                            selectedMonthFinancials.isCurrentMonth
-                              ? 'text-emerald-500 dark:text-emerald-400 border-emerald-500/40'
-                              : 'text-sky-500 dark:text-sky-400 border-sky-500/40'
-                          }`}
-                        >
-                          {selectedMonthFinancials.isCurrentMonth
-                            ? 'Mês Atual em Andamento'
-                            : 'Mês Fechado / Histórico'}
-                        </span>
-                      </div>
-                      <p className={`text-xs mt-0.5 ${mutedText}`}>
-                        Navegue entre os meses para comparar seus faturamentos brutos, gastos operacionais e saldo real
-                      </p>
+              <div className="flex flex-col gap-4 sm:gap-5">
+                {/* 1. FILTRO MINIMALISTA DE MESES */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                        const d = new Date(y, m - 2, 1);
+                        setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                      }}
+                      className={`p-2 rounded-xl cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] ${mutedText} hover:text-current`}
+                      title="Mês Anterior"
+                      aria-label="Mês Anterior"
+                    >
+                      <ChevronRight className="w-4 h-4 rotate-180" />
+                    </button>
+
+                    <div className="relative">
+                      <Calendar className="w-3.5 h-3.5 text-[#FF6A1A] pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" />
+                      <select
+                        value={selectedFinanceMonth}
+                        onChange={e => setSelectedFinanceMonth(e.target.value)}
+                        aria-label="Filtrar Mês"
+                        className={`pl-8 pr-8 py-2 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
+                      >
+                        {availableFinanceMonths.map(ym => {
+                          const [y, m] = ym.split('-');
+                          const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
+                          return (
+                            <option
+                              key={ym}
+                              value={ym}
+                              className={isDark ? 'bg-neutral-950 text-white' : 'bg-white text-slate-900'}
+                            >
+                              {name} de {y}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-70" />
                     </div>
 
-                    {/* Controles de Navegação de Mês */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
-                          const d = new Date(y, m - 2, 1);
-                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-                        }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
-                        title="Mês Anterior"
-                      >
-                        <ChevronRight className="w-4 h-4 rotate-180" />
-                        <span className="hidden sm:inline">Anterior</span>
-                      </button>
-
-                      <div className="relative">
-                        <select
-                          value={selectedFinanceMonth}
-                          onChange={e => setSelectedFinanceMonth(e.target.value)}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-black outline-none cursor-pointer appearance-none pr-8 ${inputSurface}`}
-                        >
-                          {availableFinanceMonths.map(ym => {
-                            const [y, m] = ym.split('-');
-                            const name = PT_BR_MONTH_NAMES[parseInt(m, 10) - 1] || m;
-                            const now = new Date();
-                            const nowYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-                            return (
-                              <option key={ym} value={ym}>
-                                {name} de {y} {ym === nowYM ? '· (Atual)' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <ChevronDown className="w-3.5 h-3.5 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-70" />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const [y, m] = selectedFinanceMonth.split('-').map(Number);
-                          const d = new Date(y, m, 1);
-                          setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-                        }}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
-                        title="Próximo Mês"
-                      >
-                        <span className="hidden sm:inline">Próximo</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-
-                      {!selectedMonthFinancials.isCurrentMonth && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const now = new Date();
-                            setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
-                          }}
-                          className="px-2.5 py-2 rounded-xl text-xs font-black bg-transparent text-[#FF6A1A] hover:bg-[#FF6A1A]/10 border border-[#FF6A1A]/50 cursor-pointer transition-colors"
-                        >
-                          Ir p/ Mês Atual
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const [y, m] = selectedFinanceMonth.split('-').map(Number);
+                        const d = new Date(y, m, 1);
+                        setSelectedFinanceMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                      }}
+                      className={`p-2 rounded-xl cursor-pointer transition-colors bg-transparent border ${dividerBorder} hover:border-[#FF6A1A] ${mutedText} hover:text-current`}
+                      title="Próximo Mês"
+                      aria-label="Próximo Mês"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
+
+                  {!selectedMonthFinancials.isCurrentMonth && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        setSelectedFinanceMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl text-[11px] font-black bg-transparent text-[#FF6A1A] hover:bg-[#FF6A1A]/10 border border-[#FF6A1A]/40 cursor-pointer transition-colors"
+                    >
+                      Mês Atual
+                    </button>
+                  )}
                 </div>
 
                 {/* 2. OS 4 CARDS PRINCIPAIS: GANHOS TOTAIS, GASTOS, SALDO ATUAL E META PERSONALIZADA (Sem fundo, apenas bordas finas) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                  {/* Card 1: Ganhos Totais do Mês */}
-                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
-                    <div>
+                  {/* Card 1: Ganhos Totais do Mês (Clicável -> Abre Modal de Ganhos do Mês) */}
+                  <button
+                    type="button"
+                    onClick={() => setFinanceDetailModal('ganhos')}
+                    className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between text-left bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/60 transition-all cursor-pointer active:scale-[0.99]`}
+                    title="Toque para ver os ganhos registrados neste mês"
+                  >
+                    <div className="w-full">
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                           1. Ganhos Totais
                         </span>
-                        <span className="text-[10px] font-bold text-sky-500 dark:text-sky-400 bg-transparent border border-sky-500/35 px-1.5 py-0.5 rounded">
-                          {selectedMonthFinancials.entries.length} corridas
-                        </span>
+                        <ChevronRight className={`w-3.5 h-3.5 ${mutedText} shrink-0`} />
                       </div>
                       <div className="text-xl sm:text-2xl font-black tabular-nums text-[#FF6A1A] mt-1">
                         <AnimatedNumber value={selectedMonthFinancials.totalRevenue} formatter={fmtMoney} />
                       </div>
                     </div>
-                    <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                    <div className={`w-full mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Média/corrida:</span>
                       <span className={`font-bold tabular-nums ${secondaryText}`}>
                         {fmtMoney(selectedMonthFinancials.avgPerRide)}
                       </span>
                     </div>
-                  </div>
+                  </button>
 
-                  {/* Card 2: Gastos do Mês */}
-                  <div className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
-                    <div>
+                  {/* Card 2: Gastos do Mês (Clicável -> Abre Modal de Gastos do Mês) */}
+                  <button
+                    type="button"
+                    onClick={() => setFinanceDetailModal('gastos')}
+                    className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between text-left bg-transparent border ${dividerBorder} hover:border-rose-500/50 transition-all cursor-pointer active:scale-[0.99]`}
+                    title="Toque para ver os gastos registrados neste mês"
+                  >
+                    <div className="w-full">
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className={`text-[10px] font-black uppercase tracking-wider ${mutedText}`}>
                           2. Gastos do Mês
                         </span>
-                        <span className="text-[10px] font-bold text-rose-500 dark:text-rose-400 bg-transparent border border-rose-500/35 px-1.5 py-0.5 rounded">
-                          {selectedMonthFinancials.expenses.length} lançamentos
-                        </span>
+                        <ChevronRight className={`w-3.5 h-3.5 ${mutedText} shrink-0`} />
                       </div>
                       <div className="text-xl sm:text-2xl font-black tabular-nums text-rose-500 dark:text-rose-400 mt-1">
                         <AnimatedNumber value={selectedMonthFinancials.totalExpenses} formatter={v => `- ${fmtMoney(v)}`} />
                       </div>
                     </div>
-                    <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
+                    <div className={`w-full mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText} flex items-center justify-between`}>
                       <span>Custos operacionais:</span>
                       <span className="font-bold tabular-nums text-rose-500 dark:text-rose-400">
                         Gasolina + Manutenção
                       </span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Card 3: Saldo Atual / Lucro Líquido Real */}
                   <div
@@ -11214,15 +11272,6 @@ export default function App() {
                         <Plus className="w-4 h-4 stroke-[3]" />
                         <span>Nova Despesa da Moto</span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={resetDefaultBikeExpenses}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-slate-700`}
-                        title="Restaurar lista sugerida com peças, combustível e manutenção padrão"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline ml-1">Restaurar Padrão</span>
-                      </button>
                     </div>
                   </div>
 
@@ -11448,6 +11497,10 @@ export default function App() {
                           { id: 'seguro', label: '🛡️ Seguro' },
                           { id: 'equipamento', label: '🪖 Equipamentos' },
                           { id: 'outros', label: 'Outros' },
+                          ...(dbState.customCategories || []).map(cat => ({
+                            id: cat.id,
+                            label: `📁 ${cat.name}`,
+                          })),
                         ].map(cat => (
                           <button
                             key={cat.id}
@@ -11521,7 +11574,17 @@ export default function App() {
                             equipamento: { label: 'Equipamentos', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
                             outros: { label: 'Outros', badge: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
                           };
-                          const catMeta = categoryColors[item.category] || categoryColors.outros;
+                          const customBikeCatMatch = (dbState.customCategories || []).find(
+                            c => c.id === item.category || c.name.toLowerCase() === (item.category || '').toLowerCase()
+                          );
+                          const catMeta =
+                            categoryColors[item.category] ||
+                            (customBikeCatMatch
+                              ? {
+                                  label: customBikeCatMatch.name,
+                                  badge: 'bg-[#FF6A1A]/15 text-[#FF6A1A] border-[#FF6A1A]/30',
+                                }
+                              : categoryColors.outros);
 
                           return (
                             <div
@@ -11817,15 +11880,6 @@ export default function App() {
                         <Plus className="w-4 h-4" />
                         <span>Nova Despesa da Casa</span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={resetDefaultHouseholdExpenses}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle} hover:border-slate-700`}
-                        title="Restaurar lista com contas sugeridas (aluguel, luz, água, internet, mercado)"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline ml-1">Restaurar Padrão</span>
-                      </button>
                     </div>
                   </div>
 
@@ -12051,6 +12105,10 @@ export default function App() {
                           { id: 'conectividade', label: '📶 Internet/Cel' },
                           { id: 'saude', label: '💊 Saúde' },
                           { id: 'outros', label: 'Outros' },
+                          ...(dbState.customCategories || []).map(cat => ({
+                            id: cat.id,
+                            label: `📁 ${cat.name}`,
+                          })),
                         ].map(cat => (
                           <button
                             key={cat.id}
@@ -12130,7 +12188,17 @@ export default function App() {
                             saude: { label: 'Saúde', badge: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
                             outros: { label: 'Outros', badge: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
                           };
-                          const catMeta = categoryColors[item.category] || categoryColors.outros;
+                          const customHouseCatMatch = (dbState.customCategories || []).find(
+                            c => c.id === item.category || c.name.toLowerCase() === String(item.category || '').toLowerCase()
+                          );
+                          const catMeta =
+                            categoryColors[item.category] ||
+                            (customHouseCatMatch
+                              ? {
+                                  label: customHouseCatMatch.name,
+                                  badge: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+                                }
+                              : categoryColors.outros);
 
                           return (
                             <div
@@ -15765,26 +15833,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* In-Modal Voice Dictation Banner (apenas no registro de corrida; removido do registro de despesa) */}
-            {entryMode === 'ganho' && (
-              <button
-                type="button"
-                onClick={handleTriggerVoiceDictation}
-                className={`w-full mb-4 py-2.5 px-3.5 rounded-2xl border flex items-center justify-center gap-2 text-xs font-black transition-all cursor-pointer ${
-                  isRecordingVoice
-                    ? 'bg-rose-500 text-white border-rose-400 animate-pulse ring-4 ring-rose-500/30'
-                    : 'bg-[#FF6A1A]/10 text-[#FF6A1A] border-[#FF6A1A]/40 hover:bg-[#FF6A1A]/20'
-                }`}
-              >
-                <Mic className={`w-4 h-4 ${isRecordingVoice ? 'animate-bounce' : ''}`} />
-                <span>
-                  {isRecordingVoice
-                    ? 'Ouvindo... Fale sua corrida ou gasto agora!'
-                    : 'Preencher por Voz (Ex: "Ganho 25 reais no iFood 8 km")'}
-                </span>
-              </button>
-            )}
-
             {!isEntryModeDedicated && editingEntryId === null && (
               <div className="grid grid-cols-2 gap-2 mb-5">
                 <button
@@ -16175,74 +16223,74 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data</label>
                     <input
                       type="date"
                       value={entryDate}
                       onChange={e => setEntryDate(e.target.value)}
-                      className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                      className={`w-full min-w-0 px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
                     />
                   </div>
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`text-xs font-bold ${mutedText}`}>KM Rodados</label>
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className={`text-xs font-bold truncate ${mutedText}`}>KM Rodados</label>
                       <button
                         type="button"
-                        onClick={() => openQuickCalculator('KM Rodados', entryKm, val => setEntryKm(val))}
-                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
-                        title="Abrir calculadora"
+                        onClick={openKmCalculatorWithOdometer}
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer shrink-0"
+                        title="Abrir calculadora com odômetro"
                       >
                         <Calculator className="w-3 h-3" />
                         <span>Calc</span>
                       </button>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-stretch gap-1.5 min-w-0">
                       <input
                         type="number"
                         step="0.1"
                         placeholder="Ex: 65"
                         value={entryKm}
                         onChange={e => setEntryKm(e.target.value)}
-                        className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        className={`flex-1 min-w-0 w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                       />
                       <button
                         type="button"
-                        onClick={() => openQuickCalculator('KM Rodados', entryKm, val => setEntryKm(val))}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                        title="Calcular KM Rodados"
+                        onClick={openKmCalculatorWithOdometer}
+                        className={`px-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 flex items-center justify-center ${surfaceSubtle}`}
+                        title="Calcular KM Rodados pelo Odômetro"
                         aria-label="Calcular KM Rodados"
                       >
                         <Calculator className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className={`text-xs font-bold ${mutedText}`}>Faturamento (R$)</label>
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className={`text-xs font-bold truncate ${mutedText}`}>Faturamento (R$)</label>
                       <button
                         type="button"
                         onClick={() => openQuickCalculator('Faturamento da Corrida (R$)', entryRev, val => setEntryRev(val))}
-                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer"
+                        className="text-[11px] font-bold text-[#FF6A1A] hover:underline flex items-center gap-1 cursor-pointer shrink-0"
                         title="Abrir calculadora"
                       >
                         <Calculator className="w-3 h-3" />
                         <span>Calc</span>
                       </button>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-stretch gap-1.5 min-w-0">
                       <input
                         type="number"
                         step="0.01"
                         placeholder="Ex: 140"
                         value={entryRev}
                         onChange={e => setEntryRev(e.target.value)}
-                        className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        className={`flex-1 min-w-0 w-full px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
                       />
                       <button
                         type="button"
                         onClick={() => openQuickCalculator('Faturamento da Corrida (R$)', entryRev, val => setEntryRev(val))}
-                        className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                        className={`px-2.5 rounded-xl border border-slate-700/60 hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A] cursor-pointer transition-colors shrink-0 flex items-center justify-center ${surfaceSubtle}`}
                         title="Calcular Faturamento"
                         aria-label="Calcular Faturamento"
                       >
@@ -16250,7 +16298,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Horas Trabalhadas</label>
                     <input
                       type="number"
@@ -17981,7 +18029,7 @@ export default function App() {
                       <option value="outros">✨ Outros Cuidados & Lavagem</option>
                       {(dbState.customCategories || []).map(cat => (
                         <option key={cat.id} value={cat.id}>
-                          📁 {cat.name} (Personalizada)
+                          📁 {cat.name}
                         </option>
                       ))}
                     </select>
@@ -18204,7 +18252,7 @@ export default function App() {
                       <option value="outros">📄 Outros Compromissos</option>
                       {(dbState.customCategories || []).map(cat => (
                         <option key={cat.id} value={cat.id}>
-                          📁 {cat.name} (Personalizada)
+                          📁 {cat.name}
                         </option>
                       ))}
                     </select>
@@ -18954,10 +19002,279 @@ export default function App() {
           </div>
         );
       })()}
+      {/* MODAL DETALHADO DE GANHOS OU GASTOS DO MÊS SELECIONADO */}
+      {financeDetailModal && (() => {
+        const isGains = financeDetailModal === 'ganhos';
+        const sortedEntries = isGains
+          ? [...selectedMonthFinancials.entries].sort(
+              (a, b) => (b.date || '').localeCompare(a.date || '') || Number(b.id) - Number(a.id)
+            )
+          : [];
+        const sortedExpenses = !isGains
+          ? [...selectedMonthFinancials.expenses].sort(
+              (a, b) => (b.date || '').localeCompare(a.date || '') || Number(b.id) - Number(a.id)
+            )
+          : [];
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center px-3 sm:px-4 overflow-y-auto"
+            style={{
+              paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+              paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
+            }}
+            onClick={() => setFinanceDetailModal(null)}
+          >
+            <div
+              className={`w-full max-w-xl rounded-2xl sm:rounded-3xl p-4 sm:p-6 ${modalSurface} my-auto flex flex-col max-h-[82dvh] animate-in fade-in zoom-in-95 duration-200`}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Cabeçalho do Modal */}
+              <div className={`flex items-start justify-between gap-3 pb-3.5 border-b ${dividerBorder} shrink-0`}>
+                <div>
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${isGains ? 'text-[#FF6A1A]' : 'text-rose-400'}`}>
+                    {selectedMonthFinancials.formattedLabel}
+                  </span>
+                  <h3 className={`text-base sm:text-lg font-black leading-tight mt-0.5 ${primaryText}`}>
+                    {isGains ? 'Ganhos Registrados no Mês' : 'Gastos Registrados no Mês'}
+                  </h3>
+                  <div className={`text-sm font-black tabular-nums mt-1 ${isGains ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {isGains
+                      ? `+ ${fmtMoney(selectedMonthFinancials.totalRevenue)}`
+                      : `- ${fmtMoney(selectedMonthFinancials.totalExpenses)}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFinanceDetailModal(null);
+                      openNewEntryModal(isGains ? 'ganho' : 'gasto', true);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black bg-transparent border cursor-pointer transition-colors ${
+                      isGains
+                        ? 'border-[#FF6A1A]/60 text-[#FF6A1A] hover:bg-[#FF6A1A]/10'
+                        : 'border-rose-500/50 text-rose-400 hover:bg-rose-500/10'
+                    }`}
+                  >
+                    {isGains ? '+ Novo Ganho' : '+ Novo Gasto'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFinanceDetailModal(null)}
+                    className={`p-2 rounded-xl bg-transparent border ${dividerBorder} ${mutedText} hover:text-current cursor-pointer`}
+                    aria-label="Fechar"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Lista Scrollável */}
+              <div className="flex-1 overflow-y-auto py-3 space-y-2.5 pr-0.5">
+                {isGains ? (
+                  sortedEntries.length === 0 ? (
+                    <div className={`p-8 rounded-2xl bg-transparent border border-dashed ${dividerBorder} text-center`}>
+                      <p className={`text-xs font-semibold ${mutedText}`}>
+                        Nenhum ganho registrado em {selectedMonthFinancials.formattedLabel}.
+                      </p>
+                    </div>
+                  ) : (
+                    sortedEntries.map(entry => {
+                      const appInfo = allApps.find(
+                        a => a.id === entry.app || a.name.toLowerCase() === (entry.app || '').toLowerCase()
+                      ) || { id: entry.app || 'outros', name: entry.app || 'Outros', icon: '🛵' };
+                      const shiftInfo = allShifts.find(s => s.id === entry.shift);
+                      const km = Number(entry.km || 0);
+                      const hours = Number(entry.hours || 0);
+
+                      return (
+                        <div
+                          key={entry.id}
+                          className={`rounded-2xl p-3 bg-transparent border ${dividerBorder} flex items-center justify-between gap-2.5`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl bg-transparent border ${dividerBorder} flex items-center justify-center text-lg shrink-0`}>
+                              {appInfo.icon}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-black truncate">
+                                  {appInfo.name}
+                                </span>
+                                {shiftInfo && (
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-transparent border ${dividerBorder} ${mutedText}`}>
+                                    {shiftInfo.name.split(' ')[0]}
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`text-[11px] font-semibold mt-0.5 ${mutedText} flex items-center gap-2 flex-wrap`}>
+                                <span>{formatPtBrDate(entry.date)}</span>
+                                {km > 0 && <span>· {km} km</span>}
+                                {hours > 0 && <span>· {hours}h</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-xs sm:text-sm font-black text-emerald-500 dark:text-emerald-400 tabular-nums mr-1">
+                              + {fmtMoney(Number(entry.revenue || 0))}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFinanceDetailModal(null);
+                                openEditHistoryItem(entry, 'ganho');
+                              }}
+                              className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder} ${mutedText} hover:text-current cursor-pointer`}
+                              title="Editar ganho"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                persistAndEnqueueWorkManager({
+                                  ...dbState,
+                                  entries: dbState.entries.filter(e => e.id !== entry.id),
+                                  deletedEntryIds: Array.from(
+                                    new Set([...(dbState.deletedEntryIds || []), Number(entry.id)])
+                                  ),
+                                });
+                              }}
+                              className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder} text-rose-400 hover:border-rose-500 cursor-pointer`}
+                              title="Excluir ganho"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )
+                ) : sortedExpenses.length === 0 ? (
+                  <div className={`p-8 rounded-2xl bg-transparent border border-dashed ${dividerBorder} text-center`}>
+                    <p className={`text-xs font-semibold ${mutedText}`}>
+                      Nenhum gasto registrado em {selectedMonthFinancials.formattedLabel}.
+                    </p>
+                  </div>
+                ) : (
+                  sortedExpenses.map(exp => {
+                    const householdItem = (dbState.householdExpenses || []).find(
+                      h =>
+                        (exp.householdExpenseId && h.id === exp.householdExpenseId) ||
+                        h.id === exp.category ||
+                        h.name.toLowerCase() === (exp.category || '').toLowerCase()
+                    );
+                    const isHousehold = Boolean(exp.householdExpenseId || householdItem);
+                    const cat = allCategories.find(c => c.id === exp.category) || { name: exp.category };
+                    const displayTitle = householdItem?.name || cat.name || exp.category || 'Despesa';
+                    const expIcon = isHousehold
+                      ? householdItem?.icon || '🏠'
+                      : exp.category === 'combustivel'
+                      ? '⛽'
+                      : exp.category === 'manutencao'
+                      ? '🔧'
+                      : exp.category === 'pecas'
+                      ? '⚙️'
+                      : exp.category === 'seguro'
+                      ? '🛡️'
+                      : exp.category === 'documentacao'
+                      ? '📄'
+                      : exp.category === 'lavagem'
+                      ? '🧼'
+                      : '🛵';
+
+                    return (
+                      <div
+                        key={exp.id}
+                        className={`rounded-2xl p-3 bg-transparent border ${dividerBorder} flex items-center justify-between gap-2.5`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl bg-transparent border ${dividerBorder} flex items-center justify-center text-lg shrink-0`}>
+                            {expIcon}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs sm:text-sm font-black truncate">
+                                {displayTitle}
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-transparent border ${
+                                  isHousehold
+                                    ? 'border-blue-500/40 text-blue-400'
+                                    : 'border-orange-500/40 text-[#FF6A1A]'
+                                }`}
+                              >
+                                {isHousehold ? 'Casa' : 'Moto'}
+                              </span>
+                            </div>
+                            <div className={`text-[11px] font-semibold mt-0.5 ${mutedText} truncate`}>
+                              <span>{formatPtBrDate(exp.date)}</span>
+                              {exp.description && <span> · {exp.description}</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-xs sm:text-sm font-black text-rose-500 dark:text-rose-400 tabular-nums mr-1">
+                            - {fmtMoney(Number(exp.amount || 0))}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFinanceDetailModal(null);
+                              openEditHistoryItem(exp, 'gasto');
+                            }}
+                            className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder} ${mutedText} hover:text-current cursor-pointer`}
+                            title="Editar gasto"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              persistAndEnqueueWorkManager({
+                                ...dbState,
+                                expenses: dbState.expenses.filter(e => e.id !== exp.id),
+                                deletedExpenseIds: Array.from(
+                                  new Set([...(dbState.deletedExpenseIds || []), Number(exp.id)])
+                                ),
+                              });
+                            }}
+                            className={`p-1.5 rounded-lg bg-transparent border ${dividerBorder} text-rose-400 hover:border-rose-500 cursor-pointer`}
+                            title="Excluir gasto"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Rodapé */}
+              <div className={`pt-3 border-t ${dividerBorder} shrink-0`}>
+                <button
+                  type="button"
+                  onClick={() => setFinanceDetailModal(null)}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold cursor-pointer bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]`}
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <QuickCalculatorModal
         isOpen={quickCalcState.isOpen}
         title={quickCalcState.title}
         initialValue={quickCalcState.initialValue}
+        unit={quickCalcState.unit}
+        currentOdometer={quickCalcState.currentOdometer}
         onClose={() => setQuickCalcState(prev => ({ ...prev, isOpen: false }))}
         onApply={quickCalcState.onApply}
         isDark={isDark}
