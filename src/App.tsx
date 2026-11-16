@@ -105,6 +105,7 @@ import {
   DEFAULT_HOUSEHOLD_EXPENSES,
   ProjectedRevenueItem,
   computeProjectedRevenueBalance,
+  computeProjectedNetSummary,
   ExpenseRecurrenceType,
   AppDefinition,
   CategoryDefinition,
@@ -10817,9 +10818,19 @@ export default function App() {
 
                 {/* 3. OS 4 CARDS DE MÉTRICAS DA PROJEÇÃO (Sem fundo, apenas bordas finas e números animados) */}
                 {(() => {
-                  const totalExpensesMonth = (financialIntelligence.monthlyBikeCostsTotal || 0) + (financialIntelligence.monthlyHouseholdCost || 0);
-                  const lucroProjetado = selectedMonthFinancials.projectedTotalRevenue - totalExpensesMonth;
-                  const cobriuDespesas = selectedMonthFinancials.projectedTotalRevenue >= totalExpensesMonth && totalExpensesMonth > 0;
+                  const {
+                    realLoggedExpenses,
+                    remainingPlannedExpenses,
+                    totalExpensesMonth,
+                    lucroProjetado,
+                    cobriuDespesas,
+                  } = computeProjectedNetSummary({
+                    realizedRevenue: selectedMonthFinancials.totalRevenue,
+                    projectedPendingRevenue: selectedMonthFinancials.projectedPendingRevenue,
+                    realLoggedExpenses: selectedMonthFinancials.totalExpenses,
+                    remainingBikeCosts: financialIntelligence.monthlyBikeRemaining,
+                    remainingHouseholdCosts: financialIntelligence.monthlyHouseholdRemaining,
+                  });
 
                   return (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -10918,7 +10929,19 @@ export default function App() {
                           </div>
                         </div>
                         <div className={`mt-3 pt-2.5 border-t ${dividerBorder} text-[11px] font-semibold ${mutedText}`}>
-                          Após pagar R$ {fmtMoney(totalExpensesMonth).replace('R$', '').trim()} (Casa + Moto)
+                          {realLoggedExpenses > 0 && remainingPlannedExpenses > 0 ? (
+                            <span>
+                              Já gastos: {fmtMoney(realLoggedExpenses)} · A pagar: {fmtMoney(remainingPlannedExpenses)} (Moto + Casa)
+                            </span>
+                          ) : realLoggedExpenses > 0 ? (
+                            <span>
+                              Após {fmtMoney(realLoggedExpenses)} já gastos no mês (Moto + Casa quitadas)
+                            </span>
+                          ) : (
+                            <span>
+                              Após pagar {fmtMoney(totalExpensesMonth)} (Casa + Moto)
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

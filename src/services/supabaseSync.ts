@@ -191,6 +191,56 @@ export function computeProjectedRevenueBalance(
   };
 }
 
+export interface ProjectedNetSummary {
+  realizedRevenue: number;
+  projectedPendingRevenue: number;
+  projectedTotalRevenue: number;
+  realLoggedExpenses: number;
+  remainingBikeCosts: number;
+  remainingHouseholdCosts: number;
+  remainingPlannedExpenses: number;
+  totalExpensesMonth: number;
+  lucroProjetado: number;
+  cobriuDespesas: boolean;
+}
+
+/**
+ * Calcula o Lucro Limpo Projetado real do mês somando gastos reais já lançados
+ * ao que ainda falta pagar nas abas Moto e Casa, evitando omitir gastos reais
+ * ou duplicar contas já quitadas.
+ */
+export function computeProjectedNetSummary(params: {
+  realizedRevenue: number;
+  projectedPendingRevenue: number;
+  realLoggedExpenses: number;
+  remainingBikeCosts: number;
+  remainingHouseholdCosts: number;
+}): ProjectedNetSummary {
+  const realizedRevenue = Math.max(0, Number(params.realizedRevenue) || 0);
+  const projectedPendingRevenue = Math.max(0, Number(params.projectedPendingRevenue) || 0);
+  const projectedTotalRevenue = Math.round((realizedRevenue + projectedPendingRevenue) * 100) / 100;
+  const realLoggedExpenses = Math.max(0, Number(params.realLoggedExpenses) || 0);
+  const remainingBikeCosts = Math.max(0, Number(params.remainingBikeCosts) || 0);
+  const remainingHouseholdCosts = Math.max(0, Number(params.remainingHouseholdCosts) || 0);
+  const remainingPlannedExpenses = Math.round((remainingBikeCosts + remainingHouseholdCosts) * 100) / 100;
+  const totalExpensesMonth = Math.round((realLoggedExpenses + remainingPlannedExpenses) * 100) / 100;
+  const lucroProjetado = Math.round((projectedTotalRevenue - totalExpensesMonth) * 100) / 100;
+  const cobriuDespesas = projectedTotalRevenue >= totalExpensesMonth && totalExpensesMonth > 0;
+
+  return {
+    realizedRevenue,
+    projectedPendingRevenue,
+    projectedTotalRevenue,
+    realLoggedExpenses,
+    remainingBikeCosts,
+    remainingHouseholdCosts,
+    remainingPlannedExpenses,
+    totalExpensesMonth,
+    lucroProjetado,
+    cobriuDespesas,
+  };
+}
+
 export interface MaintenanceHistoryRecord {
   id: string;
   date: string; // YYYY-MM-DD
