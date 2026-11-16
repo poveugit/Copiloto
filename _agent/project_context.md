@@ -434,3 +434,17 @@
   - `npm run build`: `vite build` concluído em `3.81s`.
   - Testes automatizados (`npx tsx`): `verify_calendar_expenses_and_channels.ts` (**6/6**), `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**) aprovados.
   - `npx cap sync android` (`2.399s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 2m` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.580.973` bytes, `15/11/2026 18:45:53`), assinado com `release-key.jks`.
+- **Correção de Rateio Diário pelos Dias Marcados no Calendário (15/11/2026 23:37)**:
+  - Extraído `getExpenseRateioDays(selectedDates, fallbackWorkDays, targetYM)` em `src/App.tsx`: quando há dias marcados no calendário (`selectedDates.length > 0`), o rateio diário divide o valor pela quantidade de dias selecionados (ex.: 11 dias em vez de 20 dias úteis padrão), com fallback para `workDaysPerMonth` apenas quando nenhum dia estiver marcado.
+  - Aplicado no modal de edição (`renderExpenseAmountAndCalendar`), em `enrichedBikeExpenses`, na listagem/cards de Despesas da Casa (`dailyShare`) e em `dailyHouseholdReserve`.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.69s`), `verify_calendar_expenses_and_channels.ts` (**8/8**), `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**).
+- **Alertas de Vencimento Minimalistas e Dinâmicos nos Cards (16/11/2026)**:
+  - Centralizadas as classes em `EXPENSE_DUE_BADGE_CLASSES` usando `bg-transparent` apenas com borda e cor de texto/ícone em todos os status (`paid`, `partial`, `today`, `overdue`, `near` e `future`), removendo o preenchimento sólido amarelo/colorido dos badges nos cards de Moto e Casa.
+  - Refatorado `getExpenseDueInfo` (com `formatShortPtBrDate` e `isContiguousDateSequence`) para calcular textos dinâmicos e coerentes com os dias restantes selecionados no calendário (intervalos contínuos como `Amanhã: 17/11 a 27/11 (11d)`, dias hoje com contagem restante `Hoje (16/11) até 26/11 · restam 10`, ou datas esparsas `Próx. amanhã (17/11) · +2 dias`), eliminando o sufixo estático `· Xd` de contagem total.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`3.98s`), `verify_calendar_expenses_and_channels.ts` (**9/9**), `verify_gps_odometer.ts` (**5/5**), `verify_projected_revenues.ts` (**5/5**) e `verify_expense_deletion.ts` (**6/6**).
+- **Ajustes nos Botões de Despesas e Espaçamento Inferior dos Modais (16/11/2026)**:
+  - Removido o fundo (`bg-transparent`) e o ícone `+` dos botões `Lançar Gasto` nos cards de **Despesas da Moto** e **Despesas da Casa** (`src/App.tsx`).
+  - Adicionado espaçamento inferior seguro (`calc(5rem + env(safe-area-inset-bottom, 0px))`) aos modais de edição/criação de despesa da Moto (`showBikeModal`) e da Casa (`showHouseholdModal`) para afastar os 3 botões do rodapé da barra de navegação nativa do dispositivo.
+  - Removido o texto `Salvar Despesa da Moto` do botão de confirmação em `showBikeModal`, mantendo apenas o ícone `<Check />` com `aria-label` e `title`.
+  - Validado com `npx tsc --noEmit` (0 erros), `npm run build` (`2.94s`) e todas as 4 suítes `npx tsx` (**9/9**, **5/5**, **5/5**, **6/6**).
+  - **APK Release (16/11/2026 00:24)**: `npx cap sync android` (`1.535s`) + `.\gradlew.bat assembleRelease` (Adoptium JDK 21): `BUILD SUCCESSFUL in 1m 44s` -> `android/app/build/outputs/apk/release/app-release.apk` (`4.581.373` bytes, `16/11/2026 00:24:44`), assinado com `release-key.jks`.

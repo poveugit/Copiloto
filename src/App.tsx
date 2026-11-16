@@ -659,6 +659,32 @@ function formatPtBrDate(dateStr: string): string {
   return dateStr;
 }
 
+function formatShortPtBrDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}`;
+  return dateStr;
+}
+
+function isContiguousDateSequence(sortedDates: string[]): boolean {
+  if (sortedDates.length < 2) return false;
+  for (let i = 1; i < sortedDates.length; i++) {
+    if (calculateDaysDifference(sortedDates[i - 1], sortedDates[i]) !== 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const EXPENSE_DUE_BADGE_CLASSES = {
+  paid: 'bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-500/45',
+  partial: 'bg-transparent text-sky-600 dark:text-sky-300 border border-sky-500/45',
+  today: 'bg-transparent text-rose-600 dark:text-rose-300 animate-pulse border border-rose-500/50',
+  overdue: 'bg-transparent text-rose-600 dark:text-rose-300 border border-rose-500/45',
+  near: 'bg-transparent text-amber-600 dark:text-amber-300 border border-amber-500/50',
+  future: 'bg-transparent text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-neutral-800',
+} as const;
+
 function addDaysToDateStr(dateStr: string, daysToAdd: number): string {
   if (!dateStr) return todayStr();
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -753,6 +779,30 @@ interface ExpenseDueInfo {
   isPaid?: boolean;
 }
 
+export function getExpenseRateioDays(
+  selectedDates?: string[],
+  fallbackWorkDays: number = 24,
+  targetYM?: string
+): number {
+  const safeFallback = Math.max(1, Number(fallbackWorkDays) || 24);
+  if (!Array.isArray(selectedDates) || selectedDates.length === 0) {
+    return safeFallback;
+  }
+  const validDates = Array.from(
+    new Set(selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+  );
+  if (validDates.length === 0) {
+    return safeFallback;
+  }
+  if (targetYM) {
+    const monthMatches = validDates.filter(d => d.startsWith(targetYM));
+    if (monthMatches.length > 0) {
+      return monthMatches.length;
+    }
+  }
+  return validDates.length;
+}
+
 function deriveSeedCalendarDatesForExpense(item: {
   selectedDates?: string[];
   recurrenceType?: ExpenseRecurrenceType;
@@ -822,7 +872,7 @@ function getExpenseDueInfo(
       daysRemaining: 999,
       status: 'paid',
       targetDateStr: item.lastPaidDate || today,
-      badgeClass: 'bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/30',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.paid,
       detailNote: `Quitado${displayPaid > 0 ? ` · ${fmtMoney(displayPaid)}` : ''}`,
       timelineSortKey: 1000,
       paidAmount: displayPaid,
@@ -839,7 +889,7 @@ function getExpenseDueInfo(
       daysRemaining: 3,
       status: 'partial',
       targetDateStr: today,
-      badgeClass: 'bg-sky-50 text-sky-700 border border-sky-300 dark:bg-sky-500/20 dark:text-sky-300 dark:border-sky-500/30',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.partial,
       detailNote: `Falta ${fmtMoney(remaining)}`,
       timelineSortKey: 10,
       paidAmount: paidInMonth,
@@ -862,13 +912,21 @@ function getExpenseDueInfo(
     if (isFutureMonth) {
       if (monthDates.length > 0) {
         const firstDate = monthDates[0];
+        const lastDate = monthDates[monthDates.length - 1];
         const daysDiff = calculateDaysDifference(today, firstDate);
+        const isRange = isContiguousDateSequence(monthDates);
+        const label =
+          monthDates.length === 1
+            ? `📅 Vence em ${formatShortPtBrDate(firstDate)}`
+            : isRange
+            ? `📅 ${formatShortPtBrDate(firstDate)} a ${formatShortPtBrDate(lastDate)} (${monthDates.length} dias)`
+            : `📅 ${monthDates.length} dias · Próx: ${formatShortPtBrDate(firstDate)}`;
         return {
-          label: `📅 ${monthDates.length} ${monthDates.length === 1 ? 'dia' : 'dias'} · Próx: ${formatPtBrDate(firstDate)}`,
+          label,
           daysRemaining: daysDiff,
           status: 'future',
           targetDateStr: firstDate,
-          badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+          badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
           detailNote: `${monthDates.length} dia(s) no calendário`,
           timelineSortKey: daysDiff,
           paidAmount: 0,
@@ -881,7 +939,7 @@ function getExpenseDueInfo(
         daysRemaining: 99,
         status: 'future',
         targetDateStr: validCalendarDates[0],
-        badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
         detailNote: 'Sem dias neste mês',
         timelineSortKey: 99,
         paidAmount: 0,
@@ -896,7 +954,7 @@ function getExpenseDueInfo(
         daysRemaining: 99,
         status: 'future',
         targetDateStr: today,
-        badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
         detailNote: 'Sem dias neste mês',
         timelineSortKey: 99,
         paidAmount: 0,
@@ -907,13 +965,25 @@ function getExpenseDueInfo(
 
     if (!isPastMonth) {
       const pool = monthDates.length > 0 ? monthDates : validCalendarDates;
+      const futureDatesFromToday = pool.filter(d => d >= today);
+
       if (pool.includes(today)) {
+        const remainingAfterToday = pool.filter(d => d > today);
+        const lastFuture = remainingAfterToday[remainingAfterToday.length - 1];
+        const isRangeFromToday =
+          remainingAfterToday.length > 0 && isContiguousDateSequence(futureDatesFromToday);
+        const label =
+          remainingAfterToday.length === 0
+            ? `🚨 Hoje (${formatShortPtBrDate(today)})!`
+            : isRangeFromToday
+            ? `🚨 Hoje (${formatShortPtBrDate(today)}) até ${formatShortPtBrDate(lastFuture)} · restam ${remainingAfterToday.length}`
+            : `🚨 Hoje (${formatShortPtBrDate(today)}) · +${remainingAfterToday.length} ${remainingAfterToday.length === 1 ? 'dia' : 'dias'}`;
         return {
-          label: `🚨 Vence Hoje (${formatPtBrDate(today)})!`,
+          label,
           daysRemaining: 0,
           status: 'today',
           targetDateStr: today,
-          badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
+          badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
           detailNote: pool.length > 1 ? `${pool.length} dias no calendário` : 'Marcado no calendário',
           timelineSortKey: 0,
           paidAmount: 0,
@@ -921,44 +991,58 @@ function getExpenseDueInfo(
           isPaid: false,
         };
       }
-      const upcoming = pool.find(d => d > today);
-      if (upcoming) {
-        const daysDiff = calculateDaysDifference(today, upcoming);
-        if (daysDiff <= 7) {
-          return {
-            label: `⚠️ Em ${daysDiff} ${daysDiff === 1 ? 'dia' : 'dias'} (${formatPtBrDate(upcoming)})${pool.length > 1 ? ` · ${pool.length}d` : ''}`,
-            daysRemaining: daysDiff,
-            status: 'near',
-            targetDateStr: upcoming,
-            badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
-            detailNote: `${pool.length} dia(s) no calendário`,
-            timelineSortKey: daysDiff,
-            paidAmount: 0,
-            remainingAmount: expectedVal,
-            isPaid: false,
-          };
+
+      const upcomingPool = pool.filter(d => d > today);
+      if (upcomingPool.length > 0) {
+        const nextUpcoming = upcomingPool[0];
+        const lastUpcoming = upcomingPool[upcomingPool.length - 1];
+        const daysDiff = calculateDaysDifference(today, nextUpcoming);
+        const remainingCount = upcomingPool.length;
+        const isRange = remainingCount > 1 && isContiguousDateSequence(upcomingPool);
+        const isNear = daysDiff <= 7;
+        const iconPrefix = isNear ? '⚠️' : '📅';
+
+        let label: string;
+        if (remainingCount === 1) {
+          label =
+            daysDiff === 1
+              ? `${iconPrefix} Amanhã (${formatShortPtBrDate(nextUpcoming)})`
+              : `${iconPrefix} Em ${daysDiff} dias (${formatShortPtBrDate(nextUpcoming)})`;
+        } else if (isRange) {
+          label =
+            daysDiff === 1
+              ? `${iconPrefix} Amanhã: ${formatShortPtBrDate(nextUpcoming)} a ${formatShortPtBrDate(lastUpcoming)} (${remainingCount}d)`
+              : `${iconPrefix} Em ${daysDiff}d: ${formatShortPtBrDate(nextUpcoming)} a ${formatShortPtBrDate(lastUpcoming)} (${remainingCount}d)`;
+        } else {
+          const extra = remainingCount - 1;
+          label =
+            daysDiff === 1
+              ? `${iconPrefix} Próx. amanhã (${formatShortPtBrDate(nextUpcoming)}) · +${extra} ${extra === 1 ? 'dia' : 'dias'}`
+              : `${iconPrefix} Em ${daysDiff} dias (${formatShortPtBrDate(nextUpcoming)}) · +${extra} ${extra === 1 ? 'dia' : 'dias'}`;
         }
+
         return {
-          label: `📅 Em ${daysDiff} dias (${formatPtBrDate(upcoming)})${pool.length > 1 ? ` · ${pool.length}d` : ''}`,
+          label,
           daysRemaining: daysDiff,
-          status: 'future',
-          targetDateStr: upcoming,
-          badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
-          detailNote: `${pool.length} dia(s) no calendário`,
+          status: isNear ? 'near' : 'future',
+          targetDateStr: nextUpcoming,
+          badgeClass: isNear ? EXPENSE_DUE_BADGE_CLASSES.near : EXPENSE_DUE_BADGE_CLASSES.future,
+          detailNote: `${remainingCount} dia(s) restante(s)`,
           timelineSortKey: daysDiff,
           paidAmount: 0,
           remainingAmount: expectedVal,
           isPaid: false,
         };
       }
+
       const latestPast = pool[pool.length - 1];
       const daysDiff = calculateDaysDifference(today, latestPast);
       return {
-        label: `🚨 Venceu há ${Math.abs(daysDiff)} ${Math.abs(daysDiff) === 1 ? 'dia' : 'dias'} (${formatPtBrDate(latestPast)})`,
+        label: `🚨 Venceu há ${Math.abs(daysDiff)} ${Math.abs(daysDiff) === 1 ? 'dia' : 'dias'} (${formatShortPtBrDate(latestPast)})`,
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: latestPast,
-        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
         detailNote: `${pool.length} dia(s) no calendário`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -979,7 +1063,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
       detailNote: `Previsão ${mName}`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -994,7 +1078,7 @@ function getExpenseDueInfo(
       daysRemaining: -99,
       status: 'overdue',
       targetDateStr: today,
-      badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
       detailNote: `Pendente no mês anterior`,
       timelineSortKey: -99,
       paidAmount: 0,
@@ -1014,7 +1098,7 @@ function getExpenseDueInfo(
         daysRemaining: 0,
         status: 'today',
         targetDateStr: targetDate,
-        badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1028,7 +1112,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: targetDate,
-        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1042,7 +1126,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'near',
         targetDateStr: targetDate,
-        badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.near,
         detailNote: `A cada ${item.intervalDays} dias`,
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1055,7 +1139,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
       detailNote: `A cada ${item.intervalDays} dias`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -1072,7 +1156,7 @@ function getExpenseDueInfo(
         daysRemaining: 0,
         status: 'today',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1086,7 +1170,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'overdue',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1100,7 +1184,7 @@ function getExpenseDueInfo(
         daysRemaining: daysDiff,
         status: 'near',
         targetDateStr: item.nextDueDate,
-        badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.near,
         detailNote: 'Data específica',
         timelineSortKey: daysDiff,
         paidAmount: 0,
@@ -1113,7 +1197,7 @@ function getExpenseDueInfo(
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: item.nextDueDate,
-      badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-300 dark:border-neutral-800',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
       detailNote: 'Data específica',
       timelineSortKey: daysDiff,
       paidAmount: 0,
@@ -1131,7 +1215,7 @@ function getExpenseDueInfo(
       daysRemaining: 0,
       status: 'today',
       targetDateStr: today,
-      badgeClass: 'bg-rose-50 text-rose-700 animate-pulse border border-rose-300 dark:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/40',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: 0,
       paidAmount: 0,
@@ -1145,7 +1229,7 @@ function getExpenseDueInfo(
       daysRemaining: daysUntilDue,
       status: 'near',
       targetDateStr: today,
-      badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.near,
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue,
       paidAmount: 0,
@@ -1159,7 +1243,7 @@ function getExpenseDueInfo(
       daysRemaining: daysUntilDue,
       status: 'overdue',
       targetDateStr: today,
-      badgeClass: 'bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue + 30,
       paidAmount: 0,
@@ -1172,7 +1256,7 @@ function getExpenseDueInfo(
     daysRemaining: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     status: 'future',
     targetDateStr: today,
-    badgeClass: 'bg-slate-100 text-slate-700 border border-slate-300 dark:bg-transparent dark:text-slate-400 dark:border-neutral-800',
+    badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
     detailNote: `Todo dia ${dueDay}`,
     timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
     paidAmount: 0,
@@ -5301,6 +5385,7 @@ export default function App() {
       const defaultMatch = DEFAULT_BIKE_EXPENSES.find(d => d.id === item.id);
       const isUserCustom = Boolean(
         item.isCustomEdited ||
+          (Array.isArray(item.selectedDates) && item.selectedDates.length > 0) ||
           !defaultMatch ||
           item.intervalDays !== defaultMatch.intervalDays ||
           item.totalCost !== defaultMatch.totalCost ||
@@ -5317,18 +5402,25 @@ export default function App() {
       // SE O USUÁRIO EDITOU OU PERSONALIZOU ESTE CARD, RESPEITA EXATAMENTE O VALOR SALVO POR ELE!
       if (isUserCustom) {
         const intDays = Math.max(1, Number(item.intervalDays) || 30);
-        if (item.recurrenceType === 'interval_days' && Number(item.totalCost) > 0) {
+        const hasCalDates = Array.isArray(item.selectedDates) && item.selectedDates.length > 0;
+        const rateioDays = getExpenseRateioDays(
+          item.selectedDates,
+          workDaysPerMonth,
+          selectedFinanceMonth
+        );
+        if (!hasCalDates && item.recurrenceType === 'interval_days' && Number(item.totalCost) > 0) {
           totalCost = Number(item.totalCost);
           monthlyCost = Math.round(((totalCost / intDays) * 30) * 100) / 100;
         } else {
           monthlyCost = Math.max(0, Number(item.monthlyAmount) || 0);
           totalCost = Number(item.totalCost) > 0 ? Number(item.totalCost) : monthlyCost;
         }
-        dailyRateio = monthlyCost / workDaysPerMonth;
-        calculationNote =
-          item.recurrenceType === 'interval_days'
-            ? `${fmtCurrencyExact(totalCost)} a cada ${intDays} ${intDays === 1 ? 'dia' : 'dias'} → ${fmtCurrencyExact(dailyRateio)}/dia (${workDaysPerMonth}d úteis)`
-            : `Rateio em ${workDaysPerMonth} dias úteis: ${fmtCurrencyExact(dailyRateio)}/dia`;
+        dailyRateio = monthlyCost / rateioDays;
+        calculationNote = hasCalDates
+          ? `Rateio em ${rateioDays} ${rateioDays === 1 ? 'dia selecionado' : 'dias selecionados'} no calendário: ${fmtCurrencyExact(dailyRateio)}/dia`
+          : item.recurrenceType === 'interval_days'
+          ? `${fmtCurrencyExact(totalCost)} a cada ${intDays} ${intDays === 1 ? 'dia' : 'dias'} → ${fmtCurrencyExact(dailyRateio)}/dia (${workDaysPerMonth}d úteis)`
+          : `Rateio em ${workDaysPerMonth} dias úteis: ${fmtCurrencyExact(dailyRateio)}/dia`;
         isProportional = false;
       }
       // CASO CONTRÁRIO (Item padrão ainda não editado manualmente), usa o cálculo proporcional da IA:
@@ -5510,6 +5602,7 @@ export default function App() {
     // Calcula pagamentos efetuados e saldo restante a quitar das contas da casa
     let monthlyHouseholdPaid = 0;
     let monthlyHouseholdRemaining = 0;
+    let dailyHouseholdRemainingReserve = 0;
     let householdPaidCount = 0;
     let householdPendingCount = 0;
 
@@ -5532,7 +5625,9 @@ export default function App() {
           (paid > 0 && budget === 0));
 
       const rem = isPaidHouse ? 0 : isExplicitlyUnpaid ? budget : Math.max(0, budget - paid);
+      const hRateioDays = getExpenseRateioDays(h.selectedDates, workDaysPerMonth, targetFinanceYM);
       monthlyHouseholdRemaining += rem;
+      dailyHouseholdRemainingReserve += rem > 0 ? rem / hRateioDays : 0;
       if (isPaidHouse) {
         householdPaidCount++;
       } else {
@@ -5577,9 +5672,7 @@ export default function App() {
     const weeklyBikeRemainingReserve = dailyBikeRemainingReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
 
     // Rateio diário obrigatório das despesas da casa considerando o que resta pagar (deduzido dos gastos já lançados)
-    const dailyHouseholdReserve = monthlyHouseholdRemaining > 0
-      ? monthlyHouseholdRemaining / workDaysPerMonth
-      : 0;
+    const dailyHouseholdReserve = dailyHouseholdRemainingReserve;
     const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
 
@@ -6221,7 +6314,16 @@ export default function App() {
             </button>
           </div>
           <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-            Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado
+            {dates.length > 0 ? (
+              <>
+                Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / getExpenseRateioDays(dates, financialIntelligence.workDaysPerMonth))}/dia ({dates.length}{' '}
+                {dates.length === 1 ? 'dia selecionado' : 'dias selecionados'} no calendário)
+              </>
+            ) : (
+              <>
+                Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado ({financialIntelligence.workDaysPerMonth}d úteis)
+              </>
+            )}
           </span>
         </div>
 
@@ -11524,7 +11626,7 @@ export default function App() {
                                     <span className="truncate">{dueInfo.label}</span>
                                   </span>
                                   {isPaid && (
-                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-transparent px-2 py-0.5 rounded border border-emerald-500/30">
                                       {fmtMoney(totalPaid)} quitado
                                     </span>
                                   )}
@@ -11547,10 +11649,9 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => openNewBikePaymentModal(item)}
-                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
+                                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-transparent border border-emerald-500/45 text-emerald-500 dark:text-emerald-400 hover:border-emerald-400 cursor-pointer flex items-center justify-center transition-all active:scale-95"
                                     title="Registrar pagamento ou compra desta peça como gasto real"
                                   >
-                                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                                     <span>Lançar Gasto{remainingVal > 0 && remainingVal < expectedVal ? ` (${fmtMoney(remainingVal)})` : ''}</span>
                                   </button>
                                 )}
@@ -12013,7 +12114,12 @@ export default function App() {
                             : Number(item.monthlyAmount || 0);
                           const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(selectedFinanceMonth || todayStr().slice(0, 7)));
                           const remainingVal = isExplicitlyUnpaid ? expectedVal : Math.max(0, expectedVal - totalPaid);
-                          const dailyShare = Number(item.monthlyAmount || 0) / financialIntelligence.workDaysPerMonth;
+                          const houseRateioDays = getExpenseRateioDays(
+                            item.selectedDates,
+                            financialIntelligence.workDaysPerMonth,
+                            selectedFinanceMonth
+                          );
+                          const dailyShare = Number(item.monthlyAmount || 0) / houseRateioDays;
                           const isInterval = item.recurrenceType === 'interval_days' && (item.intervalDays || 0) > 0;
 
                           const categoryColors: Record<string, { label: string; badge: string }> = {
@@ -12121,7 +12227,7 @@ export default function App() {
                                     <span className="truncate">{dueInfo.label}</span>
                                   </span>
                                   {isPaid && (
-                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                    <span className="text-[10px] font-extrabold text-emerald-400 bg-transparent px-2 py-0.5 rounded border border-emerald-500/30">
                                       {fmtMoney(totalPaid)} quitado
                                     </span>
                                   )}
@@ -12144,10 +12250,9 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => openNewHouseholdPaymentModal(item)}
-                                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
+                                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-transparent border border-emerald-500/45 text-emerald-500 dark:text-emerald-400 hover:border-emerald-400 cursor-pointer flex items-center justify-center transition-all active:scale-95"
                                     title="Registrar pagamento desta conta como gasto real"
                                   >
-                                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                                     <span>Lançar Gasto{remainingVal > 0 && remainingVal < expectedVal ? ` (${fmtMoney(remainingVal)})` : ''}</span>
                                   </button>
                                 )}
@@ -17780,10 +17885,14 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA MOTO (CENTRALIZADO, COM CICLO PERSONALIZADO A CADA X DIAS) */}
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA MOTO */}
       {showBikeModal && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center px-3 sm:px-4 overflow-y-auto"
+          style={{
+            paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+            paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
+          }}
           onClick={() => setShowBikeModal(false)}
         >
           <div
@@ -17962,7 +18071,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+              <div className="flex items-center gap-2.5 pt-3 pb-1 border-t border-slate-800/40">
                 {editingBikeItem && (
                   <button
                     type="button"
@@ -17988,10 +18097,11 @@ export default function App() {
                 <button
                   type="button"
                   onClick={saveBikeExpense}
-                  className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6A1A]/20"
+                  aria-label="Salvar Despesa da Moto"
+                  title="Salvar Despesa da Moto"
+                  className="flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-[#FF6A1A] text-black hover:bg-[#ff7b33] transition-colors cursor-pointer flex items-center justify-center shadow-lg shadow-[#FF6A1A]/20"
                 >
-                  <Check className="w-4 h-4 stroke-[2.5]" />
-                  <span>Salvar Despesa da Moto</span>
+                  <Check className="w-5 h-5 stroke-[2.8]" />
                 </button>
               </div>
             </div>
@@ -17999,10 +18109,14 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA (CENTRALIZADO, COM CICLO PERSONALIZADO A CADA X DIAS) */}
+      {/* MODAL DE ADICIONAR / EDITAR DESPESA DA CASA */}
       {showHouseholdModal && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center px-3 sm:px-4 overflow-y-auto"
+          style={{
+            paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+            paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
+          }}
           onClick={() => setShowHouseholdModal(false)}
         >
           <div
@@ -18180,7 +18294,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-800/40">
+              <div className="flex items-center gap-2.5 pt-3 pb-1 border-t border-slate-800/40">
                 {editingHouseholdItem && (
                   <button
                     type="button"
