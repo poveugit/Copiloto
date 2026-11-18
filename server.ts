@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
+import http from 'http';
+import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
@@ -536,9 +537,15 @@ Responda em no máximo 4 blocos curtos com títulos claros (usando marcadores �
     }
   });
 
+  const httpServer = http.createServer(app);
+  let vite: ViteDevServer | null = null;
+
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
+    vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -550,21 +557,53 @@ Responda em no máximo 4 blocos curtos com títulos claros (usando marcadores �
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n  🚀 Mochilinha Dev Server rodando:`);
-    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
-    console.log(`  ➜  Network: http://127.0.0.1:${PORT}/\n`);
-  });
-
-  server.on('error', (err: any) => {
+  httpServer.on('error', async (err: any) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`\n❌ Erro: A porta ${PORT} já está sendo utilizada por outro processo.`);
       console.error(`Tente encerrar o processo anterior ou utilize outra porta: $env:PORT="3001"; npm run dev\n`);
     } else {
       console.error('Erro ao iniciar servidor:', err);
     }
+    try {
+      await vite?.close();
+    } catch {
+      // ignore close error
+    }
+    process.exit(1);
+  });
+
+  const shutdown = async () => {
+    try {
+      await vite?.close();
+    } catch {
+      // ignore
+    }
+    httpServer.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  🚀 Mochilinha Dev Server rodando:`);
+    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜  Network: http://127.0.0.1:${PORT}/\n`);
   });
 }
 
-startServer();
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection in server:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception in server:', err);
+});
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
 
