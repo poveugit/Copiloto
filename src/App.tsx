@@ -664,22 +664,6 @@ function formatPtBrDate(dateStr: string): string {
   return dateStr;
 }
 
-function formatShortPtBrDate(dateStr: string): string {
-  if (!dateStr) return '';
-  const parts = dateStr.split('-');
-  if (parts.length === 3) return `${parts[2]}/${parts[1]}`;
-  return dateStr;
-}
-
-function isContiguousDateSequence(sortedDates: string[]): boolean {
-  if (sortedDates.length < 2) return false;
-  for (let i = 1; i < sortedDates.length; i++) {
-    if (calculateDaysDifference(sortedDates[i - 1], sortedDates[i]) !== 1) {
-      return false;
-    }
-  }
-  return true;
-}
 
 const EXPENSE_DUE_BADGE_CLASSES = {
   paid: 'bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-500/45',
@@ -784,26 +768,58 @@ interface ExpenseDueInfo {
   isPaid?: boolean;
 }
 
+export function getRemainingDaysInMonth(targetYM?: string, referenceToday?: string): number {
+  const today =
+    referenceToday && /^\d{4}-\d{2}-\d{2}$/.test(referenceToday) ? referenceToday : todayStr();
+  const currentYM = today.slice(0, 7);
+  const ym = targetYM && /^\d{4}-\d{2}$/.test(targetYM) ? targetYM : currentYM;
+  const [y, m] = ym.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  if (ym === currentYM) {
+    const currentDay = Number(today.slice(8, 10));
+    return Math.max(1, daysInMonth - currentDay + 1);
+  }
+  return Math.max(1, daysInMonth);
+}
+
 export function getExpenseRateioDays(
   selectedDates?: string[],
-  fallbackWorkDays: number = 24,
-  targetYM?: string
+  fallbackDays?: number,
+  targetYM?: string,
+  referenceToday?: string
 ): number {
-  const safeFallback = Math.max(1, Number(fallbackWorkDays) || 24);
+  const today =
+    referenceToday && /^\d{4}-\d{2}-\d{2}$/.test(referenceToday) ? referenceToday : todayStr();
+  const currentYM = today.slice(0, 7);
+  const ym = targetYM && /^\d{4}-\d{2}$/.test(targetYM) ? targetYM : currentYM;
+  const remainingInMonth = getRemainingDaysInMonth(ym, today);
+  const safeFallback =
+    typeof fallbackDays === 'number' && Number.isFinite(fallbackDays) && fallbackDays > 0
+      ? Math.max(1, Math.trunc(fallbackDays))
+      : remainingInMonth;
+
   if (!Array.isArray(selectedDates) || selectedDates.length === 0) {
     return safeFallback;
   }
   const validDates = Array.from(
     new Set(selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
-  );
+  ).sort();
   if (validDates.length === 0) {
     return safeFallback;
   }
-  if (targetYM) {
-    const monthMatches = validDates.filter(d => d.startsWith(targetYM));
-    if (monthMatches.length > 0) {
-      return monthMatches.length;
+
+  const monthMatches = validDates.filter(d => d.startsWith(ym));
+  if (monthMatches.length > 0) {
+    if (ym === currentYM) {
+      const remainingSelected = monthMatches.filter(d => d >= today);
+      return remainingSelected.length > 0 ? remainingSelected.length : remainingInMonth;
     }
+    return monthMatches.length;
+  }
+
+  if (ym === currentYM) {
+    const remainingValid = validDates.filter(d => d >= today);
+    return remainingValid.length > 0 ? remainingValid.length : safeFallback;
   }
   return validDates.length;
 }
@@ -819,25 +835,10 @@ function deriveSeedCalendarDatesForExpense(item: {
       new Set(item.selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
     ).sort();
   }
-  if (
-    (item.recurrenceType === 'specific_date' || item.recurrenceType === 'interval_days') &&
-    item.nextDueDate &&
-    /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
-  ) {
-    return [item.nextDueDate];
-  }
-  const dayNum = Number(item.dueDay);
-  if (Number.isFinite(dayNum) && dayNum >= 1 && dayNum <= 31) {
-    const now = new Date();
-    const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const clampedDay = Math.min(dayNum, daysInCurrentMonth);
-    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    return [`${ym}-${String(clampedDay).padStart(2, '0')}`];
-  }
   return [];
 }
 
-function getExpenseDueInfo(
+export function getExpenseDueInfo(
   item: {
     id?: string;
     name?: string;
@@ -853,10 +854,12 @@ function getExpenseDueInfo(
     unpaidMonths?: string[];
   },
   paidInMonth: number = 0,
-  targetYM?: string
+  targetYM?: string,
+  referenceToday?: string
 ): ExpenseDueInfo {
-  const today = todayStr();
-  const currentDay = new Date().getDate();
+  const today =
+    referenceToday && /^\d{4}-\d{2}-\d{2}$/.test(referenceToday) ? referenceToday : todayStr();
+  const currentDay = Number(today.slice(8, 10));
   const currentYM = today.slice(0, 7);
   const ym = targetYM || currentYM;
   const recType = item.recurrenceType || 'monthly';
@@ -907,169 +910,32 @@ function getExpenseDueInfo(
   const isFutureMonth = Boolean(targetYM && targetYM > currentYM);
   const isPastMonth = Boolean(targetYM && targetYM < currentYM);
 
-  // Datas selecionadas livremente no calendário
-  const validCalendarDates = Array.isArray(item.selectedDates)
-    ? Array.from(new Set(item.selectedDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))).sort()
-    : [];
-
-  if (validCalendarDates.length > 0) {
-    const monthDates = validCalendarDates.filter(d => d.startsWith(ym));
-    if (isFutureMonth) {
-      if (monthDates.length > 0) {
-        const firstDate = monthDates[0];
-        const lastDate = monthDates[monthDates.length - 1];
-        const daysDiff = calculateDaysDifference(today, firstDate);
-        const isRange = isContiguousDateSequence(monthDates);
-        const label =
-          monthDates.length === 1
-            ? `📅 Vence em ${formatShortPtBrDate(firstDate)}`
-            : isRange
-            ? `📅 ${formatShortPtBrDate(firstDate)} a ${formatShortPtBrDate(lastDate)} (${monthDates.length} dias)`
-            : `📅 ${monthDates.length} dias · Próx: ${formatShortPtBrDate(firstDate)}`;
-        return {
-          label,
-          daysRemaining: daysDiff,
-          status: 'future',
-          targetDateStr: firstDate,
-          badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
-          detailNote: `${monthDates.length} dia(s) no calendário`,
-          timelineSortKey: daysDiff,
-          paidAmount: 0,
-          remainingAmount: expectedVal,
-          isPaid: false,
-        };
-      }
-      return {
-        label: `📅 ${validCalendarDates.length} ${validCalendarDates.length === 1 ? 'dia' : 'dias'} em outro mês`,
-        daysRemaining: 99,
-        status: 'future',
-        targetDateStr: validCalendarDates[0],
-        badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
-        detailNote: 'Sem dias neste mês',
-        timelineSortKey: 99,
-        paidAmount: 0,
-        remainingAmount: expectedVal,
-        isPaid: false,
-      };
-    }
-
-    if (isPastMonth && monthDates.length === 0) {
-      return {
-        label: '📅 Sem dias marcados neste mês',
-        daysRemaining: 99,
-        status: 'future',
-        targetDateStr: today,
-        badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
-        detailNote: 'Sem dias neste mês',
-        timelineSortKey: 99,
-        paidAmount: 0,
-        remainingAmount: expectedVal,
-        isPaid: false,
-      };
-    }
-
-    if (!isPastMonth) {
-      const pool = monthDates.length > 0 ? monthDates : validCalendarDates;
-      const futureDatesFromToday = pool.filter(d => d >= today);
-
-      if (pool.includes(today)) {
-        const remainingAfterToday = pool.filter(d => d > today);
-        const lastFuture = remainingAfterToday[remainingAfterToday.length - 1];
-        const isRangeFromToday =
-          remainingAfterToday.length > 0 && isContiguousDateSequence(futureDatesFromToday);
-        const label =
-          remainingAfterToday.length === 0
-            ? `🚨 Hoje (${formatShortPtBrDate(today)})!`
-            : isRangeFromToday
-            ? `🚨 Hoje (${formatShortPtBrDate(today)}) até ${formatShortPtBrDate(lastFuture)} · restam ${remainingAfterToday.length}`
-            : `🚨 Hoje (${formatShortPtBrDate(today)}) · +${remainingAfterToday.length} ${remainingAfterToday.length === 1 ? 'dia' : 'dias'}`;
-        return {
-          label,
-          daysRemaining: 0,
-          status: 'today',
-          targetDateStr: today,
-          badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
-          detailNote: pool.length > 1 ? `${pool.length} dias no calendário` : 'Marcado no calendário',
-          timelineSortKey: 0,
-          paidAmount: 0,
-          remainingAmount: expectedVal,
-          isPaid: false,
-        };
-      }
-
-      const upcomingPool = pool.filter(d => d > today);
-      if (upcomingPool.length > 0) {
-        const nextUpcoming = upcomingPool[0];
-        const lastUpcoming = upcomingPool[upcomingPool.length - 1];
-        const daysDiff = calculateDaysDifference(today, nextUpcoming);
-        const remainingCount = upcomingPool.length;
-        const isRange = remainingCount > 1 && isContiguousDateSequence(upcomingPool);
-        const isNear = daysDiff <= 7;
-        const iconPrefix = isNear ? '⚠️' : '📅';
-
-        let label: string;
-        if (remainingCount === 1) {
-          label =
-            daysDiff === 1
-              ? `${iconPrefix} Amanhã (${formatShortPtBrDate(nextUpcoming)})`
-              : `${iconPrefix} Em ${daysDiff} dias (${formatShortPtBrDate(nextUpcoming)})`;
-        } else if (isRange) {
-          label =
-            daysDiff === 1
-              ? `${iconPrefix} Amanhã: ${formatShortPtBrDate(nextUpcoming)} a ${formatShortPtBrDate(lastUpcoming)} (${remainingCount}d)`
-              : `${iconPrefix} Em ${daysDiff}d: ${formatShortPtBrDate(nextUpcoming)} a ${formatShortPtBrDate(lastUpcoming)} (${remainingCount}d)`;
-        } else {
-          const extra = remainingCount - 1;
-          label =
-            daysDiff === 1
-              ? `${iconPrefix} Próx. amanhã (${formatShortPtBrDate(nextUpcoming)}) · +${extra} ${extra === 1 ? 'dia' : 'dias'}`
-              : `${iconPrefix} Em ${daysDiff} dias (${formatShortPtBrDate(nextUpcoming)}) · +${extra} ${extra === 1 ? 'dia' : 'dias'}`;
-        }
-
-        return {
-          label,
-          daysRemaining: daysDiff,
-          status: isNear ? 'near' : 'future',
-          targetDateStr: nextUpcoming,
-          badgeClass: isNear ? EXPENSE_DUE_BADGE_CLASSES.near : EXPENSE_DUE_BADGE_CLASSES.future,
-          detailNote: `${remainingCount} dia(s) restante(s)`,
-          timelineSortKey: daysDiff,
-          paidAmount: 0,
-          remainingAmount: expectedVal,
-          isPaid: false,
-        };
-      }
-
-      const latestPast = pool[pool.length - 1];
-      const daysDiff = calculateDaysDifference(today, latestPast);
-      return {
-        label: `🚨 Venceu há ${Math.abs(daysDiff)} ${Math.abs(daysDiff) === 1 ? 'dia' : 'dias'} (${formatShortPtBrDate(latestPast)})`,
-        daysRemaining: daysDiff,
-        status: 'overdue',
-        targetDateStr: latestPast,
-        badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
-        detailNote: `${pool.length} dia(s) no calendário`,
-        timelineSortKey: daysDiff,
-        paidAmount: 0,
-        remainingAmount: expectedVal,
-        isPaid: false,
-      };
-    }
-  }
+  // Nota: `selectedDates` controla exclusivamente os dias usados no rateio diário
+  // ("quanto devo rodar por dia"), nunca a data de vencimento da conta.
+  const rawDueDay = Number(item.dueDay);
+  const fallbackDayFromNextDue =
+    item.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
+      ? Number(item.nextDueDate.slice(8, 10))
+      : 10;
+  const resolvedDueDay = Math.max(
+    1,
+    Math.min(31, Number.isFinite(rawDueDay) && rawDueDay >= 1 ? Math.trunc(rawDueDay) : fallbackDayFromNextDue)
+  );
 
   if (isFutureMonth && targetYM) {
     const [fy, fm] = targetYM.split('-').map(Number);
-    const futureDueDay = Math.max(1, Math.min(31, Number(item.dueDay) || 10));
-    const targetDate = `${fy}-${String(fm).padStart(2, '0')}-${String(futureDueDay).padStart(2, '0')}`;
+    const daysInFutureMonth = new Date(fy, fm, 0).getDate();
+    const clampedFutureDay = Math.min(resolvedDueDay, daysInFutureMonth);
+    const targetDate = `${fy}-${String(fm).padStart(2, '0')}-${String(clampedFutureDay).padStart(2, '0')}`;
     const daysDiff = calculateDaysDifference(today, targetDate);
     const mName = PT_BR_MONTH_NAMES[fm - 1] || `${fm}`;
     return {
-      label: `📅 Previsão: dia ${futureDueDay} de ${mName} (${daysDiff > 0 ? `em ${daysDiff} dias` : 'próximo'})`,
+      label: `📅 Previsão: dia ${resolvedDueDay} de ${mName} (${daysDiff > 0 ? `em ${daysDiff} dias` : 'próximo'})`,
       daysRemaining: daysDiff,
       status: 'future',
       targetDateStr: targetDate,
       badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
-      detailNote: `Previsão ${mName}`,
+      detailNote: `Todo dia ${resolvedDueDay}`,
       timelineSortKey: daysDiff,
       paidAmount: 0,
       remainingAmount: expectedVal,
@@ -1211,15 +1077,20 @@ function getExpenseDueInfo(
     };
   }
 
-  // Monthly default
-  const dueDay = Math.max(1, Math.min(31, Number(item.dueDay) || 10));
-  const daysUntilDue = dueDay - currentDay;
+  // Monthly default (também aplicado a despesas legadas com recurrenceType === 'calendar_dates')
+  const dueDay = resolvedDueDay;
+  const [curY, curM] = currentYM.split('-').map(Number);
+  const daysInCurrentMonth = new Date(curY, curM, 0).getDate();
+  const effectiveDueDay = Math.min(dueDay, daysInCurrentMonth);
+  const targetDate = `${currentYM}-${String(effectiveDueDay).padStart(2, '0')}`;
+  const daysUntilDue = effectiveDueDay - currentDay;
+
   if (daysUntilDue === 0) {
     return {
       label: `🚨 Vence Hoje (todo dia ${dueDay})!`,
       daysRemaining: 0,
       status: 'today',
-      targetDateStr: today,
+      targetDateStr: targetDate,
       badgeClass: EXPENSE_DUE_BADGE_CLASSES.today,
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: 0,
@@ -1230,10 +1101,13 @@ function getExpenseDueInfo(
   }
   if (daysUntilDue > 0 && daysUntilDue <= 4) {
     return {
-      label: `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`,
+      label:
+        daysUntilDue === 1
+          ? `⚠️ Vence amanhã (dia ${dueDay})`
+          : `⚠️ Vence em ${daysUntilDue} dias (dia ${dueDay})`,
       daysRemaining: daysUntilDue,
       status: 'near',
-      targetDateStr: today,
+      targetDateStr: targetDate,
       badgeClass: EXPENSE_DUE_BADGE_CLASSES.near,
       detailNote: `Todo dia ${dueDay}`,
       timelineSortKey: daysUntilDue,
@@ -1243,27 +1117,29 @@ function getExpenseDueInfo(
     };
   }
   if (daysUntilDue < 0 && daysUntilDue >= -5) {
+    const overdueDays = Math.abs(daysUntilDue);
     return {
-      label: `🚨 Venceu há ${Math.abs(daysUntilDue)} dias (dia ${dueDay})`,
+      label: `🚨 Venceu há ${overdueDays} ${overdueDays === 1 ? 'dia' : 'dias'} (dia ${dueDay})`,
       daysRemaining: daysUntilDue,
       status: 'overdue',
-      targetDateStr: today,
+      targetDateStr: targetDate,
       badgeClass: EXPENSE_DUE_BADGE_CLASSES.overdue,
       detailNote: `Todo dia ${dueDay}`,
-      timelineSortKey: daysUntilDue + 30,
+      timelineSortKey: daysUntilDue + daysInCurrentMonth,
       paidAmount: 0,
       remainingAmount: expectedVal,
       isPaid: false,
     };
   }
+  const remainingCycleDays = daysUntilDue > 0 ? daysUntilDue : daysInCurrentMonth + daysUntilDue;
   return {
     label: `Vencimento: todo dia ${dueDay}`,
-    daysRemaining: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
+    daysRemaining: remainingCycleDays,
     status: 'future',
-    targetDateStr: today,
+    targetDateStr: targetDate,
     badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
     detailNote: `Todo dia ${dueDay}`,
-    timelineSortKey: daysUntilDue > 0 ? daysUntilDue : 30 + daysUntilDue,
+    timelineSortKey: remainingCycleDays,
     paidAmount: 0,
     remainingAmount: expectedVal,
     isPaid: false,
@@ -2967,23 +2843,37 @@ export default function App() {
 
   const normalizeCalendarExpenseDates = (
     selectedDates?: string[],
-    fallbackDueDate?: string,
+    explicitDueDay?: number,
     fallbackDueDay: number = 15
   ) => {
     const today = todayStr();
     const sortedDates = Array.from(
       new Set((selectedDates || []).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))
     ).sort();
-    const primaryDate =
-      sortedDates.find(d => d >= today) || sortedDates[sortedDates.length - 1] || '';
-    const dueDay = primaryDate
-      ? Number(primaryDate.slice(8, 10))
-      : Math.max(1, Math.min(31, Number(fallbackDueDay) || 15));
+    const parsedDueDay = Number(explicitDueDay);
+    const dueDay = Math.max(
+      1,
+      Math.min(31, Number.isFinite(parsedDueDay) && parsedDueDay >= 1 ? Math.trunc(parsedDueDay) : fallbackDueDay)
+    );
+    const [curY, curM, curD] = today.split('-').map(Number);
+    const daysInCurMonth = new Date(curY, curM, 0).getDate();
+    const curMonthDueDay = Math.min(dueDay, daysInCurMonth);
+    let nextDueDate: string;
+    if (curMonthDueDay >= curD) {
+      nextDueDate = `${curY}-${String(curM).padStart(2, '0')}-${String(curMonthDueDay).padStart(2, '0')}`;
+    } else {
+      const nextMonthDate = new Date(curY, curM, 1);
+      const ny = nextMonthDate.getFullYear();
+      const nm = nextMonthDate.getMonth() + 1;
+      const daysInNextMonth = new Date(ny, nm, 0).getDate();
+      const nextMonthDueDay = Math.min(dueDay, daysInNextMonth);
+      nextDueDate = `${ny}-${String(nm).padStart(2, '0')}-${String(nextMonthDueDay).padStart(2, '0')}`;
+    }
     return {
       sortedDates,
-      nextDueDate: primaryDate || fallbackDueDate || addDaysToDateStr(today, 30),
+      nextDueDate,
       dueDay,
-      recurrenceType: (sortedDates.length > 0 ? 'calendar_dates' : 'monthly') as ExpenseRecurrenceType,
+      recurrenceType: 'monthly' as ExpenseRecurrenceType,
     };
   };
 
@@ -3001,13 +2891,13 @@ export default function App() {
       name: '',
       category: 'manutencao',
       monthlyAmount: 0,
-      recurrenceType: 'calendar_dates',
+      recurrenceType: 'monthly',
       intervalDays: 30,
       totalCost: 0,
       selectedDates: [],
       lastPaidDate: undefined,
       nextDueDate: '',
-      dueDay: new Date().getDate(),
+      dueDay: 15,
       icon: '🏍️',
       isActive: true,
     });
@@ -3033,14 +2923,28 @@ export default function App() {
     const rawTotal = Math.max(0, Number(rawItem.totalCost) || 0);
     const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
     const seededDates = deriveSeedCalendarDatesForExpense(rawItem);
+    const parsedExistingDueDay = Number(rawItem.dueDay);
+    const fallbackNextDueDay =
+      rawItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(rawItem.nextDueDate)
+        ? Number(rawItem.nextDueDate.slice(8, 10))
+        : 15;
+    const resolvedDueDay = Math.max(
+      1,
+      Math.min(
+        31,
+        Number.isFinite(parsedExistingDueDay) && parsedExistingDueDay >= 1
+          ? Math.trunc(parsedExistingDueDay)
+          : fallbackNextDueDay
+      )
+    );
 
     setBikeDraft({
       ...rawItem,
       monthlyAmount: initialAmount,
       totalCost: initialAmount,
-      recurrenceType: 'calendar_dates',
+      recurrenceType: 'monthly',
       selectedDates: seededDates,
-      dueDay: rawItem.dueDay || (seededDates[0] ? Number(seededDates[0].slice(8, 10)) : 15),
+      dueDay: resolvedDueDay,
       isCustomEdited: true,
     });
     setShowBikeModal(true);
@@ -3054,8 +2958,8 @@ export default function App() {
     const amountVal = Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
     const normalizedDates = normalizeCalendarExpenseDates(
       bikeDraft.selectedDates,
-      bikeDraft.nextDueDate,
-      bikeDraft.dueDay || 15
+      bikeDraft.dueDay,
+      15
     );
 
     const sanitized: BikeExpenseItem = {
@@ -3386,13 +3290,13 @@ export default function App() {
       name: '',
       category: 'moradia',
       monthlyAmount: 0,
-      recurrenceType: 'calendar_dates',
+      recurrenceType: 'monthly',
       intervalDays: 30,
       totalCost: 0,
       selectedDates: [],
       lastPaidDate: undefined,
       nextDueDate: '',
-      dueDay: new Date().getDate(),
+      dueDay: 10,
       icon: '🏠',
       isActive: true,
     });
@@ -3412,14 +3316,28 @@ export default function App() {
     const rawTotal = Math.max(0, Number(item.totalCost) || 0);
     const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
     const seededDates = deriveSeedCalendarDatesForExpense(item);
+    const parsedExistingDueDay = Number(item.dueDay);
+    const fallbackNextDueDay =
+      item.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
+        ? Number(item.nextDueDate.slice(8, 10))
+        : 10;
+    const resolvedDueDay = Math.max(
+      1,
+      Math.min(
+        31,
+        Number.isFinite(parsedExistingDueDay) && parsedExistingDueDay >= 1
+          ? Math.trunc(parsedExistingDueDay)
+          : fallbackNextDueDay
+      )
+    );
 
     setHouseholdDraft({
       ...item,
       monthlyAmount: initialAmount,
       totalCost: initialAmount,
-      recurrenceType: 'calendar_dates',
+      recurrenceType: 'monthly',
       selectedDates: seededDates,
-      dueDay: item.dueDay || (seededDates[0] ? Number(seededDates[0].slice(8, 10)) : 10),
+      dueDay: resolvedDueDay,
     });
     setShowHouseholdModal(true);
   };
@@ -3432,8 +3350,8 @@ export default function App() {
     const amountVal = Math.max(0, Number(householdDraft.monthlyAmount) || 0);
     const normalizedDates = normalizeCalendarExpenseDates(
       householdDraft.selectedDates,
-      householdDraft.nextDueDate,
-      householdDraft.dueDay || 10
+      householdDraft.dueDay,
+      10
     );
 
     const sanitized: HouseholdExpenseItem = {
@@ -5517,6 +5435,11 @@ export default function App() {
     const totalAnnualDocsWithInsurance = annualStateDocsTotal + insuranceMonthly * 12;
     let docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
+    // Mês de referência e dias restantes no mês (incluindo hoje) para o cálculo do rateio diário
+    const currentYM = todayStr().slice(0, 7);
+    const targetFinanceYM = selectedFinanceMonth || currentYM;
+    const remainingDaysInMonth = getRemainingDaysInMonth(targetFinanceYM);
+
     // Despesas Cadastradas da Moto & Peças (Respeita 100% qualquer edição feita pelo usuário + cálculo proporcional nos itens padrão)
     const rawBikeExpenses: BikeExpenseItem[] =
       Array.isArray(dbState.bikeExpenses)
@@ -5549,8 +5472,8 @@ export default function App() {
         const hasCalDates = Array.isArray(item.selectedDates) && item.selectedDates.length > 0;
         const rateioDays = getExpenseRateioDays(
           item.selectedDates,
-          workDaysPerMonth,
-          selectedFinanceMonth
+          remainingDaysInMonth,
+          targetFinanceYM
         );
         if (!hasCalDates && item.recurrenceType === 'interval_days' && Number(item.totalCost) > 0) {
           totalCost = Number(item.totalCost);
@@ -5561,10 +5484,10 @@ export default function App() {
         }
         dailyRateio = monthlyCost / rateioDays;
         calculationNote = hasCalDates
-          ? `Rateio em ${rateioDays} ${rateioDays === 1 ? 'dia selecionado' : 'dias selecionados'} no calendário: ${fmtCurrencyExact(dailyRateio)}/dia`
+          ? `Rateio em ${rateioDays} ${rateioDays === 1 ? 'dia restante' : 'dias restantes'} no calendário: ${fmtCurrencyExact(dailyRateio)}/dia`
           : item.recurrenceType === 'interval_days'
-          ? `${fmtCurrencyExact(totalCost)} a cada ${intDays} ${intDays === 1 ? 'dia' : 'dias'} → ${fmtCurrencyExact(dailyRateio)}/dia (${workDaysPerMonth}d úteis)`
-          : `Rateio em ${workDaysPerMonth} dias úteis: ${fmtCurrencyExact(dailyRateio)}/dia`;
+          ? `${fmtCurrencyExact(totalCost)} a cada ${intDays} ${intDays === 1 ? 'dia' : 'dias'} → ${fmtCurrencyExact(dailyRateio)}/dia (${rateioDays}d restantes)`
+          : `Rateio em ${rateioDays} ${rateioDays === 1 ? 'dia restante' : 'dias restantes'} no mês: ${fmtCurrencyExact(dailyRateio)}/dia`;
         isProportional = false;
       }
       // CASO CONTRÁRIO (Item padrão ainda não editado manualmente), usa o cálculo proporcional da IA:
@@ -5648,11 +5571,41 @@ export default function App() {
       // 9. Revisão Geral e Outros
       else {
         const itemMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
-        dailyRateio = itemMonthly / workDaysPerMonth;
+        dailyRateio = itemMonthly / remainingDaysInMonth;
         monthlyCost = itemMonthly;
-        calculationNote = `Rateio fixo em ${workDaysPerMonth} dias úteis`;
+        calculationNote = `Rateio em ${remainingDaysInMonth} ${remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'} no mês`;
         isProportional = false;
       }
+
+      const bikeMatchingPayments = (dbState.expenses || []).filter(
+        e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesBikeExpense(e, item)
+      );
+      const paidInMonth = bikeMatchingPayments.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const isExplicitlyUnpaid = Boolean(item.unpaidMonths && item.unpaidMonths.includes(targetFinanceYM));
+      const isPaidInMonth =
+        !isExplicitlyUnpaid &&
+        (Boolean(item.paidMonths && item.paidMonths.includes(targetFinanceYM)) ||
+          Boolean(item.lastPaidDate && item.lastPaidDate.startsWith(targetFinanceYM)) ||
+          (paidInMonth >= monthlyCost && monthlyCost > 0) ||
+          (paidInMonth > 0 && monthlyCost === 0));
+      const remainingMonthly = isPaidInMonth
+        ? 0
+        : isExplicitlyUnpaid
+        ? monthlyCost
+        : Math.max(0, monthlyCost - paidInMonth);
+      const bikeRateioDays = getExpenseRateioDays(
+        item.selectedDates,
+        remainingDaysInMonth,
+        targetFinanceYM
+      );
+      const remainingDaily =
+        remainingMonthly <= 0
+          ? 0
+          : isProportional
+          ? monthlyCost > 0
+            ? dailyRateio * (remainingMonthly / monthlyCost)
+            : 0
+          : remainingMonthly / bikeRateioDays;
 
       return {
         ...item,
@@ -5660,112 +5613,144 @@ export default function App() {
         dailyRateio,
         monthlyCost,
         totalCost: totalCost > 0 ? totalCost : monthlyCost,
+        paidInMonth,
+        isPaidInMonth,
+        remainingMonthly,
+        remainingDaily,
         calculationNote,
         isProportional,
       };
     });
 
-    const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive);
-    const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive);
+    const activeBikeExpenses = rawBikeExpenses.filter(b => b.isActive !== false);
+    const activeEnrichedBikeExpenses = enrichedBikeExpenses.filter(b => b.isActive !== false);
 
     const customCategoryList = Array.isArray(dbState.customCategories) ? dbState.customCategories : [];
     const customCatIdSet = new Set(customCategoryList.map(c => c.id));
     const customCatNameSet = new Set(customCategoryList.map(c => c.name.toLowerCase()));
 
-    let hasFoodFromBikeExpenses = false;
-    let hasEmergencyFromBikeExpenses = false;
-    let emergencyBikeDaily = 0;
-    let emergencyBikeMonthly = 0;
+    // Classificação exclusiva baseada SOMENTE nas despesas ativas realmente registradas
+    const isCustomCatBike = (b: typeof activeEnrichedBikeExpenses[number]) =>
+      customCatIdSet.has(b.category) || customCatNameSet.has((b.category || '').toLowerCase());
 
-    // Sincroniza Combustível, Documentação/Seguro, Alimentação na Rua, Emergência e Manutenção diretamente com os cards ativos da moto
-    if (activeEnrichedBikeExpenses.length > 0) {
-      const isFuelItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
-        b.id === 'combustivel_mensal' ||
+    const isFuelItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+      !isCustomCatBike(b) &&
+      (b.id === 'combustivel_mensal' ||
         b.id === 'combustivel_semanal' ||
         b.category === 'combustivel' ||
         b.name.toLowerCase().includes('combustível') ||
-        b.name.toLowerCase().includes('gasolina');
+        b.name.toLowerCase().includes('gasolina'));
 
-      const isDocsItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
-        !isFuelItem(b) &&
-        (b.category === 'documentacao' ||
-          b.category === 'seguro' ||
-          b.id === 'ipva_licenciamento' ||
-          b.id === 'seguro_rastreador' ||
-          b.name.toLowerCase().includes('ipva') ||
-          b.name.toLowerCase().includes('licenciamento') ||
-          b.name.toLowerCase().includes('seguro'));
+    const isDocsItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+      !isCustomCatBike(b) &&
+      !isFuelItem(b) &&
+      (b.category === 'documentacao' ||
+        b.category === 'seguro' ||
+        b.id === 'ipva_licenciamento' ||
+        b.id === 'seguro_rastreador' ||
+        b.name.toLowerCase().includes('ipva') ||
+        b.name.toLowerCase().includes('licenciamento') ||
+        b.name.toLowerCase().includes('seguro'));
 
-      const isFoodItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
-        !isFuelItem(b) &&
-        !isDocsItem(b) &&
-        (b.category === 'alimentacao' ||
-          b.name.toLowerCase().includes('alimenta') ||
-          b.name.toLowerCase().includes('almoço') ||
-          b.name.toLowerCase().includes('marmita') ||
-          b.name.toLowerCase().includes('lanche') ||
-          b.name.toLowerCase().includes('café'));
+    const isFoodItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+      !isCustomCatBike(b) &&
+      !isFuelItem(b) &&
+      !isDocsItem(b) &&
+      (b.category === 'alimentacao' ||
+        b.name.toLowerCase().includes('alimenta') ||
+        b.name.toLowerCase().includes('almoço') ||
+        b.name.toLowerCase().includes('marmita') ||
+        b.name.toLowerCase().includes('lanche') ||
+        b.name.toLowerCase().includes('café'));
 
-      const isEmergencyItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+    const isEmergencyItem = (b: typeof activeEnrichedBikeExpenses[number]) =>
+      !isCustomCatBike(b) &&
+      !isFuelItem(b) &&
+      !isDocsItem(b) &&
+      !isFoodItem(b) &&
+      (b.category === 'emergencia' ||
+        b.name.toLowerCase().includes('reserva de emergência') ||
+        b.name.toLowerCase().includes('emergência'));
+
+    const isMaintItem = (b: typeof activeEnrichedBikeExpenses[number]) => {
+      if (isCustomCatBike(b) || isFuelItem(b) || isDocsItem(b) || isFoodItem(b) || isEmergencyItem(b)) {
+        return false;
+      }
+      const lowerName = b.name.toLowerCase();
+      return (
+        b.category === 'manutencao' ||
+        b.category === 'pecas' ||
+        b.category === 'imprevisto_mecanico' ||
+        lowerName.includes('óleo') ||
+        lowerName.includes('pneu') ||
+        lowerName.includes('relação') ||
+        lowerName.includes('corrente') ||
+        lowerName.includes('freio') ||
+        lowerName.includes('pastilha') ||
+        lowerName.includes('revisão') ||
+        lowerName.includes('oficina') ||
+        lowerName.includes('manuten') ||
+        lowerName.includes('mecânic') ||
+        lowerName.includes('imprevisto')
+      );
+    };
+
+    const fuelItems = activeEnrichedBikeExpenses.filter(isFuelItem);
+    const docsItems = activeEnrichedBikeExpenses.filter(isDocsItem);
+    const foodItems = activeEnrichedBikeExpenses.filter(isFoodItem);
+    const emergencyItems = activeEnrichedBikeExpenses.filter(isEmergencyItem);
+    const maintItems = activeEnrichedBikeExpenses.filter(isMaintItem);
+    const otherBikeItems = activeEnrichedBikeExpenses.filter(
+      b =>
+        !isCustomCatBike(b) &&
         !isFuelItem(b) &&
         !isDocsItem(b) &&
         !isFoodItem(b) &&
-        (b.category === 'emergencia' ||
-          b.name.toLowerCase().includes('reserva de emergência') ||
-          b.name.toLowerCase().includes('emergência'));
+        !isEmergencyItem(b) &&
+        !isMaintItem(b)
+    );
 
-      const isCustomCatBike = (b: typeof activeEnrichedBikeExpenses[number]) =>
-        customCatIdSet.has(b.category) || customCatNameSet.has((b.category || '').toLowerCase());
+    // Soma apenas o saldo restante (a pagar) das despesas ativas registradas em cada categoria
+    dailyFuelCost = fuelItems.reduce((sum, f) => sum + f.remainingDaily, 0);
+    monthlyFuelCost = fuelItems.reduce((sum, f) => sum + f.remainingMonthly, 0);
+    const hasFuelExpenses = monthlyFuelCost > 0;
+    fuelPctOfGross = hasFuelExpenses && dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
 
-      const fuelItems = activeEnrichedBikeExpenses.filter(isFuelItem);
-      const docsItems = activeEnrichedBikeExpenses.filter(isDocsItem);
-      const foodItems = activeEnrichedBikeExpenses.filter(isFoodItem);
-      const emergencyItems = activeEnrichedBikeExpenses.filter(isEmergencyItem);
-      const maintItems = activeEnrichedBikeExpenses.filter(
-        b => !isFuelItem(b) && !isDocsItem(b) && !isFoodItem(b) && !isEmergencyItem(b) && !isCustomCatBike(b)
-      );
+    dailyDocsReserve = docsItems.reduce((sum, d) => sum + d.remainingDaily, 0);
+    monthlyDocsReserve = docsItems.reduce((sum, d) => sum + d.remainingMonthly, 0);
+    const hasDocsExpenses = monthlyDocsReserve > 0;
+    weeklyDocsReserve = hasDocsExpenses ? dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4)) : 0;
+    docsPctOfGross = hasDocsExpenses && dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
 
-      if (fuelItems.length > 0) {
-        dailyFuelCost = fuelItems.reduce((sum, f) => sum + f.dailyRateio, 0);
-        monthlyFuelCost = fuelItems.reduce((sum, f) => sum + f.monthlyCost, 0);
-        fuelPctOfGross = dailyGross > 0 ? Math.round((dailyFuelCost / dailyGross) * 100) : 0;
-      }
+    dailyFoodCost = foodItems.reduce((sum, f) => sum + f.remainingDaily, 0);
+    monthlyFoodCost = foodItems.reduce((sum, f) => sum + f.remainingMonthly, 0);
+    const hasFoodExpenses = monthlyFoodCost > 0;
+    foodPctOfGross = hasFoodExpenses && dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
 
-      if (docsItems.length > 0) {
-        dailyDocsReserve = docsItems.reduce((sum, d) => sum + d.dailyRateio, 0);
-        monthlyDocsReserve = docsItems.reduce((sum, d) => sum + d.monthlyCost, 0);
-        weeklyDocsReserve = dailyDocsReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
-        docsPctOfGross = dailyGross > 0 ? Math.round((dailyDocsReserve / dailyGross) * 100) : 0;
-      }
+    const emergencyBikeDaily = emergencyItems.reduce((sum, e) => sum + e.remainingDaily, 0);
+    const emergencyBikeMonthly = emergencyItems.reduce((sum, e) => sum + e.remainingMonthly, 0);
+    const hasEmergencyExpenses = emergencyBikeMonthly > 0;
 
-      if (foodItems.length > 0) {
-        hasFoodFromBikeExpenses = true;
-        dailyFoodCost = foodItems.reduce((sum, f) => sum + f.dailyRateio, 0);
-        monthlyFoodCost = foodItems.reduce((sum, f) => sum + f.monthlyCost, 0);
-        foodPctOfGross = dailyGross > 0 ? Math.round((dailyFoodCost / dailyGross) * 100) : 0;
-      }
+    const extraMaintItems = maintItems.filter(
+      m => m.category === 'imprevisto_mecanico' || m.name.toLowerCase().includes('imprevisto')
+    );
+    extraDailyMaintBuffer =
+      extraMaintItems.length > 0
+        ? extraMaintItems.reduce((sum, m) => sum + m.remainingDaily, 0)
+        : 0;
 
-      if (emergencyItems.length > 0) {
-        hasEmergencyFromBikeExpenses = true;
-        emergencyBikeDaily = emergencyItems.reduce((sum, e) => sum + e.dailyRateio, 0);
-        emergencyBikeMonthly = emergencyItems.reduce((sum, e) => sum + e.monthlyCost, 0);
-      }
+    dailyMaintReserve = maintItems.reduce((sum, m) => sum + m.remainingDaily, 0);
+    monthlyMaintReserve = maintItems.reduce((sum, m) => sum + m.remainingMonthly, 0);
+    const hasMaintExpenses = monthlyMaintReserve > 0;
+    maintPctOfGross = hasMaintExpenses && dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
 
-      const extraMaintItems = maintItems.filter(
-        m => m.category === 'imprevisto_mecanico' || m.name.toLowerCase().includes('imprevisto')
-      );
-      if (extraMaintItems.length > 0) {
-        extraDailyMaintBuffer = extraMaintItems.reduce((sum, m) => sum + m.dailyRateio, 0);
-      }
+    const dailyOtherBikeReserve = otherBikeItems.reduce((sum, o) => sum + o.remainingDaily, 0);
+    const monthlyOtherBikeReserve = otherBikeItems.reduce((sum, o) => sum + o.remainingMonthly, 0);
+    const hasOtherBikeExpenses = monthlyOtherBikeReserve > 0;
+    const otherBikePctOfGross =
+      hasOtherBikeExpenses && dailyGross > 0 ? Math.round((dailyOtherBikeReserve / dailyGross) * 100) : 0;
 
-      if (maintItems.length > 0) {
-        dailyMaintReserve = maintItems.reduce((sum, m) => sum + m.dailyRateio, 0);
-        monthlyMaintReserve = maintItems.reduce((sum, m) => sum + m.monthlyCost, 0);
-        maintPctOfGross = dailyGross > 0 ? Math.round((dailyMaintReserve / dailyGross) * 100) : 0;
-      }
-    }
-
-    // Rateio diário e mensal unificado das despesas da moto
+    // Orçamento mensal total da moto (mantido para a legenda "Orçamento total definido" na aba Finanças)
     const unifiedDailyBikeReserve = activeEnrichedBikeExpenses.reduce(
       (sum, b) => sum + b.dailyRateio,
       0
@@ -5787,157 +5772,144 @@ export default function App() {
       Array.isArray(dbState.householdExpenses)
         ? dbState.householdExpenses
         : DEFAULT_HOUSEHOLD_EXPENSES;
-    const activeHouseholdExpenses = rawHouseholdExpenses.filter(h => h.isActive);
-    const monthlyHouseholdCost = activeHouseholdExpenses.reduce(
-      (sum, h) => sum + Math.max(0, Number(h.monthlyAmount) || 0),
-      0
-    );
+    const activeHouseholdExpenses = rawHouseholdExpenses.filter(h => h.isActive !== false);
 
-    // Mês de referência para conferência de pagamentos realizados e dedução do orçamento
-    const currentYM = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-    const targetFinanceYM = selectedFinanceMonth || currentYM;
-
-    // Calcula pagamentos efetuados e saldo restante a quitar das contas da casa
-    let monthlyHouseholdPaid = 0;
-    let monthlyHouseholdRemaining = 0;
-    let dailyHouseholdRemainingReserve = 0;
-    let householdPaidCount = 0;
-    let householdPendingCount = 0;
-
-    activeHouseholdExpenses.forEach(h => {
+    // Enriquecimento único por conta da casa: orçamento, pago no mês, saldo restante e rateio diário restante
+    const enrichedHouseholdExpenses = activeHouseholdExpenses.map(h => {
       const matching = (dbState.expenses || []).filter(
         e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesHouseholdExpense(e, h)
       );
-      const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const paidInMonth = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
       const budget =
         h.recurrenceType === 'interval_days' && h.totalCost && h.totalCost > 0
           ? Number(h.totalCost)
           : Math.max(0, Number(h.monthlyAmount) || 0);
-      monthlyHouseholdPaid += paid;
       const isExplicitlyUnpaid = Boolean(h.unpaidMonths && h.unpaidMonths.includes(targetFinanceYM));
-      const isPaidHouse =
+      const isPaidInMonth =
         !isExplicitlyUnpaid &&
         (Boolean(h.paidMonths && h.paidMonths.includes(targetFinanceYM)) ||
           Boolean(h.lastPaidDate && h.lastPaidDate.startsWith(targetFinanceYM)) ||
-          (paid >= budget && budget > 0) ||
-          (paid > 0 && budget === 0));
-
-      const rem = isPaidHouse ? 0 : isExplicitlyUnpaid ? budget : Math.max(0, budget - paid);
-      const hRateioDays = getExpenseRateioDays(h.selectedDates, workDaysPerMonth, targetFinanceYM);
-      monthlyHouseholdRemaining += rem;
-      dailyHouseholdRemainingReserve += rem > 0 ? rem / hRateioDays : 0;
-      if (isPaidHouse) {
-        householdPaidCount++;
-      } else {
-        householdPendingCount++;
-      }
+          (paidInMonth >= budget && budget > 0) ||
+          (paidInMonth > 0 && budget === 0));
+      const remainingMonthly = isPaidInMonth
+        ? 0
+        : isExplicitlyUnpaid
+        ? budget
+        : Math.max(0, budget - paidInMonth);
+      const rateioDays = getExpenseRateioDays(h.selectedDates, remainingDaysInMonth, targetFinanceYM);
+      const remainingDaily = remainingMonthly > 0 ? remainingMonthly / rateioDays : 0;
+      return {
+        ...h,
+        budget,
+        paidInMonth,
+        isPaidInMonth,
+        remainingMonthly,
+        remainingDaily,
+        rateioDays,
+      };
     });
 
-    // Calcula pagamentos efetuados e saldo restante a quitar das contas da moto
-    let monthlyBikePaid = 0;
-    let monthlyBikeRemaining = 0;
-    let bikePaidCount = 0;
-    let bikePendingCount = 0;
+    const monthlyHouseholdCost = enrichedHouseholdExpenses.reduce((sum, h) => sum + h.budget, 0);
+    const monthlyHouseholdPaid = enrichedHouseholdExpenses.reduce((sum, h) => sum + h.paidInMonth, 0);
+    const monthlyHouseholdRemaining = enrichedHouseholdExpenses.reduce((sum, h) => sum + h.remainingMonthly, 0);
+    const dailyHouseholdRemainingReserve = enrichedHouseholdExpenses.reduce((sum, h) => sum + h.remainingDaily, 0);
+    const householdPaidCount = enrichedHouseholdExpenses.filter(h => h.isPaidInMonth).length;
+    const householdPendingCount = enrichedHouseholdExpenses.filter(h => !h.isPaidInMonth).length;
+    const householdPendingAmountCount = enrichedHouseholdExpenses.filter(h => h.remainingMonthly > 0).length;
 
-    activeEnrichedBikeExpenses.forEach(b => {
-      const matching = (dbState.expenses || []).filter(
-        e => !e.isCancelled && e.date && e.date.startsWith(targetFinanceYM) && matchesBikeExpense(e, b)
-      );
-      const paid = matching.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-      const budget = (b as any).monthlyCost ?? Number(b.monthlyAmount || 0);
-      monthlyBikePaid += paid;
-      const isExplicitlyUnpaid = Boolean(b.unpaidMonths && b.unpaidMonths.includes(targetFinanceYM));
-      const isPaidBike =
-        !isExplicitlyUnpaid &&
-        (Boolean(b.paidMonths && b.paidMonths.includes(targetFinanceYM)) ||
-          Boolean(b.lastPaidDate && b.lastPaidDate.startsWith(targetFinanceYM)) ||
-          (paid >= budget && budget > 0) ||
-          (paid > 0 && budget === 0));
-
-      const rem = isPaidBike ? 0 : isExplicitlyUnpaid ? budget : Math.max(0, budget - paid);
-      monthlyBikeRemaining += rem;
-      if (isPaidBike) {
-        bikePaidCount++;
-      } else {
-        bikePendingCount++;
-      }
-    });
-
-    // Rateio diário obrigatório das despesas da moto considerando o que resta pagar (deduzido dos gastos já lançados)
-    const dailyBikeRemainingReserve = monthlyBikeRemaining > 0
-      ? monthlyBikeRemaining / workDaysPerMonth
-      : 0;
+    // Totais pagos e pendentes das despesas da moto (a partir de enrichedBikeExpenses)
+    const monthlyBikePaid = activeEnrichedBikeExpenses.reduce((sum, b) => sum + b.paidInMonth, 0);
+    const monthlyBikeRemaining = activeEnrichedBikeExpenses.reduce((sum, b) => sum + b.remainingMonthly, 0);
+    const dailyBikeRemainingReserve = activeEnrichedBikeExpenses.reduce((sum, b) => sum + b.remainingDaily, 0);
+    const bikePaidCount = activeEnrichedBikeExpenses.filter(b => b.isPaidInMonth).length;
+    const bikePendingCount = activeEnrichedBikeExpenses.filter(b => !b.isPaidInMonth).length;
     const weeklyBikeRemainingReserve = dailyBikeRemainingReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
 
-    // Rateio diário obrigatório das despesas da casa considerando o que resta pagar (deduzido dos gastos já lançados)
+    // Rateio diário obrigatório das despesas da casa considerando apenas o saldo restante a pagar
     const dailyHouseholdReserve = dailyHouseholdRemainingReserve;
     const weeklyHouseholdReserve = dailyHouseholdReserve * Math.min(7, Math.round(workDaysPerMonth / 4));
     const housePctOfGross = dailyGross > 0 ? Math.round((dailyHouseholdReserve / dailyGross) * 100) : 0;
 
-    // Reservas das categorias customizadas criadas pelo usuário (Moto + Casa) para exibição no Painel
-    let totalCustomHouseDaily = 0;
-    let totalCustomHouseMonthly = 0;
-    const customCategoryReserves = customCategoryList.map(cat => {
-      const catLower = cat.name.toLowerCase();
-      const bikeMatches = activeEnrichedBikeExpenses.filter(
-        b => b.category === cat.id || (b.category || '').toLowerCase() === catLower
-      );
-      const houseMatches = activeHouseholdExpenses.filter(
-        h => (h.category as string) === cat.id || String(h.category || '').toLowerCase() === catLower
-      );
-      const bikeDaily = bikeMatches.reduce((s, b) => s + b.dailyRateio, 0);
-      const bikeMonthly = bikeMatches.reduce((s, b) => s + b.monthlyCost, 0);
-      const houseMonthly = houseMatches.reduce((s, h) => s + Math.max(0, Number(h.monthlyAmount) || 0), 0);
-      const houseDaily = houseMatches.reduce((s, h) => {
-        const rateioDays = getExpenseRateioDays(h.selectedDates, workDaysPerMonth, targetFinanceYM);
-        return s + Math.max(0, Number(h.monthlyAmount) || 0) / rateioDays;
-      }, 0);
-      totalCustomHouseDaily += houseDaily;
-      totalCustomHouseMonthly += houseMonthly;
+    // Reservas das categorias customizadas criadas pelo usuário (Moto + Casa) com saldo restante > 0
+    const customCategoryReserves = customCategoryList
+      .map(cat => {
+        const catLower = cat.name.toLowerCase();
+        const bikeMatches = activeEnrichedBikeExpenses.filter(
+          b => b.category === cat.id || (b.category || '').toLowerCase() === catLower
+        );
+        const houseMatches = enrichedHouseholdExpenses.filter(
+          h => (h.category as string) === cat.id || String(h.category || '').toLowerCase() === catLower
+        );
+        const bikePendingMatches = bikeMatches.filter(b => b.remainingMonthly > 0);
+        const housePendingMatches = houseMatches.filter(h => h.remainingMonthly > 0);
+        const itemCount = bikePendingMatches.length + housePendingMatches.length;
+        const bikeDaily = bikePendingMatches.reduce((s, b) => s + b.remainingDaily, 0);
+        const bikeMonthly = bikePendingMatches.reduce((s, b) => s + b.remainingMonthly, 0);
+        const houseDaily = housePendingMatches.reduce((s, h) => s + h.remainingDaily, 0);
+        const houseMonthly = housePendingMatches.reduce((s, h) => s + h.remainingMonthly, 0);
 
-      const dailyCost = bikeDaily + houseDaily;
-      const monthlyCost = bikeMonthly + houseMonthly;
-      const pctOfGross = dailyGross > 0 ? Math.round((dailyCost / dailyGross) * 100) : 0;
-      const targetTab: 'despesas_moto' | 'despesas_casa' =
-        houseMatches.length > 0 && bikeMatches.length === 0 ? 'despesas_casa' : 'despesas_moto';
-      const icon = cat.icon || bikeMatches[0]?.icon || houseMatches[0]?.icon || '📁';
+        const dailyCost = bikeDaily + houseDaily;
+        const monthlyCost = bikeMonthly + houseMonthly;
+        const pctOfGross = dailyGross > 0 ? Math.round((dailyCost / dailyGross) * 100) : 0;
+        const targetTab: 'despesas_moto' | 'despesas_casa' =
+          housePendingMatches.length > 0 && bikePendingMatches.length === 0 ? 'despesas_casa' : 'despesas_moto';
+        const icon = cat.icon || bikePendingMatches[0]?.icon || housePendingMatches[0]?.icon || '📁';
 
-      return {
-        id: cat.id,
-        name: cat.name,
-        icon,
-        dailyCost,
-        monthlyCost,
-        pctOfGross,
-        targetTab,
-      };
-    });
+        return {
+          id: cat.id,
+          name: cat.name,
+          icon,
+          dailyCost,
+          monthlyCost,
+          pctOfGross,
+          targetTab,
+          itemCount,
+          bikeItemCount: bikePendingMatches.length,
+        };
+      })
+      .filter(cat => cat.monthlyCost > 0);
 
-    const standardHouseholdDaily = Math.max(0, dailyHouseholdReserve - totalCustomHouseDaily);
-    const standardHouseholdMonthly = Math.max(0, monthlyHouseholdCost - totalCustomHouseMonthly);
-    const standardHousePct = dailyGross > 0 ? Math.round((standardHouseholdDaily / dailyGross) * 100) : 0;
+    const isCustomCatHouse = (h: HouseholdExpenseItem) =>
+      customCatIdSet.has(h.category as string) ||
+      customCatNameSet.has(String(h.category || '').toLowerCase());
+    const standardHouseholdExpenses = enrichedHouseholdExpenses.filter(h => !isCustomCatHouse(h));
+    const standardHouseholdDaily = standardHouseholdExpenses.reduce((sum, h) => sum + h.remainingDaily, 0);
+    const standardHouseholdMonthly = standardHouseholdExpenses.reduce((sum, h) => sum + h.remainingMonthly, 0);
+    const hasStandardHouseExpenses = standardHouseholdMonthly > 0;
+    const standardHousePct =
+      hasStandardHouseExpenses && dailyGross > 0 ? Math.round((standardHouseholdDaily / dailyGross) * 100) : 0;
 
-    // Subtotal Moto & Operação (Custos Operacionais da Moto + Alimentação no Turno de Rua, sem contar Reserva de Emergência duas vezes)
-    const legacyFoodDaily = hasFoodFromBikeExpenses ? 0 : dailyFoodCost;
-    const legacyFoodMonthly = hasFoodFromBikeExpenses ? 0 : monthlyFoodCost;
-    const dailyBikeCostsTotal = Math.max(0, unifiedDailyBikeReserve - emergencyBikeDaily) + legacyFoodDaily;
-    const monthlyBikeCostsTotal = Math.max(0, unifiedMonthlyBikeTotal - emergencyBikeMonthly) + legacyFoodMonthly;
-    const bikePctOfGross = dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
+    // Subtotal Moto & Operação (somente saldo restante a pagar das despesas da moto, sem contar Emergência duas vezes)
+    const dailyBikeCostsTotal = Math.max(0, dailyBikeRemainingReserve - emergencyBikeDaily);
+    const monthlyBikeCostsTotal = Math.max(0, monthlyBikeRemaining - emergencyBikeMonthly);
+    const hasBikeOperationalExpenses = monthlyBikeCostsTotal > 0;
+    const bikePctOfGross = hasBikeOperationalExpenses && dailyGross > 0 ? Math.round((dailyBikeCostsTotal / dailyGross) * 100) : 0;
 
-    // 6. Reserva de Emergência (Fundo de Segurança Pessoal / Imprevistos / Dias Parados)
-    const dailyEmergencyReserve = hasEmergencyFromBikeExpenses
-      ? emergencyBikeDaily
-      : dailyGross * (Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0)) / 100);
-    const monthlyEmergencyReserve = hasEmergencyFromBikeExpenses
-      ? emergencyBikeMonthly
-      : dailyEmergencyReserve * workDaysPerMonth;
-    const emergencyPct = hasEmergencyFromBikeExpenses
-      ? (dailyGross > 0 ? Math.round((dailyEmergencyReserve / dailyGross) * 100) : 0)
-      : Math.max(0, Math.min(40, Number(finPlan.emergencyReservePct) || 0));
+    const bikeOperationalSummaryParts: string[] = [];
+    if (hasFuelExpenses) bikeOperationalSummaryParts.push('Combustível');
+    if (hasMaintExpenses) bikeOperationalSummaryParts.push('Manutenção');
+    if (hasDocsExpenses) bikeOperationalSummaryParts.push('Docs & IPVA');
+    if (hasFoodExpenses) bikeOperationalSummaryParts.push('Alimentação');
+    if (hasOtherBikeExpenses) bikeOperationalSummaryParts.push('Outros');
+    customCategoryReserves
+      .filter(c => c.bikeItemCount > 0)
+      .forEach(c => bikeOperationalSummaryParts.push(c.name));
+    const bikeOperationalSummaryLabel =
+      bikeOperationalSummaryParts.length > 0
+        ? bikeOperationalSummaryParts.join(' + ')
+        : 'Despesas ativas da moto';
+
+    // 6. Reserva de Emergência (somente quando houver saldo restante de emergência registrado)
+    const dailyEmergencyReserve = hasEmergencyExpenses ? emergencyBikeDaily : 0;
+    const monthlyEmergencyReserve = hasEmergencyExpenses ? emergencyBikeMonthly : 0;
+    const emergencyPct =
+      hasEmergencyExpenses && dailyGross > 0
+        ? Math.round((dailyEmergencyReserve / dailyGross) * 100)
+        : 0;
     const emergencyIn6Months = monthlyEmergencyReserve * 6;
     const emergencyIn12Months = monthlyEmergencyReserve * 12;
 
-    // 7. Consolidação das Reservas Totais (Tudo o que deve reservar: Moto + Casa + Emergência)
+    // 7. Consolidação das Reservas Totais (Tudo o que resta reservar no mês: Moto + Casa + Emergência)
     const totalDailyCostsAndReserves =
       dailyBikeCostsTotal + dailyHouseholdReserve + dailyEmergencyReserve;
     const totalMonthlyCostsAndReserves =
@@ -5971,6 +5943,7 @@ export default function App() {
 
     return {
       workDaysPerMonth,
+      remainingDaysInMonth,
       baseLabel,
       dailyGross,
       weeklyGross,
@@ -6025,6 +5998,19 @@ export default function App() {
       dailyBikeRemainingReserve,
       weeklyBikeRemainingReserve,
       bikeExpensesPctOfGross,
+      // Flags de categorias com despesas registradas
+      hasFuelExpenses,
+      hasMaintExpenses,
+      hasDocsExpenses,
+      hasFoodExpenses,
+      hasOtherBikeExpenses,
+      hasEmergencyExpenses,
+      hasStandardHouseExpenses,
+      hasBikeOperationalExpenses,
+      dailyOtherBikeReserve,
+      monthlyOtherBikeReserve,
+      otherBikePctOfGross,
+      bikeOperationalSummaryLabel,
       // Despesas da Casa & Família
       rawHouseholdExpenses,
       activeHouseholdExpenses,
@@ -6033,6 +6019,7 @@ export default function App() {
       monthlyHouseholdRemaining,
       householdPaidCount,
       householdPendingCount,
+      householdPendingAmountCount,
       dailyHouseholdReserve,
       weeklyHouseholdReserve,
       housePctOfGross,
@@ -6507,84 +6494,121 @@ export default function App() {
     calcTitle,
     step,
     amount,
+    dueDay,
     dates,
     target,
     calendarLabel,
     onChangeAmount,
+    onChangeDueDay,
   }: {
     accentClass: 'orange' | 'blue';
     valueLabel: string;
     calcTitle: string;
     step: string;
     amount: number;
+    dueDay: number;
     dates: string[];
     target: 'bike' | 'household';
     calendarLabel: string;
     onChangeAmount: (nextVal: number) => void;
+    onChangeDueDay: (nextDay: number) => void;
   }) => {
     const isOrange = accentClass === 'orange';
     const textAccent = isOrange ? 'text-[#FF6A1A]' : 'text-blue-400';
     const calcBtnHover = isOrange
       ? 'hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A]'
       : 'hover:border-blue-400 hover:bg-blue-400/10 text-blue-400';
+    const safeDueDay = Math.max(1, Math.min(31, Math.trunc(Number(dueDay) || 10)));
 
     return (
       <>
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className={`block text-xs font-bold ${mutedText}`}>{valueLabel}</label>
-            <button
-              type="button"
-              onClick={() => {
-                openQuickCalculator(calcTitle, amount, valStr => {
-                  onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
-                });
-              }}
-              className={`text-[11px] font-bold ${textAccent} hover:underline flex items-center gap-1 cursor-pointer`}
-            >
-              <Calculator className="w-3 h-3" />
-              <span>Calc</span>
-            </button>
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className={`block text-xs font-bold ${mutedText}`}>{valueLabel}</label>
+              <button
+                type="button"
+                onClick={() => {
+                  openQuickCalculator(calcTitle, amount, valStr => {
+                    onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+                  });
+                }}
+                className={`text-[11px] font-bold ${textAccent} hover:underline flex items-center gap-1 cursor-pointer`}
+              >
+                <Calculator className="w-3 h-3" />
+                <span>Calc</span>
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <FreeNumberInput
+                step={step}
+                value={amount}
+                onValueChange={val => onChangeAmount(Math.max(0, val))}
+                className={`flex-1 min-w-0 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  openQuickCalculator(calcTitle, amount, valStr => {
+                    onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+                  });
+                }}
+                className={`p-2.5 rounded-xl border border-slate-700/60 ${calcBtnHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                title="Calcular Valor"
+              >
+                <Calculator className="w-4 h-4" />
+              </button>
+            </div>
+            <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+              {dates.length > 0 ? (() => {
+                const modalRateioDays = getExpenseRateioDays(
+                  dates,
+                  financialIntelligence.remainingDaysInMonth,
+                  selectedFinanceMonth
+                );
+                return (
+                  <>
+                    Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / modalRateioDays)}/dia ({modalRateioDays}{' '}
+                    {modalRateioDays === 1 ? 'dia restante' : 'dias restantes'} no calendário)
+                  </>
+                );
+              })() : (
+                <>
+                  Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.remainingDaysInMonth))}/dia ({financialIntelligence.remainingDaysInMonth}{' '}
+                  {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'} no mês)
+                </>
+              )}
+            </span>
           </div>
-          <div className="flex items-center gap-1.5">
+
+          <div>
+            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+              Dia de Vencimento
+            </label>
             <FreeNumberInput
-              step={step}
-              value={amount}
-              onValueChange={val => onChangeAmount(Math.max(0, val))}
-              className={`flex-1 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                openQuickCalculator(calcTitle, amount, valStr => {
-                  onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
-                });
+              min={1}
+              max={31}
+              step="1"
+              placeholder="Ex: 30"
+              value={safeDueDay}
+              onValueChange={(val, raw) => {
+                if (raw.trim() === '') return;
+                const clamped = Math.max(1, Math.min(31, Math.trunc(val) || 1));
+                onChangeDueDay(clamped);
               }}
-              className={`p-2.5 rounded-xl border border-slate-700/60 ${calcBtnHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-              title="Calcular Valor"
-            >
-              <Calculator className="w-4 h-4" />
-            </button>
+              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+            />
+            <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+              Todo dia {safeDueDay} do mês
+            </span>
           </div>
-          <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-            {dates.length > 0 ? (
-              <>
-                Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / getExpenseRateioDays(dates, financialIntelligence.workDaysPerMonth))}/dia ({dates.length}{' '}
-                {dates.length === 1 ? 'dia selecionado' : 'dias selecionados'} no calendário)
-              </>
-            ) : (
-              <>
-                Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.workDaysPerMonth))}/dia trabalhado ({financialIntelligence.workDaysPerMonth}d úteis)
-              </>
-            )}
-          </span>
         </div>
 
         {renderFreeCalendarTrigger({
           label: calendarLabel,
           dates,
           target,
-          emptyHint: 'Toque para escolher livremente quaisquer dias do mês',
+          emptyHint: 'Opcional: escolha os dias que contarão no cálculo de quanto rodar por dia',
           accentClass,
         })}
       </>
@@ -8384,58 +8408,22 @@ export default function App() {
                           : DEFAULT_HOUSEHOLD_EXPENSES;
                         const activeHouse = rawHouseList.filter(h => h.isActive !== false);
 
-                        const isHousePaidThisMonth = (h: HouseholdExpenseItem) => {
-                          const inExpenses = dbState.expenses.some(e => {
-                            if (!e.date || !e.date.startsWith(curMonthStr) || e.isCancelled) return false;
-                            return (
-                              e.householdExpenseId === h.id ||
-                              (e.description && e.description.toLowerCase().includes(h.name.toLowerCase())) ||
-                              (e.category && e.category.toLowerCase() === h.name.toLowerCase())
-                            );
-                          });
-                          if (inExpenses) return true;
-                          if (h.lastPaidDate && h.lastPaidDate.startsWith(curMonthStr)) return true;
-                          return false;
-                        };
-
-                        const houseDueToday = activeHouse.filter(h => {
-                          const due = getExpenseDueInfo(h);
-                          if (Array.isArray(h.selectedDates) && h.selectedDates.length > 0) {
-                            return due.status === 'today';
-                          }
-                          const day = Number(h.dueDay) || 10;
-                          return due.status === 'today' || day === curDay;
+                        const pendingHouseDueToday = activeHouse.filter(h => {
+                          const { totalPaid } = getHouseholdExpenseMonthPayments(h, curMonthStr);
+                          const due = getExpenseDueInfo(h, totalPaid, curMonthStr);
+                          return due.status === 'today';
                         });
-                        const pendingHouseDueToday = houseDueToday.filter(h => !isHousePaidThisMonth(h));
 
                         const rawBikeList: BikeExpenseItem[] = Array.isArray(dbState.bikeExpenses)
                           ? dbState.bikeExpenses
                           : DEFAULT_BIKE_EXPENSES;
                         const activeBike = rawBikeList.filter(b => b.isActive !== false);
 
-                        const isBikePaidThisMonth = (b: BikeExpenseItem) => {
-                          const inExpenses = dbState.expenses.some(e => {
-                            if (!e.date || !e.date.startsWith(curMonthStr) || e.isCancelled) return false;
-                            return (
-                              e.bikeExpenseId === b.id ||
-                              (e.description && e.description.toLowerCase().includes(b.name.toLowerCase())) ||
-                              (e.category && e.category.toLowerCase() === b.name.toLowerCase())
-                            );
-                          });
-                          if (inExpenses) return true;
-                          if (b.lastPaidDate && b.lastPaidDate.startsWith(curMonthStr)) return true;
-                          return false;
-                        };
-
-                        const bikeDueToday = activeBike.filter(b => {
-                          const due = getExpenseDueInfo(b);
-                          if (Array.isArray(b.selectedDates) && b.selectedDates.length > 0) {
-                            return due.status === 'today';
-                          }
-                          const day = Number(b.dueDay) || 10;
-                          return due.status === 'today' || (b.recurrenceType === 'monthly' && day === curDay);
+                        const pendingBikeDueToday = activeBike.filter(b => {
+                          const { totalPaid } = getBikeExpenseMonthPayments(b, curMonthStr);
+                          const due = getExpenseDueInfo(b, totalPaid, curMonthStr);
+                          return due.status === 'today';
                         });
-                        const pendingBikeDueToday = bikeDueToday.filter(b => !isBikePaidThisMonth(b));
 
                         const allPendingDueToday = [
                           ...pendingHouseDueToday.map(h => ({
@@ -8698,41 +8686,54 @@ export default function App() {
                               <span>Composição da Meta de Blindagem do Mês:</span>
                               <span className={`text-[9px] font-normal ${mutedText}`}>3 Caixinhas</span>
                             </div>
-                            <div className="flex justify-between items-center py-0.5">
-                              <span className="flex items-center gap-1">
-                                <span>🏍️</span>
-                                <span>Moto & Operação:</span>
-                              </span>
-                              <span className="font-extrabold text-orange-500 dark:text-orange-400 tabular-nums">
-                                {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}
-                              </span>
-                            </div>
-                            <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
-                              Peças ({fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}) + Gasolina ({fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}) + IPVA/Docs ({fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}) + Marmita ({fmtCurrencyExact(financialIntelligence.monthlyFoodCost)})
-                            </div>
+                            {financialIntelligence.hasBikeOperationalExpenses && (
+                              <>
+                                <div className="flex justify-between items-center py-0.5">
+                                  <span className="flex items-center gap-1">
+                                    <span>🏍️</span>
+                                    <span>Moto & Operação:</span>
+                                  </span>
+                                  <span className="font-extrabold text-orange-500 dark:text-orange-400 tabular-nums">
+                                    {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}
+                                  </span>
+                                </div>
+                                <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
+                                  {financialIntelligence.bikeOperationalSummaryLabel}
+                                </div>
+                              </>
+                            )}
 
-                            <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
-                              <span className="flex items-center gap-1">
-                                <span>🏠</span>
-                                <span>Despesas da Casa & Família:</span>
-                              </span>
-                              <span className="font-extrabold text-blue-600 dark:text-blue-400 tabular-nums">
-                                {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}
-                              </span>
-                            </div>
-                            <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
-                              Aluguel, Luz, Água, Mercado, Internet e Gás
-                            </div>
+                            {financialIntelligence.monthlyHouseholdRemaining > 0 && (
+                              <>
+                                <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
+                                  <span className="flex items-center gap-1">
+                                    <span>🏠</span>
+                                    <span>Despesas da Casa & Família:</span>
+                                  </span>
+                                  <span className="font-extrabold text-blue-600 dark:text-blue-400 tabular-nums">
+                                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}
+                                  </span>
+                                </div>
+                                <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
+                                  {financialIntelligence.householdPendingAmountCount}{' '}
+                                  {financialIntelligence.householdPendingAmountCount === 1
+                                    ? 'conta a pagar no mês'
+                                    : 'contas a pagar no mês'}
+                                </div>
+                              </>
+                            )}
 
-                            <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
-                              <span className="flex items-center gap-1">
-                                <span>🛡️</span>
-                                <span>Reserva de Emergência ({financialIntelligence.emergencyPct}%):</span>
-                              </span>
-                              <span className="font-extrabold text-purple-600 dark:text-purple-400 tabular-nums">
-                                {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}
-                              </span>
-                            </div>
+                            {financialIntelligence.hasEmergencyExpenses && (
+                              <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
+                                <span className="flex items-center gap-1">
+                                  <span>🛡️</span>
+                                  <span>Reserva de Emergência ({financialIntelligence.emergencyPct}%):</span>
+                                </span>
+                                <span className="font-extrabold text-purple-600 dark:text-purple-400 tabular-nums">
+                                  {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}
+                                </span>
+                              </div>
+                            )}
 
                             <div className={`pt-1.5 border-t ${dividerBorder} flex justify-between items-center font-black text-xs text-[#FF6A1A]`}>
                               <span>= Meta Total para o Mês:</span>
@@ -8772,7 +8773,10 @@ export default function App() {
                       </span>
                     </div>
                     <p className={`text-[10px] truncate ${mutedText}`}>
-                      Valores diários para separar antes de gastar seu lucro
+                      Valores diários{' '}
+                      {financialIntelligence.remainingDaysInMonth === 1
+                        ? 'para o último dia do mês'
+                        : `para os ${financialIntelligence.remainingDaysInMonth} dias restantes do mês`}
                     </p>
                   </div>
                 </div>
@@ -8789,202 +8793,223 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Grid Compacto Lado a Lado das 6 Reservas Individuais (Sem fundo, apenas borda fina e suave) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5">
-                {/* 1. Reserva Combustível */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_moto');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-rose-500/50 transition-all cursor-pointer flex flex-col justify-between`}
-                  title="Clique para ajustar o gasto com combustível"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-rose-500 dark:text-rose-400 font-black min-w-0">
-                      <span className="shrink-0">⛽</span>
-                      <span className="truncate">Combustível</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-rose-500/30 text-rose-500 dark:text-rose-400 shrink-0">
-                      {financialIntelligence.fuelPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyFuelCost} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyFuelCost)}/mês
-                  </div>
-                </div>
+              {/* Grid Compacto das Reservas com Despesas Efetivamente Registradas */}
+              {(() => {
+                const visibleReserveCards: {
+                  key: string;
+                  icon: string;
+                  label: string;
+                  pct: number;
+                  daily: number;
+                  monthly: number;
+                  monthlySuffix?: string;
+                  hoverBorder: string;
+                  textColor: string;
+                  badgeBorder: string;
+                  title: string;
+                  targetSubTab: 'despesas_moto' | 'despesas_casa';
+                }[] = [];
 
-                {/* 2. Reserva Manutenção da Moto */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_moto');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-amber-500/50 transition-all cursor-pointer flex flex-col justify-between`}
-                  title="Clique para ver as peças e manutenções da moto"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-amber-500 dark:text-amber-400 font-black min-w-0">
-                      <span className="shrink-0">🛠️</span>
-                      <span className="truncate">Manutenção</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-amber-500/30 text-amber-500 dark:text-amber-400 shrink-0">
-                      {financialIntelligence.maintPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-amber-500 dark:text-amber-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyMaintReserve} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)}/mês
-                  </div>
-                </div>
+                if (financialIntelligence.hasFuelExpenses) {
+                  visibleReserveCards.push({
+                    key: 'fuel',
+                    icon: '⛽',
+                    label: 'Combustível',
+                    pct: financialIntelligence.fuelPctOfGross,
+                    daily: financialIntelligence.dailyFuelCost,
+                    monthly: financialIntelligence.monthlyFuelCost,
+                    hoverBorder: 'hover:border-rose-500/50',
+                    textColor: 'text-rose-500 dark:text-rose-400',
+                    badgeBorder: 'border-rose-500/30',
+                    title: 'Clique para ajustar o gasto com combustível',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
 
-                {/* 3. Reserva Documentos & Seguro da Moto */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_moto');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-sky-500/50 transition-all cursor-pointer flex flex-col justify-between`}
-                  title="Clique para ver IPVA, licenciamento e seguro"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-sky-600 dark:text-sky-400 font-black min-w-0">
-                      <span className="shrink-0">📄</span>
-                      <span className="truncate">Docs & IPVA</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-sky-500/30 text-sky-600 dark:text-sky-400 shrink-0">
-                      {financialIntelligence.docsPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-sky-600 dark:text-sky-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyDocsReserve} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)}/mês
-                  </div>
-                </div>
+                if (financialIntelligence.hasMaintExpenses) {
+                  visibleReserveCards.push({
+                    key: 'maint',
+                    icon: '🛠️',
+                    label: 'Manutenção',
+                    pct: financialIntelligence.maintPctOfGross,
+                    daily: financialIntelligence.dailyMaintReserve,
+                    monthly: financialIntelligence.monthlyMaintReserve,
+                    hoverBorder: 'hover:border-amber-500/50',
+                    textColor: 'text-amber-500 dark:text-amber-400',
+                    badgeBorder: 'border-amber-500/30',
+                    title: 'Clique para ver as peças e manutenções da moto',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
 
-                {/* 4. Reserva Alimentação na Rua */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_moto');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-orange-500/50 transition-all cursor-pointer flex flex-col justify-between`}
-                  title="Clique para ajustar o orçamento de alimentação na rua"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-orange-500 dark:text-orange-400 font-black min-w-0">
-                      <span className="shrink-0">🍱</span>
-                      <span className="truncate">Alimentação</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-orange-500/30 text-orange-500 dark:text-orange-400 shrink-0">
-                      {financialIntelligence.foodPctOfGross}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-orange-500 dark:text-orange-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyFoodCost} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyFoodCost)}/mês
-                  </div>
-                </div>
+                if (financialIntelligence.hasDocsExpenses) {
+                  visibleReserveCards.push({
+                    key: 'docs',
+                    icon: '📄',
+                    label: 'Docs & IPVA',
+                    pct: financialIntelligence.docsPctOfGross,
+                    daily: financialIntelligence.dailyDocsReserve,
+                    monthly: financialIntelligence.monthlyDocsReserve,
+                    hoverBorder: 'hover:border-sky-500/50',
+                    textColor: 'text-sky-600 dark:text-sky-400',
+                    badgeBorder: 'border-sky-500/30',
+                    title: 'Clique para ver IPVA, licenciamento e seguro',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
 
-                {/* 5. Reserva Despesas da Casa & Família */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_casa');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-blue-500/50 transition-all cursor-pointer group flex flex-col justify-between`}
-                  title="Clique para gerenciar suas contas de casa"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400 font-black min-w-0">
-                      <span className="shrink-0">🏠</span>
-                      <span className="truncate">Contas Casa</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-blue-500/30 text-blue-600 dark:text-blue-400 shrink-0">
-                      {financialIntelligence.standardHousePct}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.standardHouseholdDaily} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.standardHouseholdMonthly)}/mês ↗
-                  </div>
-                </div>
+                if (financialIntelligence.hasFoodExpenses) {
+                  visibleReserveCards.push({
+                    key: 'food',
+                    icon: '🍱',
+                    label: 'Alimentação',
+                    pct: financialIntelligence.foodPctOfGross,
+                    daily: financialIntelligence.dailyFoodCost,
+                    monthly: financialIntelligence.monthlyFoodCost,
+                    hoverBorder: 'hover:border-orange-500/50',
+                    textColor: 'text-orange-500 dark:text-orange-400',
+                    badgeBorder: 'border-orange-500/30',
+                    title: 'Clique para ajustar o orçamento de alimentação na rua',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
 
-                {/* 6. Reserva de Emergência */}
-                <div
-                  onClick={() => {
-                    setActiveTab('billing');
-                    setBillingSubTab('despesas_moto');
-                  }}
-                  className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-purple-500/50 transition-all cursor-pointer flex flex-col justify-between`}
-                  title="Clique para ajustar a reserva de emergência"
-                >
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                    <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-black min-w-0">
-                      <span className="shrink-0">🛡️</span>
-                      <span className="truncate">Emergência</span>
-                    </span>
-                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-purple-500/30 text-purple-600 dark:text-purple-400 shrink-0">
-                      {financialIntelligence.emergencyPct}%
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1.5 leading-tight">
-                    <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
-                    <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                  </div>
-                  <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                    {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
-                  </div>
-                </div>
+                if (financialIntelligence.hasOtherBikeExpenses) {
+                  visibleReserveCards.push({
+                    key: 'other_bike',
+                    icon: '✨',
+                    label: 'Outros (Moto)',
+                    pct: financialIntelligence.otherBikePctOfGross,
+                    daily: financialIntelligence.dailyOtherBikeReserve,
+                    monthly: financialIntelligence.monthlyOtherBikeReserve,
+                    hoverBorder: 'hover:border-[#FF6A1A]/50',
+                    textColor: 'text-[#FF6A1A]',
+                    badgeBorder: 'border-[#FF6A1A]/30',
+                    title: 'Clique para gerenciar outras despesas da moto',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
 
-                {/* 7+. Categorias Adicionadas pelo Usuário */}
-                {financialIntelligence.customCategoryReserves.map(cat => (
-                  <div
-                    key={cat.id}
-                    onClick={() => {
-                      setActiveTab('billing');
-                      setBillingSubTab(cat.targetTab);
-                    }}
-                    className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50 transition-all cursor-pointer flex flex-col justify-between`}
-                    title={`Clique para gerenciar despesas de ${cat.name}`}
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
-                      <span className="flex items-center gap-1 text-[#FF6A1A] font-black min-w-0">
-                        <span className="shrink-0">{cat.icon}</span>
-                        <span className="truncate">{cat.name}</span>
-                      </span>
-                      <span className="text-[9px] font-black px-1 py-0.2 rounded bg-transparent border border-[#FF6A1A]/30 text-[#FF6A1A] shrink-0">
-                        {cat.pctOfGross}%
-                      </span>
+                if (financialIntelligence.hasStandardHouseExpenses) {
+                  visibleReserveCards.push({
+                    key: 'house',
+                    icon: '🏠',
+                    label: 'Contas Casa',
+                    pct: financialIntelligence.standardHousePct,
+                    daily: financialIntelligence.standardHouseholdDaily,
+                    monthly: financialIntelligence.standardHouseholdMonthly,
+                    monthlySuffix: ' ↗',
+                    hoverBorder: 'hover:border-blue-500/50',
+                    textColor: 'text-blue-600 dark:text-blue-400',
+                    badgeBorder: 'border-blue-500/30',
+                    title: 'Clique para gerenciar suas contas de casa',
+                    targetSubTab: 'despesas_casa',
+                  });
+                }
+
+                if (financialIntelligence.hasEmergencyExpenses) {
+                  visibleReserveCards.push({
+                    key: 'emergency',
+                    icon: '🛡️',
+                    label: 'Emergência',
+                    pct: financialIntelligence.emergencyPct,
+                    daily: financialIntelligence.dailyEmergencyReserve,
+                    monthly: financialIntelligence.monthlyEmergencyReserve,
+                    hoverBorder: 'hover:border-purple-500/50',
+                    textColor: 'text-purple-600 dark:text-purple-400',
+                    badgeBorder: 'border-purple-500/30',
+                    title: 'Clique para ajustar a reserva de emergência',
+                    targetSubTab: 'despesas_moto',
+                  });
+                }
+
+                financialIntelligence.customCategoryReserves.forEach(cat => {
+                  visibleReserveCards.push({
+                    key: `custom_${cat.id}`,
+                    icon: cat.icon,
+                    label: cat.name,
+                    pct: cat.pctOfGross,
+                    daily: cat.dailyCost,
+                    monthly: cat.monthlyCost,
+                    hoverBorder: 'hover:border-[#FF6A1A]/50',
+                    textColor: 'text-[#FF6A1A]',
+                    badgeBorder: 'border-[#FF6A1A]/30',
+                    title: `Clique para gerenciar despesas de ${cat.name}`,
+                    targetSubTab: cat.targetTab,
+                  });
+                });
+
+                if (visibleReserveCards.length === 0) {
+                  return (
+                    <div className={`rounded-xl p-4 bg-transparent border border-dashed ${dividerBorder} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3`}>
+                      <div>
+                        <div className={`text-xs font-black ${primaryText}`}>
+                          Nenhuma despesa ativa registrada
+                        </div>
+                        <p className={`text-[11px] mt-0.5 ${mutedText}`}>
+                          Cadastre suas despesas da moto ou da casa na aba Finanças para acompanhar as reservas diárias aqui.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('billing');
+                          setBillingSubTab('despesas_moto');
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-[11px] font-black bg-transparent border border-[#FF6A1A]/60 text-[#FF6A1A] hover:border-[#FF6A1A] cursor-pointer shrink-0 transition-colors"
+                      >
+                        Cadastrar Despesas
+                      </button>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-[#FF6A1A] tabular-nums mt-1.5 leading-tight">
-                      <AnimatedNumber value={cat.dailyCost} formatter={fmtCurrencyExact} />
-                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                    </div>
-                    <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
-                      {fmtCurrencyExact(cat.monthlyCost)}/mês
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  );
+                }
 
-              {/* RESUMO DA DIVISÃO POR CAIXINHA (MINIMALISTA SEM FUNDO, APENAS LINHAS E BORDAS FINAS) */}
+                const gridColsClass =
+                  visibleReserveCards.length === 1
+                    ? 'grid-cols-1 sm:grid-cols-2'
+                    : visibleReserveCards.length === 2
+                    ? 'grid-cols-2'
+                    : visibleReserveCards.length === 3
+                    ? 'grid-cols-2 sm:grid-cols-3'
+                    : visibleReserveCards.length === 4
+                    ? 'grid-cols-2 sm:grid-cols-4'
+                    : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6';
+
+                return (
+                  <div className={`grid ${gridColsClass} gap-2 sm:gap-2.5`}>
+                    {visibleReserveCards.map(card => (
+                      <div
+                        key={card.key}
+                        onClick={() => {
+                          setActiveTab('billing');
+                          setBillingSubTab(card.targetSubTab);
+                        }}
+                        className={`rounded-xl p-2.5 sm:p-3 bg-transparent border ${dividerBorder} ${card.hoverBorder} transition-all cursor-pointer flex flex-col justify-between`}
+                        title={card.title}
+                      >
+                        <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                          <span className={`flex items-center gap-1 ${card.textColor} font-black min-w-0`}>
+                            <span className="shrink-0">{card.icon}</span>
+                            <span className="truncate">{card.label}</span>
+                          </span>
+                          <span className={`text-[9px] font-black px-1 py-0.2 rounded bg-transparent border ${card.badgeBorder} ${card.textColor} shrink-0`}>
+                            {card.pct}%
+                          </span>
+                        </div>
+                        <div className={`text-sm sm:text-base font-black ${card.textColor} tabular-nums mt-1.5 leading-tight`}>
+                          <AnimatedNumber value={card.daily} formatter={fmtCurrencyExact} />
+                          <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                        </div>
+                        <div className={`text-[10px] mt-0.5 font-semibold truncate ${mutedText}`}>
+                          {fmtCurrencyExact(card.monthly)}/mês{card.monthlySuffix || ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* RESUMO DA DIVISÃO POR CAIXINHA (APENAS CAIXINHAS COM DESPESAS REGISTRADAS) */}
               <div className={`mt-5 pt-4 border-t ${dividerBorder}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div className="flex items-center gap-1.5">
@@ -8994,103 +9019,138 @@ export default function App() {
                     </span>
                   </div>
                   <span className={`text-[10px] font-bold ${mutedText}`}>
-                    Cálculo para <strong className={`${primaryText} font-black`}>{financialIntelligence.workDaysPerMonth} dias úteis/mês</strong>
+                    Cálculo para{' '}
+                    <strong className={`${primaryText} font-black`}>
+                      {financialIntelligence.remainingDaysInMonth}{' '}
+                      {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'} no mês
+                    </strong>
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-                  {/* Caixinha 1: Giro da Moto + Rua */}
-                  <div
-                    onClick={() => {
-                      setActiveTab('billing');
-                      setBillingSubTab('despesas_moto');
-                    }}
-                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-rose-500/50 cursor-pointer transition-colors`}
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-rose-500 dark:text-rose-400">
-                      <span className="truncate">🏍️ 1. Moto & Rua</span>
-                      <span className="text-[9px] opacity-80">↗</span>
-                    </div>
-                    <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1">
-                      <AnimatedNumber value={financialIntelligence.dailyBikeCostsTotal} formatter={fmtCurrencyExact} />
-                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                    </div>
-                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                      {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}/mês
-                    </div>
-                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                      Gasolina + Manut. + Docs + Marmita
-                    </div>
-                  </div>
+                {(() => {
+                  const hasBikeBox = financialIntelligence.hasBikeOperationalExpenses;
+                  const hasHouseBox = financialIntelligence.monthlyHouseholdRemaining > 0;
+                  const hasEmergencyBox = financialIntelligence.hasEmergencyExpenses;
+                  const totalBoxes =
+                    (hasBikeBox ? 1 : 0) + (hasHouseBox ? 1 : 0) + (hasEmergencyBox ? 1 : 0) + 1;
+                  const boxGridClass =
+                    totalBoxes === 2
+                      ? 'grid-cols-2'
+                      : totalBoxes === 3
+                      ? 'grid-cols-2 lg:grid-cols-3'
+                      : totalBoxes === 1
+                      ? 'grid-cols-1 sm:grid-cols-2'
+                      : 'grid-cols-2 lg:grid-cols-4';
+                  const activeBoxLabels = [
+                    ...(hasBikeBox ? ['Moto'] : []),
+                    ...(hasHouseBox ? ['Casa'] : []),
+                    ...(hasEmergencyBox ? ['Emerg.'] : []),
+                  ];
 
-                  {/* Caixinha 2: Contas da Casa */}
-                  <div
-                    onClick={() => {
-                      setActiveTab('billing');
-                      setBillingSubTab('despesas_casa');
-                    }}
-                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-blue-500/50 cursor-pointer transition-colors`}
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-blue-600 dark:text-blue-400">
-                      <span className="truncate">🏠 2. Contas Casa</span>
-                      <span className="text-[9px] opacity-80">↗</span>
-                    </div>
-                    <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1">
-                      <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
-                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                    </div>
-                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                      {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
-                    </div>
-                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                      Aluguel, luz, água e mercado
-                    </div>
-                  </div>
+                  return (
+                    <div className={`grid ${boxGridClass} gap-2.5`}>
+                      {hasBikeBox && (
+                        <div
+                          onClick={() => {
+                            setActiveTab('billing');
+                            setBillingSubTab('despesas_moto');
+                          }}
+                          className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-rose-500/50 cursor-pointer transition-colors`}
+                        >
+                          <div className="flex items-center justify-between gap-1 text-[10px] font-black text-rose-500 dark:text-rose-400">
+                            <span className="truncate">🏍️ Moto & Rua</span>
+                            <span className="text-[9px] opacity-80">↗</span>
+                          </div>
+                          <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1">
+                            <AnimatedNumber value={financialIntelligence.dailyBikeCostsTotal} formatter={fmtCurrencyExact} />
+                            <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                          </div>
+                          <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                            {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}/mês
+                          </div>
+                          <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                            {financialIntelligence.bikeOperationalSummaryLabel}
+                          </div>
+                        </div>
+                      )}
 
-                  {/* Caixinha 3: Reserva de Emergência */}
-                  <div
-                    onClick={() => {
-                      setActiveTab('billing');
-                      setBillingSubTab('despesas_moto');
-                    }}
-                    className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-purple-500/50 cursor-pointer transition-colors`}
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-600 dark:text-purple-400">
-                      <span className="truncate">🛡️ 3. Emergência</span>
-                      <span className="text-[9px] opacity-80">{financialIntelligence.emergencyPct}%</span>
-                    </div>
-                    <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1">
-                      <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
-                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                    </div>
-                    <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                      {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
-                    </div>
-                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                      Fundo de imprevistos pessoal
-                    </div>
-                  </div>
+                      {hasHouseBox && (
+                        <div
+                          onClick={() => {
+                            setActiveTab('billing');
+                            setBillingSubTab('despesas_casa');
+                          }}
+                          className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-blue-500/50 cursor-pointer transition-colors`}
+                        >
+                          <div className="flex items-center justify-between gap-1 text-[10px] font-black text-blue-600 dark:text-blue-400">
+                            <span className="truncate">🏠 Contas Casa</span>
+                            <span className="text-[9px] opacity-80">↗</span>
+                          </div>
+                          <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1">
+                            <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
+                            <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                          </div>
+                          <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                            {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}/mês
+                          </div>
+                          <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                            {financialIntelligence.householdPendingAmountCount}{' '}
+                            {financialIntelligence.householdPendingAmountCount === 1
+                              ? 'conta a pagar'
+                              : 'contas a pagar'}
+                          </div>
+                        </div>
+                      )}
 
-                  {/* Caixinha 4: Total Diário a Separar (Soma das 3 Caixinhas) */}
-                  <div className="p-3 rounded-xl bg-transparent border border-emerald-500/40">
-                    <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
-                      <span className="truncate">🔒 Total a Guardar</span>
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-transparent border border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
-                        1+2+3
-                      </span>
+                      {hasEmergencyBox && (
+                        <div
+                          onClick={() => {
+                            setActiveTab('billing');
+                            setBillingSubTab('despesas_moto');
+                          }}
+                          className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-purple-500/50 cursor-pointer transition-colors`}
+                        >
+                          <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-600 dark:text-purple-400">
+                            <span className="truncate">🛡️ Emergência</span>
+                            <span className="text-[9px] opacity-80">{financialIntelligence.emergencyPct}%</span>
+                          </div>
+                          <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1">
+                            <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
+                            <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                          </div>
+                          <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
+                            {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
+                          </div>
+                          <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                            Fundo de imprevistos pessoal
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Total Diário a Separar (Soma das Despesas Registradas) */}
+                      <div className="p-3 rounded-xl bg-transparent border border-emerald-500/40">
+                        <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
+                          <span className="truncate">🔒 Total a Guardar</span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-transparent border border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
+                            {financialIntelligence.totalReservesPctOfGross}%
+                          </span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
+                          <AnimatedNumber value={financialIntelligence.totalDailyCostsAndReserves} formatter={fmtCurrencyExact} />
+                          <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-emerald-600/90 dark:text-emerald-400/90 tabular-nums mt-0.5">
+                          {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês
+                        </div>
+                        <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                          {activeBoxLabels.length > 0
+                            ? `Meta p/ cobrir ${activeBoxLabels.join(' + ')}`
+                            : 'Sem despesas registradas'}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
-                      <AnimatedNumber value={financialIntelligence.totalDailyCostsAndReserves} formatter={fmtCurrencyExact} />
-                      <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
-                    </div>
-                    <div className="text-[10px] font-bold text-emerald-600/90 dark:text-emerald-400/90 tabular-nums mt-0.5">
-                      {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês
-                    </div>
-                    <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                      Meta p/ cobrir Moto + Casa + Emerg.
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Barra Inferior Explicativa: Piso Mínimo vs Saldo Livre */}
                 <div className={`mt-3 pt-2.5 border-t ${dividerBorder} flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[10px]`}>
@@ -11901,7 +11961,8 @@ export default function App() {
                           <span>Separar por Dia (Restante)</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
-                          {financialIntelligence.workDaysPerMonth} dias úteis
+                          {financialIntelligence.remainingDaysInMonth}{' '}
+                          {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'}
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black text-amber-400 tabular-nums">
@@ -12518,7 +12579,8 @@ export default function App() {
                           <span>Separar por Dia (Restante)</span>
                         </span>
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">
-                          {financialIntelligence.workDaysPerMonth} dias úteis
+                          {financialIntelligence.remainingDaysInMonth}{' '}
+                          {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'}
                         </span>
                       </div>
                       <div className="text-xl sm:text-2xl font-black text-sky-400 tabular-nums">
@@ -12778,7 +12840,7 @@ export default function App() {
                           const remainingVal = isExplicitlyUnpaid ? expectedVal : Math.max(0, expectedVal - totalPaid);
                           const houseRateioDays = getExpenseRateioDays(
                             item.selectedDates,
-                            financialIntelligence.workDaysPerMonth,
+                            financialIntelligence.remainingDaysInMonth,
                             selectedFinanceMonth
                           );
                           const dailyShare = Number(item.monthlyAmount || 0) / houseRateioDays;
@@ -13194,7 +13256,7 @@ export default function App() {
                         {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia
                       </div>
                       <div className={`text-[10px] mt-0.5 ${mutedText}`}>
-                        {financialIntelligence.housePctOfGross}% do faturamento · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês
+                        {financialIntelligence.housePctOfGross}% do faturamento · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}/mês
                       </div>
                     </div>
 
@@ -13247,7 +13309,7 @@ export default function App() {
                           <div className="text-blue-400">
                             - 🏠 Despesas da Casa & Família: {fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)} ({financialIntelligence.housePctOfGross}%)
                             <span className="text-[10px] block pl-3 text-blue-300/80">
-                              (Aluguel, Luz, Água, Mercado, Internet · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)}/mês rateados)
+                              (Aluguel, Luz, Água, Mercado, Internet · {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)} restantes rateados)
                             </span>
                           </div>
                           <div className="text-purple-400">
@@ -13268,96 +13330,154 @@ export default function App() {
                 {/* RAIO-X INTERATIVO DO FATURAMENTO DIÁRIO: GRÁFICO DINÂMICO, ANIMADO COM DESTAQUE E DETALHES */}
                 {(() => {
                   const raioXItems = [
-                    {
-                      id: 'fuel',
-                      name: 'Combustível do Dia',
-                      shortName: 'Combustível',
-                      icon: '⛽',
-                      color: '#ef4444',
-                      colorClass: 'text-rose-400',
-                      bgClass: 'bg-rose-500/15 border-rose-500/40 text-rose-400',
-                      amount: financialIntelligence.dailyFuelCost,
-                      monthly: financialIntelligence.monthlyFuelCost,
-                      pct: Math.max(1, financialIntelligence.fuelPctOfGross),
-                      desc: 'Cobre a gasolina gasta para rodar suas corridas do dia, calculado com base na sua quilometragem e consumo da moto.',
-                      formulaInfo: `${Math.round(financialIntelligence.dailyKm)} km/dia ÷ ${financialIntelligence.kmPerLiter} km/L × R$ ${financialIntelligence.fuelPrice.toFixed(2)}/L`,
-                      tip: 'Calibrar os pneus a cada 5 dias e evitar aceleradas bruscas pode economizar até R$ 80 a R$ 120 de gasolina todo mês.',
-                    },
-                    {
-                      id: 'maint',
-                      name: 'Reserva Manutenção da Moto',
-                      shortName: 'Manutenção',
-                      icon: '🛠️',
-                      color: '#f59e0b',
-                      colorClass: 'text-amber-400',
-                      bgClass: 'bg-amber-500/15 border-amber-500/40 text-amber-400',
-                      amount: financialIntelligence.dailyMaintReserve,
-                      monthly: financialIntelligence.monthlyMaintReserve,
-                      pct: Math.max(1, financialIntelligence.maintPctOfGross),
-                      desc: 'Guarda o valor do desgaste mecânico gerado hoje para pagar troca de óleo, pneus novos, relação e pastilhas sem aperto.',
-                      formulaInfo: `Desgaste de R$ ${financialIntelligence.baseMaintCostPerKm.toFixed(2)}/km rodado + ${financialIntelligence.extraBufferPct}% margem preventiva`,
-                      tip: 'Trocar o óleo religiosamente no prazo evita fundir o motor, economizando mais de R$ 1.800 de retífica na oficina.',
-                    },
-                    {
-                      id: 'food',
-                      name: 'Alimentação na Rua',
-                      shortName: 'Alimentação',
-                      icon: '🍱',
-                      color: '#fb923c',
-                      colorClass: 'text-orange-400',
-                      bgClass: 'bg-orange-500/15 border-orange-500/40 text-orange-400',
-                      amount: financialIntelligence.dailyFoodCost,
-                      monthly: financialIntelligence.monthlyFoodCost,
-                      pct: Math.max(1, financialIntelligence.foodPctOfGross),
-                      desc: 'Garante almoço digno, marmita, lanches rápidos e água gelada para manter sua energia e foco no trânsito.',
-                      formulaInfo: `Almoço ${fmtCurrencyExact(financialIntelligence.dailyLunch)} + Lanches/Água ${fmtCurrencyExact(financialIntelligence.dailySnack)} por dia trabalhado`,
-                      tip: 'Levar garrafa térmica com água e lanches rápidos de casa economiza em média R$ 300 por mês no seu bolso.',
-                    },
-                    {
-                      id: 'docs',
-                      name: 'Reserva Documentos & IPVA',
-                      shortName: 'Documentos',
-                      icon: '📄',
-                      color: '#38bdf8',
-                      colorClass: 'text-sky-400',
-                      bgClass: 'bg-sky-500/15 border-sky-500/40 text-sky-400',
-                      amount: financialIntelligence.dailyDocsReserve,
-                      monthly: financialIntelligence.monthlyDocsReserve,
-                      pct: Math.max(1, financialIntelligence.docsPctOfGross),
-                      desc: 'Parcelamento diário invisível para quitar IPVA, licenciamento CRLV-e, MEI e seguro sem aperto no final do ano.',
-                      formulaInfo: `Custo anual de ${fmtCurrencyExact(financialIntelligence.totalAnnualDocsWithInsurance)} rateado pelos dias de trabalho`,
-                      tip: 'Pagar o IPVA à vista em cota única garante desconto de até 3% a 5% em diversos estados.',
-                    },
-                    {
-                      id: 'household',
-                      name: 'Despesas da Casa & Custo de Vida',
-                      shortName: 'Casa & Família',
-                      icon: '🏠',
-                      color: '#3b82f6',
-                      colorClass: 'text-blue-400',
-                      bgClass: 'bg-blue-500/15 border-blue-500/40 text-blue-400',
-                      amount: financialIntelligence.dailyHouseholdReserve,
-                      monthly: financialIntelligence.monthlyHouseholdCost,
-                      pct: Math.max(1, financialIntelligence.housePctOfGross),
-                      desc: 'Rateio diário das contas da sua residência: aluguel, energia elétrica, água, compras de supermercado, internet e botijão de gás.',
-                      formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyHouseholdCost)} rateado por ${financialIntelligence.workDaysPerMonth} dias de trabalho = ${fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}/dia`,
-                      tip: 'Separar o rateio do aluguel e da luz todo dia evita desespero ou atrasos com juros no final do mês.',
-                    },
-                    {
-                      id: 'emergency',
-                      name: 'Reserva de Emergência',
-                      shortName: 'Emergência',
-                      icon: '🛡️',
-                      color: '#c084fc',
-                      colorClass: 'text-purple-400',
-                      bgClass: 'bg-purple-500/15 border-purple-500/40 text-purple-400',
-                      amount: financialIntelligence.dailyEmergencyReserve,
-                      monthly: financialIntelligence.monthlyEmergencyReserve,
-                      pct: Math.max(1, financialIntelligence.emergencyPct),
-                      desc: 'Fundo de blindagem para imprevistos pessoais, dias de chuva torrencial, doença ou descanso merecido.',
-                      formulaInfo: `${financialIntelligence.emergencyPct}% do faturamento bruto retidos para segurança financeira`,
-                      tip: 'Ter 1 mês de custos fixos guardados evita recorrer a empréstimos com juros abusivos quando a moto precisar parar.',
-                    },
+                    ...(financialIntelligence.hasFuelExpenses
+                      ? [
+                          {
+                            id: 'fuel',
+                            name: 'Combustível do Dia',
+                            shortName: 'Combustível',
+                            icon: '⛽',
+                            color: '#ef4444',
+                            colorClass: 'text-rose-400',
+                            bgClass: 'bg-rose-500/15 border-rose-500/40 text-rose-400',
+                            amount: financialIntelligence.dailyFuelCost,
+                            monthly: financialIntelligence.monthlyFuelCost,
+                            pct: Math.max(1, financialIntelligence.fuelPctOfGross),
+                            desc: 'Cobre a gasolina gasta para rodar suas corridas do dia, conforme suas despesas registradas de combustível.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyFuelCost)} rateado pelos dias selecionados`,
+                            tip: 'Calibrar os pneus a cada 5 dias e evitar aceleradas bruscas pode economizar até R$ 80 a R$ 120 de gasolina todo mês.',
+                          },
+                        ]
+                      : []),
+                    ...(financialIntelligence.hasMaintExpenses
+                      ? [
+                          {
+                            id: 'maint',
+                            name: 'Reserva Manutenção da Moto',
+                            shortName: 'Manutenção',
+                            icon: '🛠️',
+                            color: '#f59e0b',
+                            colorClass: 'text-amber-400',
+                            bgClass: 'bg-amber-500/15 border-amber-500/40 text-amber-400',
+                            amount: financialIntelligence.dailyMaintReserve,
+                            monthly: financialIntelligence.monthlyMaintReserve,
+                            pct: Math.max(1, financialIntelligence.maintPctOfGross),
+                            desc: 'Guarda o valor das despesas registradas de manutenção para pagar troca de óleo, pneus novos, relação e pastilhas sem aperto.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyMaintReserve)} rateado pelos dias selecionados`,
+                            tip: 'Trocar o óleo religiosamente no prazo evita fundir o motor, economizando mais de R$ 1.800 de retífica na oficina.',
+                          },
+                        ]
+                      : []),
+                    ...(financialIntelligence.hasFoodExpenses
+                      ? [
+                          {
+                            id: 'food',
+                            name: 'Alimentação na Rua',
+                            shortName: 'Alimentação',
+                            icon: '🍱',
+                            color: '#fb923c',
+                            colorClass: 'text-orange-400',
+                            bgClass: 'bg-orange-500/15 border-orange-500/40 text-orange-400',
+                            amount: financialIntelligence.dailyFoodCost,
+                            monthly: financialIntelligence.monthlyFoodCost,
+                            pct: Math.max(1, financialIntelligence.foodPctOfGross),
+                            desc: 'Garante almoço digno, marmita, lanches rápidos e água gelada conforme despesas registradas.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyFoodCost)} rateado pelos dias selecionados`,
+                            tip: 'Levar garrafa térmica com água e lanches rápidos de casa economiza em média R$ 300 por mês no seu bolso.',
+                          },
+                        ]
+                      : []),
+                    ...(financialIntelligence.hasDocsExpenses
+                      ? [
+                          {
+                            id: 'docs',
+                            name: 'Reserva Documentos & IPVA',
+                            shortName: 'Documentos',
+                            icon: '📄',
+                            color: '#38bdf8',
+                            colorClass: 'text-sky-400',
+                            bgClass: 'bg-sky-500/15 border-sky-500/40 text-sky-400',
+                            amount: financialIntelligence.dailyDocsReserve,
+                            monthly: financialIntelligence.monthlyDocsReserve,
+                            pct: Math.max(1, financialIntelligence.docsPctOfGross),
+                            desc: 'Parcelamento diário invisível para quitar IPVA, licenciamento CRLV-e, MEI e seguro sem aperto no final do ano.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyDocsReserve)} rateado pelos dias selecionados`,
+                            tip: 'Pagar o IPVA à vista em cota única garante desconto de até 3% a 5% em diversos estados.',
+                          },
+                        ]
+                      : []),
+                    ...(financialIntelligence.hasOtherBikeExpenses
+                      ? [
+                          {
+                            id: 'other_bike',
+                            name: 'Outras Despesas da Moto',
+                            shortName: 'Outros (Moto)',
+                            icon: '✨',
+                            color: '#ff6a1a',
+                            colorClass: 'text-[#FF6A1A]',
+                            bgClass: 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]',
+                            amount: financialIntelligence.dailyOtherBikeReserve,
+                            monthly: financialIntelligence.monthlyOtherBikeReserve,
+                            pct: Math.max(1, financialIntelligence.otherBikePctOfGross),
+                            desc: 'Rateio diário de outras despesas registradas para a moto.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.monthlyOtherBikeReserve)} rateado pelos dias selecionados`,
+                            tip: 'Acompanhe os vencimentos na aba Finanças para evitar atrasos.',
+                          },
+                        ]
+                      : []),
+                    ...financialIntelligence.customCategoryReserves.map(cat => ({
+                      id: `custom_${cat.id}`,
+                      name: cat.name,
+                      shortName: cat.name,
+                      icon: cat.icon,
+                      color: '#ff6a1a',
+                      colorClass: 'text-[#FF6A1A]',
+                      bgClass: 'bg-[#FF6A1A]/15 border-[#FF6A1A]/40 text-[#FF6A1A]',
+                      amount: cat.dailyCost,
+                      monthly: cat.monthlyCost,
+                      pct: Math.max(1, cat.pctOfGross),
+                      desc: `Rateio diário das despesas registradas na categoria ${cat.name}.`,
+                      formulaInfo: `Total mensal de ${fmtCurrencyExact(cat.monthlyCost)} rateado pelos dias selecionados`,
+                      tip: 'Separe o rateio diário desta categoria para quitar tudo sem aperto no vencimento.',
+                    })),
+                    ...(financialIntelligence.hasStandardHouseExpenses
+                      ? [
+                          {
+                            id: 'household',
+                            name: 'Despesas da Casa & Custo de Vida',
+                            shortName: 'Casa & Família',
+                            icon: '🏠',
+                            color: '#3b82f6',
+                            colorClass: 'text-blue-400',
+                            bgClass: 'bg-blue-500/15 border-blue-500/40 text-blue-400',
+                            amount: financialIntelligence.standardHouseholdDaily,
+                            monthly: financialIntelligence.standardHouseholdMonthly,
+                            pct: Math.max(1, financialIntelligence.standardHousePct),
+                            desc: 'Rateio diário das contas da sua residência registradas na aba Finanças.',
+                            formulaInfo: `Total mensal de ${fmtCurrencyExact(financialIntelligence.standardHouseholdMonthly)} rateado pelos dias selecionados = ${fmtCurrencyExact(financialIntelligence.standardHouseholdDaily)}/dia`,
+                            tip: 'Separar o rateio do aluguel e da luz todo dia evita desespero ou atrasos com juros no final do mês.',
+                          },
+                        ]
+                      : []),
+                    ...(financialIntelligence.hasEmergencyExpenses
+                      ? [
+                          {
+                            id: 'emergency',
+                            name: 'Reserva de Emergência',
+                            shortName: 'Emergência',
+                            icon: '🛡️',
+                            color: '#c084fc',
+                            colorClass: 'text-purple-400',
+                            bgClass: 'bg-purple-500/15 border-purple-500/40 text-purple-400',
+                            amount: financialIntelligence.dailyEmergencyReserve,
+                            monthly: financialIntelligence.monthlyEmergencyReserve,
+                            pct: Math.max(1, financialIntelligence.emergencyPct),
+                            desc: 'Fundo de blindagem para imprevistos pessoais, dias de chuva torrencial, doença ou descanso merecido.',
+                            formulaInfo: `${financialIntelligence.emergencyPct}% do faturamento bruto retidos para segurança financeira`,
+                            tip: 'Ter 1 mês de custos fixos guardados evita recorrer a empréstimos com juros abusivos quando a moto precisar parar.',
+                          },
+                        ]
+                      : []),
                     {
                       id: 'net_profit',
                       name: 'Lucro Líquido Real Livre',
@@ -13369,9 +13489,9 @@ export default function App() {
                       amount: financialIntelligence.dailyNetProfit,
                       monthly: financialIntelligence.monthlyNetProfit,
                       pct: Math.max(0, financialIntelligence.netMarginPct),
-                      desc: 'O dinheiro 100% LIMPO que sobra no seu bolso depois de pagar a operação da moto, quitar o aluguel e contas de casa e blindar a emergência!',
+                      desc: 'O dinheiro 100% LIMPO que sobra no seu bolso depois de separar todas as despesas registradas!',
                       formulaInfo: `Bruto (${fmtCurrencyExact(financialIntelligence.dailyGross)}) - Moto (${fmtCurrencyExact(financialIntelligence.dailyBikeCostsTotal)}) - Casa (${fmtCurrencyExact(financialIntelligence.dailyHouseholdReserve)}) - Emergência (${fmtCurrencyExact(financialIntelligence.dailyEmergencyReserve)})`,
-                      tip: 'Separe a conta do trabalho da conta de casa. Nunca gaste reservas de manutenção com compras pessoais do dia a dia.',
+                      tip: 'Separe a conta do trabalho da conta de casa. Nunca gaste reservas com compras pessoais do dia a dia.',
                     },
                   ];
 
@@ -18377,11 +18497,14 @@ export default function App() {
                 calcTitle: 'Valor da Despesa da Moto (R$)',
                 step: '5',
                 amount: bikeDraft.monthlyAmount,
+                dueDay: bikeDraft.dueDay ?? 15,
                 dates: bikeDraft.selectedDates || [],
                 target: 'bike',
-                calendarLabel: 'Dias de pagamento / troca no calendário:',
+                calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
                 onChangeAmount: val =>
                   setBikeDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+                onChangeDueDay: day =>
+                  setBikeDraft(prev => ({ ...prev, dueDay: day })),
               })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -18575,11 +18698,14 @@ export default function App() {
                 calcTitle: 'Valor da Conta da Casa (R$)',
                 step: '10',
                 amount: householdDraft.monthlyAmount,
+                dueDay: householdDraft.dueDay ?? 10,
                 dates: householdDraft.selectedDates || [],
                 target: 'household',
-                calendarLabel: 'Dias de vencimento / pagamento no calendário:',
+                calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
                 onChangeAmount: val =>
                   setHouseholdDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+                onChangeDueDay: day =>
+                  setHouseholdDraft(prev => ({ ...prev, dueDay: day })),
               })}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -19130,13 +19256,11 @@ export default function App() {
             setBikeDraft(prev => ({
               ...prev,
               selectedDates: sorted,
-              recurrenceType: 'calendar_dates',
             }));
           } else {
             setHouseholdDraft(prev => ({
               ...prev,
               selectedDates: sorted,
-              recurrenceType: 'calendar_dates',
             }));
           }
         };
@@ -19172,8 +19296,8 @@ export default function App() {
           calendarPickerTarget === 'projected'
             ? 'Toque nos dias em que você irá rodar'
             : calendarPickerTarget === 'bike'
-            ? 'Toque nos dias desta despesa da moto'
-            : 'Toque nos dias desta despesa da casa';
+            ? 'Toque nos dias que contarão no cálculo de quanto rodar por dia (não altera o vencimento)'
+            : 'Toque nos dias que contarão no cálculo de quanto rodar por dia (não altera o vencimento)';
 
         return (
           <div
