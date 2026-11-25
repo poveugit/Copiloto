@@ -821,7 +821,7 @@ export function getExpenseRateioDays(
     const remainingValid = validDates.filter(d => d >= today);
     return remainingValid.length > 0 ? remainingValid.length : safeFallback;
   }
-  return validDates.length;
+  return safeFallback;
 }
 
 function deriveSeedCalendarDatesForExpense(item: {
@@ -838,12 +838,57 @@ function deriveSeedCalendarDatesForExpense(item: {
   return [];
 }
 
+export function isBikeExpenseVisibleInMonth(
+  item: Pick<BikeExpenseItem, 'isSingleMonth' | 'dueMonth' | 'nextDueDate'>,
+  targetYM: string
+): boolean {
+  if (!targetYM || !/^\d{4}-\d{2}$/.test(targetYM)) return true;
+  if (item.isSingleMonth) {
+    const scopeMonth =
+      item.dueMonth && /^\d{4}-\d{2}$/.test(item.dueMonth)
+        ? item.dueMonth
+        : item.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
+        ? item.nextDueDate.slice(0, 7)
+        : '';
+    return scopeMonth ? scopeMonth === targetYM : true;
+  }
+  return true;
+}
+
+export function resolveBikeExpenseForMonth(
+  item: BikeExpenseItem,
+  targetYM: string
+): BikeExpenseItem {
+  if (!targetYM || !/^\d{4}-\d{2}$/.test(targetYM)) return item;
+  const ov = item.monthlyOverrides?.[targetYM];
+  if (!ov) return item;
+  return {
+    ...item,
+    name: ov.name !== undefined ? ov.name : item.name,
+    category: ov.category !== undefined ? ov.category : item.category,
+    icon: ov.icon !== undefined ? ov.icon : item.icon,
+    monthlyAmount: ov.monthlyAmount !== undefined ? ov.monthlyAmount : item.monthlyAmount,
+    totalCost:
+      ov.totalCost !== undefined
+        ? ov.totalCost
+        : ov.monthlyAmount !== undefined
+        ? ov.monthlyAmount
+        : item.totalCost,
+    dueDay: ov.dueDay !== undefined ? ov.dueDay : item.dueDay,
+    selectedDates: ov.selectedDates !== undefined ? ov.selectedDates : item.selectedDates,
+    isActive: ov.isActive !== undefined ? ov.isActive : item.isActive,
+    isCustomEdited: true,
+  };
+}
+
 export function getExpenseDueInfo(
   item: {
     id?: string;
     name?: string;
     recurrenceType?: ExpenseRecurrenceType;
     dueDay?: number;
+    dueMonth?: string;
+    isSingleMonth?: boolean;
     intervalDays?: number;
     totalCost?: number;
     monthlyAmount?: number;
@@ -921,6 +966,48 @@ export function getExpenseDueInfo(
     1,
     Math.min(31, Number.isFinite(rawDueDay) && rawDueDay >= 1 ? Math.trunc(rawDueDay) : fallbackDayFromNextDue)
   );
+  const explicitDueMonth =
+    item.isSingleMonth !== false && item.dueMonth && /^\d{4}-\d{2}$/.test(item.dueMonth)
+      ? item.dueMonth
+      : undefined;
+
+  if (explicitDueMonth && explicitDueMonth > ym) {
+    const [dy, dm] = explicitDueMonth.split('-').map(Number);
+    const daysInDueMonth = new Date(dy, dm, 0).getDate();
+    const clampedDueDay = Math.min(resolvedDueDay, daysInDueMonth);
+    const targetDate = `${dy}-${String(dm).padStart(2, '0')}-${String(clampedDueDay).padStart(2, '0')}`;
+    const daysDiff = calculateDaysDifference(today, targetDate);
+    const mName = PT_BR_MONTH_NAMES[dm - 1] || `${dm}`;
+    if (daysDiff > 0 && daysDiff <= 4) {
+      return {
+        label:
+          daysDiff === 1
+            ? `⚠️ Vence amanhã (${formatPtBrDate(targetDate)})`
+            : `⚠️ Vence em ${daysDiff} dias (${formatPtBrDate(targetDate)})`,
+        daysRemaining: daysDiff,
+        status: 'near',
+        targetDateStr: targetDate,
+        badgeClass: EXPENSE_DUE_BADGE_CLASSES.near,
+        detailNote: `${clampedDueDay} de ${mName}`,
+        timelineSortKey: daysDiff,
+        paidAmount: 0,
+        remainingAmount: expectedVal,
+        isPaid: false,
+      };
+    }
+    return {
+      label: `📅 Vence em ${formatPtBrDate(targetDate)} (${mName})`,
+      daysRemaining: Math.max(1, daysDiff),
+      status: 'future',
+      targetDateStr: targetDate,
+      badgeClass: EXPENSE_DUE_BADGE_CLASSES.future,
+      detailNote: `${clampedDueDay} de ${mName}`,
+      timelineSortKey: Math.max(1, daysDiff),
+      paidAmount: 0,
+      remainingAmount: expectedVal,
+      isPaid: false,
+    };
+  }
 
   if (isFutureMonth && targetYM) {
     const [fy, fm] = targetYM.split('-').map(Number);
@@ -1116,7 +1203,7 @@ export function getExpenseDueInfo(
       isPaid: false,
     };
   }
-  if (daysUntilDue < 0 && daysUntilDue >= -5) {
+  if (daysUntilDue < 0 && (daysUntilDue >= -5 || explicitDueMonth === currentYM)) {
     const overdueDays = Math.abs(daysUntilDue);
     return {
       label: `🚨 Venceu há ${overdueDays} ${overdueDays === 1 ? 'dia' : 'dias'} (dia ${dueDay})`,
@@ -1133,7 +1220,9 @@ export function getExpenseDueInfo(
   }
   const remainingCycleDays = daysUntilDue > 0 ? daysUntilDue : daysInCurrentMonth + daysUntilDue;
   return {
-    label: `Vencimento: todo dia ${dueDay}`,
+    label: explicitDueMonth
+      ? `Vencimento: ${formatPtBrDate(targetDate)} (todo dia ${dueDay})`
+      : `Vencimento: todo dia ${dueDay}`,
     daysRemaining: remainingCycleDays,
     status: 'future',
     targetDateStr: targetDate,
@@ -1295,6 +1384,7 @@ export default function App() {
   const [bikeStatusFilter, setBikeStatusFilter] = useState<'all' | 'pending' | 'paid' | 'overdue'>('all');
   const [showBikeModal, setShowBikeModal] = useState<boolean>(false);
   const [editingBikeItem, setEditingBikeItem] = useState<BikeExpenseItem | null>(null);
+  const [bikeModalTargetMonth, setBikeModalTargetMonth] = useState<string>(() => todayStr().slice(0, 7));
   const [deletingBikeId, setDeletingBikeId] = useState<string | null>(null);
   const [bikeDraft, setBikeDraft] = useState<BikeExpenseItem>({
     id: '',
@@ -1302,6 +1392,8 @@ export default function App() {
     category: 'manutencao',
     monthlyAmount: 0,
     dueDay: 15,
+    dueMonth: todayStr().slice(0, 7),
+    isSingleMonth: true,
     icon: '🏍️',
     isActive: true,
   });
@@ -1337,15 +1429,7 @@ export default function App() {
   });
   const [financeAppFilter, setFinanceAppFilter] = useState<string>('all');
   const [financeSortOrder, setFinanceSortOrder] = useState<'date_desc' | 'val_desc' | 'val_asc'>('date_desc');
-  const [dashboardSaldoScope, setDashboardSaldoScope] = useState<'month' | 'all' | 'custom'>('month');
-  const [dashboardCustomStartDate, setDashboardCustomStartDate] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-  });
-  const [dashboardCustomEndDate, setDashboardCustomEndDate] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
+  const [dashboardSaldoMonth, setDashboardSaldoMonth] = useState<string>(() => todayStr().slice(0, 7));
   const [isEditingCustomGoalInFinance, setIsEditingCustomGoalInFinance] = useState<boolean>(false);
   const [tempFinanceGoalTarget, setTempFinanceGoalTarget] = useState<number>(0);
   const [tempFinanceGoalDate, setTempFinanceGoalDate] = useState<string>(() => getDefaultFutureDate(20));
@@ -2022,6 +2106,10 @@ export default function App() {
         });
       }
     });
+    (dbState.bikeExpenses || []).forEach(b => {
+      if (b.dueMonth && /^\d{4}-\d{2}$/.test(b.dueMonth)) set.add(b.dueMonth);
+      if (b.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(b.nextDueDate)) set.add(b.nextDueDate.slice(0, 7));
+    });
     // Adiciona os próximos 6 meses futuros e os últimos 12 meses anteriores
     const [cy, cm] = currentYM.split('-').map(Number);
     for (let i = -6; i <= 12; i++) {
@@ -2030,7 +2118,7 @@ export default function App() {
       set.add(ym);
     }
     return Array.from(set).sort().reverse();
-  }, [dbState.entries, dbState.expenses, dbState.projectedRevenues]);
+  }, [dbState.entries, dbState.expenses, dbState.projectedRevenues, dbState.bikeExpenses]);
 
   // Finanças completas do mês selecionado na Central de Finanças
   const selectedMonthFinancials = useMemo(() => {
@@ -2844,7 +2932,8 @@ export default function App() {
   const normalizeCalendarExpenseDates = (
     selectedDates?: string[],
     explicitDueDay?: number,
-    fallbackDueDay: number = 15
+    fallbackDueDay: number = 15,
+    explicitDueMonth?: string
   ) => {
     const today = todayStr();
     const sortedDates = Array.from(
@@ -2855,24 +2944,34 @@ export default function App() {
       1,
       Math.min(31, Number.isFinite(parsedDueDay) && parsedDueDay >= 1 ? Math.trunc(parsedDueDay) : fallbackDueDay)
     );
-    const [curY, curM, curD] = today.split('-').map(Number);
-    const daysInCurMonth = new Date(curY, curM, 0).getDate();
-    const curMonthDueDay = Math.min(dueDay, daysInCurMonth);
+    const validDueMonth =
+      explicitDueMonth && /^\d{4}-\d{2}$/.test(explicitDueMonth) ? explicitDueMonth : undefined;
     let nextDueDate: string;
-    if (curMonthDueDay >= curD) {
-      nextDueDate = `${curY}-${String(curM).padStart(2, '0')}-${String(curMonthDueDay).padStart(2, '0')}`;
+    if (validDueMonth) {
+      const [dy, dm] = validDueMonth.split('-').map(Number);
+      const daysInTargetMonth = new Date(dy, dm, 0).getDate();
+      const targetDueDay = Math.min(dueDay, daysInTargetMonth);
+      nextDueDate = `${dy}-${String(dm).padStart(2, '0')}-${String(targetDueDay).padStart(2, '0')}`;
     } else {
-      const nextMonthDate = new Date(curY, curM, 1);
-      const ny = nextMonthDate.getFullYear();
-      const nm = nextMonthDate.getMonth() + 1;
-      const daysInNextMonth = new Date(ny, nm, 0).getDate();
-      const nextMonthDueDay = Math.min(dueDay, daysInNextMonth);
-      nextDueDate = `${ny}-${String(nm).padStart(2, '0')}-${String(nextMonthDueDay).padStart(2, '0')}`;
+      const [curY, curM, curD] = today.split('-').map(Number);
+      const daysInCurMonth = new Date(curY, curM, 0).getDate();
+      const curMonthDueDay = Math.min(dueDay, daysInCurMonth);
+      if (curMonthDueDay >= curD) {
+        nextDueDate = `${curY}-${String(curM).padStart(2, '0')}-${String(curMonthDueDay).padStart(2, '0')}`;
+      } else {
+        const nextMonthDate = new Date(curY, curM, 1);
+        const ny = nextMonthDate.getFullYear();
+        const nm = nextMonthDate.getMonth() + 1;
+        const daysInNextMonth = new Date(ny, nm, 0).getDate();
+        const nextMonthDueDay = Math.min(dueDay, daysInNextMonth);
+        nextDueDate = `${ny}-${String(nm).padStart(2, '0')}-${String(nextMonthDueDay).padStart(2, '0')}`;
+      }
     }
     return {
       sortedDates,
       nextDueDate,
       dueDay,
+      dueMonth: validDueMonth || nextDueDate.slice(0, 7),
       recurrenceType: 'monthly' as ExpenseRecurrenceType,
     };
   };
@@ -2886,6 +2985,11 @@ export default function App() {
     setShowBikeCustomIconInput(false);
     setBikeCustomIconDraft('');
     setCalendarPickerTarget(null);
+    const defaultDueMonth =
+      selectedFinanceMonth && /^\d{4}-\d{2}$/.test(selectedFinanceMonth)
+        ? selectedFinanceMonth
+        : todayStr().slice(0, 7);
+    setBikeModalTargetMonth(defaultDueMonth);
     setBikeDraft({
       id: 'bike_' + Date.now(),
       name: '',
@@ -2896,8 +3000,10 @@ export default function App() {
       totalCost: 0,
       selectedDates: [],
       lastPaidDate: undefined,
-      nextDueDate: '',
+      nextDueDate: `${defaultDueMonth}-15`,
       dueDay: 15,
+      dueMonth: defaultDueMonth,
+      isSingleMonth: true,
       icon: '🏍️',
       isActive: true,
     });
@@ -2917,16 +3023,22 @@ export default function App() {
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
     const rawItem = rawList.find(b => b.id === item.id) || item;
+    const editYM =
+      selectedFinanceMonth && /^\d{4}-\d{2}$/.test(selectedFinanceMonth)
+        ? selectedFinanceMonth
+        : todayStr().slice(0, 7);
+    setBikeModalTargetMonth(editYM);
+    const resolvedItem = resolveBikeExpenseForMonth(rawItem, editYM);
 
     setEditingBikeItem(rawItem);
-    const rawMonthly = Math.max(0, Number(rawItem.monthlyAmount) || 0);
-    const rawTotal = Math.max(0, Number(rawItem.totalCost) || 0);
+    const rawMonthly = Math.max(0, Number(resolvedItem.monthlyAmount) || 0);
+    const rawTotal = Math.max(0, Number(resolvedItem.totalCost) || 0);
     const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
-    const seededDates = deriveSeedCalendarDatesForExpense(rawItem);
-    const parsedExistingDueDay = Number(rawItem.dueDay);
+    const seededDates = deriveSeedCalendarDatesForExpense(resolvedItem);
+    const parsedExistingDueDay = Number(resolvedItem.dueDay);
     const fallbackNextDueDay =
-      rawItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(rawItem.nextDueDate)
-        ? Number(rawItem.nextDueDate.slice(8, 10))
+      resolvedItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(resolvedItem.nextDueDate)
+        ? Number(resolvedItem.nextDueDate.slice(8, 10))
         : 15;
     const resolvedDueDay = Math.max(
       1,
@@ -2937,14 +3049,24 @@ export default function App() {
           : fallbackNextDueDay
       )
     );
+    const isSingle = Boolean(rawItem.isSingleMonth);
+    const resolvedDueMonth = isSingle
+      ? rawItem.dueMonth && /^\d{4}-\d{2}$/.test(rawItem.dueMonth)
+        ? rawItem.dueMonth
+        : rawItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(rawItem.nextDueDate)
+        ? rawItem.nextDueDate.slice(0, 7)
+        : editYM
+      : editYM;
 
     setBikeDraft({
-      ...rawItem,
+      ...resolvedItem,
       monthlyAmount: initialAmount,
       totalCost: initialAmount,
       recurrenceType: 'monthly',
       selectedDates: seededDates,
       dueDay: resolvedDueDay,
+      dueMonth: resolvedDueMonth,
+      isSingleMonth: isSingle,
       isCustomEdited: true,
     });
     setShowBikeModal(true);
@@ -2956,30 +3078,63 @@ export default function App() {
       : DEFAULT_BIKE_EXPENSES.map(b => ({ ...b }));
 
     const amountVal = Math.max(0, Number(bikeDraft.monthlyAmount) || 0);
+    const editYM =
+      bikeModalTargetMonth && /^\d{4}-\d{2}$/.test(bikeModalTargetMonth)
+        ? bikeModalTargetMonth
+        : selectedFinanceMonth || todayStr().slice(0, 7);
+    const targetSingleMonth = Boolean(bikeDraft.isSingleMonth);
     const normalizedDates = normalizeCalendarExpenseDates(
       bikeDraft.selectedDates,
       bikeDraft.dueDay,
-      15
+      15,
+      targetSingleMonth ? bikeDraft.dueMonth || editYM : editYM
     );
 
-    const sanitized: BikeExpenseItem = {
-      id: bikeDraft.id || 'bike_' + Date.now(),
-      name: bikeDraft.name.trim() || 'Despesa da Moto',
-      category: bikeDraft.category || 'outros',
-      monthlyAmount: amountVal,
-      recurrenceType: normalizedDates.recurrenceType,
-      dueDay: normalizedDates.dueDay,
-      intervalDays: bikeDraft.intervalDays || 30,
-      totalCost: amountVal,
-      lastPaidDate: bikeDraft.lastPaidDate,
-      nextDueDate: normalizedDates.nextDueDate,
-      selectedDates: normalizedDates.sortedDates,
-      paidMonths: editingBikeItem?.paidMonths ?? bikeDraft.paidMonths,
-      unpaidMonths: editingBikeItem?.unpaidMonths ?? bikeDraft.unpaidMonths,
-      icon: bikeDraft.icon?.trim() || '🏍️',
-      isActive: bikeDraft.isActive !== false,
-      isCustomEdited: true,
-    };
+    let sanitized: BikeExpenseItem;
+    if (!editingBikeItem || targetSingleMonth) {
+      sanitized = {
+        id: bikeDraft.id || 'bike_' + Date.now(),
+        name: bikeDraft.name.trim() || 'Despesa da Moto',
+        category: bikeDraft.category || 'outros',
+        monthlyAmount: amountVal,
+        recurrenceType: normalizedDates.recurrenceType,
+        dueDay: normalizedDates.dueDay,
+        dueMonth: targetSingleMonth ? normalizedDates.dueMonth : undefined,
+        isSingleMonth: targetSingleMonth,
+        monthlyOverrides: undefined,
+        intervalDays: bikeDraft.intervalDays || 30,
+        totalCost: amountVal,
+        lastPaidDate: bikeDraft.lastPaidDate,
+        nextDueDate: normalizedDates.nextDueDate,
+        selectedDates: normalizedDates.sortedDates,
+        paidMonths: editingBikeItem?.paidMonths ?? bikeDraft.paidMonths,
+        unpaidMonths: editingBikeItem?.unpaidMonths ?? bikeDraft.unpaidMonths,
+        icon: bikeDraft.icon?.trim() || '🏍️',
+        isActive: bikeDraft.isActive !== false,
+        isCustomEdited: true,
+      };
+    } else {
+      // Edição independente somente para o mês selecionado (preserva os valores de todos os outros meses)
+      const nextOverrides: Record<string, import('./services/supabaseSync').BikeExpenseMonthlyOverride> = {
+        ...(editingBikeItem.monthlyOverrides || {}),
+        [editYM]: {
+          monthlyAmount: amountVal,
+          totalCost: amountVal,
+          dueDay: normalizedDates.dueDay,
+          selectedDates: normalizedDates.sortedDates,
+          isActive: bikeDraft.isActive !== false,
+          name: bikeDraft.name.trim() || 'Despesa da Moto',
+          category: bikeDraft.category || 'outros',
+          icon: bikeDraft.icon?.trim() || '🏍️',
+        },
+      };
+      sanitized = {
+        ...editingBikeItem,
+        isSingleMonth: false,
+        dueMonth: undefined,
+        monthlyOverrides: nextOverrides,
+      };
+    }
 
     const existingIndex = list.findIndex(b => b.id === sanitized.id);
     if (existingIndex >= 0) {
@@ -2988,66 +3143,70 @@ export default function App() {
       list.push(sanitized);
     }
 
-    // Sincronização bidirecional com o planejamento financeiro e itens de manutenção preventiva
+    // Sincronização bidirecional com o planejamento financeiro e itens de manutenção preventiva (apenas no mês atual em edição global)
     let updatedPlan = { ...finPlan };
     let planChanged = false;
     let updatedMaintItems = Array.isArray(dbState.maintenanceItems) ? [...dbState.maintenanceItems] : [];
     let maintChanged = false;
 
-    const lowerName = sanitized.name.toLowerCase();
-    const effectiveCost = amountVal;
+    const currentYM = todayStr().slice(0, 7);
+    const shouldSyncGlobalPlan = !sanitized.isSingleMonth && editYM === currentYM;
+    if (shouldSyncGlobalPlan) {
+      const lowerName = sanitized.name.toLowerCase();
+      const effectiveCost = amountVal;
 
-    // Sincronizar IPVA
-    if (sanitized.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
-      const annualVal = Math.round(amountVal * 12);
-      if (annualVal > 0) {
-        updatedPlan.ipvaAnnual = annualVal;
-        planChanged = true;
+      // Sincronizar IPVA
+      if (sanitized.id === 'ipva_licenciamento' || lowerName.includes('ipva')) {
+        const annualVal = Math.round(amountVal * 12);
+        if (annualVal > 0) {
+          updatedPlan.ipvaAnnual = annualVal;
+          planChanged = true;
+        }
       }
-    }
-    // Sincronizar Licenciamento
-    if (lowerName.includes('licenciamento')) {
-      const licVal = Math.round(amountVal * 12);
-      if (licVal > 0) {
-        updatedPlan.licensingAnnual = licVal;
-        planChanged = true;
+      // Sincronizar Licenciamento
+      if (lowerName.includes('licenciamento')) {
+        const licVal = Math.round(amountVal * 12);
+        if (licVal > 0) {
+          updatedPlan.licensingAnnual = licVal;
+          planChanged = true;
+        }
       }
-    }
-    // Sincronizar Seguro / MEI
-    if (sanitized.id === 'seguro_rastreador' || lowerName.includes('seguro') || lowerName.includes('rastreador')) {
-      if (amountVal > 0) {
-        updatedPlan.insuranceOrMeiMonthly = amountVal;
-        planChanged = true;
+      // Sincronizar Seguro / MEI
+      if (sanitized.id === 'seguro_rastreador' || lowerName.includes('seguro') || lowerName.includes('rastreador')) {
+        if (amountVal > 0) {
+          updatedPlan.insuranceOrMeiMonthly = amountVal;
+          planChanged = true;
+        }
       }
-    }
 
-    // Sincronizar estimativas de custo de manutenção por peça
-    if (sanitized.id === 'oleo_motor' || lowerName.includes('óleo')) {
-      const idx = updatedMaintItems.findIndex(m => m.id === 'oil');
-      if (idx >= 0 && effectiveCost > 0) {
-        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
-        maintChanged = true;
+      // Sincronizar estimativas de custo de manutenção por peça
+      if (sanitized.id === 'oleo_motor' || lowerName.includes('óleo')) {
+        const idx = updatedMaintItems.findIndex(m => m.id === 'oil');
+        if (idx >= 0 && effectiveCost > 0) {
+          updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+          maintChanged = true;
+        }
       }
-    }
-    if (sanitized.id === 'pneus_camaras' || lowerName.includes('pneu')) {
-      const idx = updatedMaintItems.findIndex(m => m.id === 'tire');
-      if (idx >= 0 && effectiveCost > 0) {
-        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
-        maintChanged = true;
+      if (sanitized.id === 'pneus_camaras' || lowerName.includes('pneu')) {
+        const idx = updatedMaintItems.findIndex(m => m.id === 'tire');
+        if (idx >= 0 && effectiveCost > 0) {
+          updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+          maintChanged = true;
+        }
       }
-    }
-    if (sanitized.id === 'kit_transmissao' || lowerName.includes('relação') || lowerName.includes('corrente')) {
-      const idx = updatedMaintItems.findIndex(m => m.id === 'chain');
-      if (idx >= 0 && effectiveCost > 0) {
-        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
-        maintChanged = true;
+      if (sanitized.id === 'kit_transmissao' || lowerName.includes('relação') || lowerName.includes('corrente')) {
+        const idx = updatedMaintItems.findIndex(m => m.id === 'chain');
+        if (idx >= 0 && effectiveCost > 0) {
+          updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+          maintChanged = true;
+        }
       }
-    }
-    if (sanitized.id === 'freios_pastilhas' || lowerName.includes('freio') || lowerName.includes('pastilha')) {
-      const idx = updatedMaintItems.findIndex(m => m.id === 'brake');
-      if (idx >= 0 && effectiveCost > 0) {
-        updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
-        maintChanged = true;
+      if (sanitized.id === 'freios_pastilhas' || lowerName.includes('freio') || lowerName.includes('pastilha')) {
+        const idx = updatedMaintItems.findIndex(m => m.id === 'brake');
+        if (idx >= 0 && effectiveCost > 0) {
+          updatedMaintItems[idx] = { ...updatedMaintItems[idx], costEstimate: effectiveCost };
+          maintChanged = true;
+        }
       }
     }
 
@@ -3058,6 +3217,9 @@ export default function App() {
       ...(planChanged ? { financialPlan: updatedPlan } : {}),
       ...(maintChanged ? { maintenanceItems: updatedMaintItems } : {}),
     });
+    if (sanitized.isSingleMonth && sanitized.dueMonth && sanitized.dueMonth !== selectedFinanceMonth) {
+      setSelectedFinanceMonth(sanitized.dueMonth);
+    }
     setShowBikeModal(false);
     setEditingBikeItem(null);
   };
@@ -3077,13 +3239,29 @@ export default function App() {
     });
   };
 
-  const toggleBikeExpense = (id: string) => {
+  const toggleBikeExpense = (id: string, targetYM?: string) => {
+    const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
-    const list = currentList.map(b =>
-      b.id === id ? { ...b, isActive: !b.isActive } : b
-    );
+    const list = currentList.map(b => {
+      if (b.id !== id) return b;
+      if (b.isSingleMonth) {
+        return { ...b, isActive: !b.isActive };
+      }
+      const resolved = resolveBikeExpenseForMonth(b, ym);
+      const nextActive = resolved.isActive === false;
+      return {
+        ...b,
+        monthlyOverrides: {
+          ...(b.monthlyOverrides || {}),
+          [ym]: {
+            ...(b.monthlyOverrides?.[ym] || {}),
+            isActive: nextActive,
+          },
+        },
+      };
+    });
     persistAndEnqueueWorkManager({
       ...dbState,
       bikeExpenses: list,
@@ -3091,15 +3269,21 @@ export default function App() {
   };
 
   const duplicateBikeExpense = (item: BikeExpenseItem) => {
+    const targetYM = selectedFinanceMonth || todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
+    const rawSource = currentList.find(b => b.id === item.id) || item;
+    const resolved = resolveBikeExpenseForMonth(rawSource, targetYM);
 
     const newId = 'bike_' + Date.now();
     const duplicatedItem: BikeExpenseItem = {
-      ...item,
+      ...resolved,
       id: newId,
-      name: `${item.name} (Cópia)`,
+      name: `${resolved.name} (Cópia)`,
+      dueMonth: targetYM,
+      isSingleMonth: true,
+      monthlyOverrides: undefined,
       isCustomEdited: true,
       lastPaidDate: undefined,
       paidMonths: [], // A cópia nasce pendente!
@@ -3160,6 +3344,7 @@ export default function App() {
 
   const toggleBikeExpensePaidStatus = (itemId: string, targetYM?: string) => {
     const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
+    const curYM = todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.bikeExpenses)
       ? dbState.bikeExpenses
       : DEFAULT_BIKE_EXPENSES;
@@ -3169,8 +3354,9 @@ export default function App() {
       const currentPaidMonths = Array.isArray(b.paidMonths) ? [...b.paidMonths] : [];
       const currentUnpaidMonths = Array.isArray(b.unpaidMonths) ? [...b.unpaidMonths] : [];
 
-      const { totalPaid } = getBikeExpenseMonthPayments(b, ym);
-      const currentDueInfo = getExpenseDueInfo(b, totalPaid, ym);
+      const resolvedB = resolveBikeExpenseForMonth(b, ym);
+      const { totalPaid } = getBikeExpenseMonthPayments(resolvedB, ym);
+      const currentDueInfo = getExpenseDueInfo(resolvedB, totalPaid, ym);
       const isCurrentlyPaid = currentDueInfo.status === 'paid';
 
       if (isCurrentlyPaid) {
@@ -3191,7 +3377,7 @@ export default function App() {
           ...b,
           paidMonths: nextPaidMonths,
           unpaidMonths: nextUnpaidMonths,
-          lastPaidDate: todayStr(),
+          lastPaidDate: ym === curYM ? todayStr() : b.lastPaidDate,
         };
       }
     });
@@ -5340,7 +5526,7 @@ export default function App() {
     });
   };
 
-  const financialIntelligence = useMemo(() => {
+  const computeFinancialIntelligence = useCallback((targetMonthYM: string) => {
     const workDaysPerMonth = Math.max(1, Math.min(31, Number(finPlan.workDaysPerMonth) || 24));
     const hasLoggedDays = progressAnalytics.uniqueWorkDays > 0;
 
@@ -5437,14 +5623,17 @@ export default function App() {
 
     // Mês de referência e dias restantes no mês (incluindo hoje) para o cálculo do rateio diário
     const currentYM = todayStr().slice(0, 7);
-    const targetFinanceYM = selectedFinanceMonth || currentYM;
+    const targetFinanceYM = /^\d{4}-\d{2}$/.test(targetMonthYM) ? targetMonthYM : currentYM;
     const remainingDaysInMonth = getRemainingDaysInMonth(targetFinanceYM);
 
-    // Despesas Cadastradas da Moto & Peças (Respeita 100% qualquer edição feita pelo usuário + cálculo proporcional nos itens padrão)
-    const rawBikeExpenses: BikeExpenseItem[] =
+    // Despesas Cadastradas da Moto & Peças (Filtra despesas exclusivas do mês + aplica valores independentes por mês)
+    const allBikeExpenses: BikeExpenseItem[] =
       Array.isArray(dbState.bikeExpenses)
         ? dbState.bikeExpenses
         : DEFAULT_BIKE_EXPENSES;
+    const rawBikeExpenses: BikeExpenseItem[] = allBikeExpenses
+      .filter(item => isBikeExpenseVisibleInMonth(item, targetFinanceYM))
+      .map(item => resolveBikeExpenseForMonth(item, targetFinanceYM));
 
     const enrichedBikeExpenses = rawBikeExpenses.map(item => {
       const lowerName = item.name.toLowerCase();
@@ -6053,8 +6242,19 @@ export default function App() {
       totalRealLoggedRev,
       totalRealLoggedExp,
       totalRealLoggedProfit,
+      targetFinanceYM,
     };
-  }, [dbState, finPlan, progressAnalytics, totals, selectedFinanceMonth]);
+  }, [dbState, finPlan, progressAnalytics, totals]);
+
+  const financialIntelligence = useMemo(
+    () => computeFinancialIntelligence(selectedFinanceMonth),
+    [computeFinancialIntelligence, selectedFinanceMonth]
+  );
+
+  const dashboardFinancialIntelligence = useMemo(
+    () => computeFinancialIntelligence(dashboardSaldoMonth),
+    [computeFinancialIntelligence, dashboardSaldoMonth]
+  );
 
   // ================= TELEMETRIA REAL DO COMBUSTÍVEL & AUTONOMIA BASEADA EM ABASTECIMENTO =================
   const fuelTelemetry = useMemo(() => {
@@ -6078,8 +6278,10 @@ export default function App() {
 
       const odoAtFuel = latestFuel.odometerKm !== undefined && latestFuel.odometerKm !== null ? Number(latestFuel.odometerKm) : totals.totalKm;
       const kmSinceFuel = Math.max(0, totals.totalKm - odoAtFuel);
-      const remainingAutonomyKm = Math.max(0, totalAutonomyKm - kmSinceFuel);
+      const rawRemainingAutonomyKm = Math.round((totalAutonomyKm - kmSinceFuel) * 10) / 10;
+      const remainingAutonomyKm = rawRemainingAutonomyKm === 0 ? 0 : rawRemainingAutonomyKm;
       const fuelPercentage = totalAutonomyKm > 0 ? Math.min(100, Math.max(0, Math.round((remainingAutonomyKm / totalAutonomyKm) * 100))) : 0;
+      const realKmPerLiter = liters > 0 && kmSinceFuel > 0 ? Math.round((kmSinceFuel / liters) * 10) / 10 : null;
 
       return {
         hasLoggedFuel: true,
@@ -6091,6 +6293,7 @@ export default function App() {
         kmSinceFuel: Math.round(kmSinceFuel * 10) / 10,
         remainingAutonomyKm,
         fuelPercentage,
+        realKmPerLiter,
         fuelDate: latestFuel.date,
       };
     }
@@ -6107,6 +6310,7 @@ export default function App() {
       kmSinceFuel: 0,
       remainingAutonomyKm: defaultAutonomy,
       fuelPercentage: 100,
+      realKmPerLiter: null as number | null,
       fuelDate: null,
     };
   }, [dbState.expenses, dbState.fuelConfig, totals.totalKm]);
@@ -6420,12 +6624,14 @@ export default function App() {
     target,
     emptyHint,
     accentClass,
+    defaultCalendarMonth,
   }: {
     label: string;
     dates: string[];
     target: 'projected' | 'bike' | 'household';
     emptyHint: string;
     accentClass: 'orange' | 'blue';
+    defaultCalendarMonth?: string;
   }) => {
     const isOrange = accentClass === 'orange';
     const activeBorder = isOrange ? 'border-[#FF6A1A]/60' : 'border-blue-500/60';
@@ -6448,7 +6654,12 @@ export default function App() {
         <button
           type="button"
           onClick={() => {
-            const fallbackMonth = (dates[0] || todayStr()).slice(0, 7);
+            const fallbackMonth = (
+              dates[0] ||
+              (defaultCalendarMonth && /^\d{4}-\d{2}$/.test(defaultCalendarMonth)
+                ? defaultCalendarMonth
+                : todayStr().slice(0, 7))
+            ).slice(0, 7);
             setCalendarPickerMonth(fallbackMonth);
             setCalendarPickerTarget(target);
           }}
@@ -6495,11 +6706,13 @@ export default function App() {
     step,
     amount,
     dueDay,
+    dueMonth,
     dates,
     target,
     calendarLabel,
     onChangeAmount,
     onChangeDueDay,
+    onChangeDueMonth,
   }: {
     accentClass: 'orange' | 'blue';
     valueLabel: string;
@@ -6507,11 +6720,13 @@ export default function App() {
     step: string;
     amount: number;
     dueDay: number;
+    dueMonth?: string;
     dates: string[];
     target: 'bike' | 'household';
     calendarLabel: string;
     onChangeAmount: (nextVal: number) => void;
     onChangeDueDay: (nextDay: number) => void;
+    onChangeDueMonth?: (nextMonth: string) => void;
   }) => {
     const isOrange = accentClass === 'orange';
     const textAccent = isOrange ? 'text-[#FF6A1A]' : 'text-blue-400';
@@ -6519,90 +6734,168 @@ export default function App() {
       ? 'hover:border-[#FF6A1A] hover:bg-[#FF6A1A]/10 text-[#FF6A1A]'
       : 'hover:border-blue-400 hover:bg-blue-400/10 text-blue-400';
     const safeDueDay = Math.max(1, Math.min(31, Math.trunc(Number(dueDay) || 10)));
+    const currentYM = todayStr().slice(0, 7);
+    const activeDueMonth =
+      dueMonth && /^\d{4}-\d{2}$/.test(dueMonth) ? dueMonth : currentYM;
+
+    const dueMonthOptions = (() => {
+      const set = new Set<string>();
+      const [cy, cm] = currentYM.split('-').map(Number);
+      for (let offset = -3; offset <= 18; offset++) {
+        const d = new Date(cy, cm - 1 + offset, 1);
+        set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+      }
+      set.add(activeDueMonth);
+      return Array.from(set).sort();
+    })();
+
+    const [dueY, dueM] = activeDueMonth.split('-').map(Number);
+    const daysInSelectedDueMonth = new Date(dueY, dueM, 0).getDate();
+    const clampedPreviewDay = Math.min(safeDueDay, daysInSelectedDueMonth);
+    const previewDateStr = `${String(clampedPreviewDay).padStart(2, '0')}/${String(dueM).padStart(2, '0')}/${dueY}`;
+    const previewMonthName = PT_BR_MONTH_NAMES[dueM - 1] || String(dueM);
+
+    const modalTargetYM = dueMonth && /^\d{4}-\d{2}$/.test(dueMonth) ? dueMonth : selectedFinanceMonth;
+    const modalMonthRemainingDays = getRemainingDaysInMonth(modalTargetYM);
+
+    const amountFieldBlock = (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className={`block text-xs font-bold ${mutedText}`}>{valueLabel}</label>
+          <button
+            type="button"
+            onClick={() => {
+              openQuickCalculator(calcTitle, amount, valStr => {
+                onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+              });
+            }}
+            className={`text-[11px] font-bold ${textAccent} hover:underline flex items-center gap-1 cursor-pointer`}
+          >
+            <Calculator className="w-3 h-3" />
+            <span>Calc</span>
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <FreeNumberInput
+            step={step}
+            value={amount}
+            onValueChange={val => onChangeAmount(Math.max(0, val))}
+            className={`flex-1 min-w-0 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              openQuickCalculator(calcTitle, amount, valStr => {
+                onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
+              });
+            }}
+            className={`p-2.5 rounded-xl border border-slate-700/60 ${calcBtnHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+            title="Calcular Valor"
+          >
+            <Calculator className="w-4 h-4" />
+          </button>
+        </div>
+        <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+          {dates.length > 0 ? (() => {
+            const modalRateioDays = getExpenseRateioDays(
+              dates,
+              modalMonthRemainingDays,
+              modalTargetYM
+            );
+            return (
+              <>
+                Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / modalRateioDays)}/dia ({modalRateioDays}{' '}
+                {modalRateioDays === 1 ? 'dia restante' : 'dias restantes'} no calendário)
+              </>
+            );
+          })() : (
+            <>
+              Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, modalMonthRemainingDays))}/dia ({modalMonthRemainingDays}{' '}
+              {modalMonthRemainingDays === 1 ? 'dia restante' : 'dias restantes'} no mês)
+            </>
+          )}
+        </span>
+      </div>
+    );
 
     return (
       <>
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className={`block text-xs font-bold ${mutedText}`}>{valueLabel}</label>
-              <button
-                type="button"
-                onClick={() => {
-                  openQuickCalculator(calcTitle, amount, valStr => {
-                    onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
-                  });
-                }}
-                className={`text-[11px] font-bold ${textAccent} hover:underline flex items-center gap-1 cursor-pointer`}
-              >
-                <Calculator className="w-3 h-3" />
-                <span>Calc</span>
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <FreeNumberInput
-                step={step}
-                value={amount}
-                onValueChange={val => onChangeAmount(Math.max(0, val))}
-                className={`flex-1 min-w-0 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  openQuickCalculator(calcTitle, amount, valStr => {
-                    onChangeAmount(Math.max(0, parseFloat(valStr) || 0));
-                  });
-                }}
-                className={`p-2.5 rounded-xl border border-slate-700/60 ${calcBtnHover} cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                title="Calcular Valor"
-              >
-                <Calculator className="w-4 h-4" />
-              </button>
-            </div>
-            <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-              {dates.length > 0 ? (() => {
-                const modalRateioDays = getExpenseRateioDays(
-                  dates,
-                  financialIntelligence.remainingDaysInMonth,
-                  selectedFinanceMonth
-                );
-                return (
-                  <>
-                    Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / modalRateioDays)}/dia ({modalRateioDays}{' '}
-                    {modalRateioDays === 1 ? 'dia restante' : 'dias restantes'} no calendário)
-                  </>
-                );
-              })() : (
-                <>
-                  Rateio: ~{fmtCurrencyExact((Number(amount) || 0) / Math.max(1, financialIntelligence.remainingDaysInMonth))}/dia ({financialIntelligence.remainingDaysInMonth}{' '}
-                  {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'} no mês)
-                </>
-              )}
-            </span>
-          </div>
+        {onChangeDueMonth ? (
+          <div className="flex flex-col gap-3">
+            {amountFieldBlock}
+            <div className="grid grid-cols-[115px_1fr] sm:grid-cols-[135px_1fr] gap-3">
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Dia de Vencimento
+                </label>
+                <FreeNumberInput
+                  min={1}
+                  max={31}
+                  step="1"
+                  placeholder="Ex: 30"
+                  value={safeDueDay}
+                  onValueChange={(val, raw) => {
+                    if (raw.trim() === '') return;
+                    const clamped = Math.max(1, Math.min(31, Math.trunc(val) || 1));
+                    onChangeDueDay(clamped);
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                />
+              </div>
 
-          <div>
-            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-              Dia de Vencimento
-            </label>
-            <FreeNumberInput
-              min={1}
-              max={31}
-              step="1"
-              placeholder="Ex: 30"
-              value={safeDueDay}
-              onValueChange={(val, raw) => {
-                if (raw.trim() === '') return;
-                const clamped = Math.max(1, Math.min(31, Math.trunc(val) || 1));
-                onChangeDueDay(clamped);
-              }}
-              className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
-            />
-            <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
-              Todo dia {safeDueDay} do mês
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                  Mês de Vencimento
+                </label>
+                <select
+                  value={activeDueMonth}
+                  onChange={e => onChangeDueMonth(e.target.value)}
+                  aria-label="Mês de Vencimento"
+                  className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none cursor-pointer ${inputSurface}`}
+                >
+                  {dueMonthOptions.map(ym => {
+                    const [optY, optM] = ym.split('-').map(Number);
+                    const optName = PT_BR_MONTH_NAMES[optM - 1] || String(optM);
+                    return (
+                      <option key={ym} value={ym}>
+                        {optName} de {optY}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+            <span className={`text-[10px] -mt-2 block ${mutedText}`}>
+              Vencimento: {previewDateStr} (somente em {previewMonthName} de {dueY})
             </span>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
+            {amountFieldBlock}
+
+            <div>
+              <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                Dia de Vencimento
+              </label>
+              <FreeNumberInput
+                min={1}
+                max={31}
+                step="1"
+                placeholder="Ex: 30"
+                value={safeDueDay}
+                onValueChange={(val, raw) => {
+                  if (raw.trim() === '') return;
+                  const clamped = Math.max(1, Math.min(31, Math.trunc(val) || 1));
+                  onChangeDueDay(clamped);
+                }}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+              />
+              <span className={`text-[10px] mt-0.5 block ${mutedText}`}>
+                Todo dia {safeDueDay} do mês
+              </span>
+            </div>
+          </div>
+        )}
 
         {renderFreeCalendarTrigger({
           label: calendarLabel,
@@ -6610,6 +6903,7 @@ export default function App() {
           target,
           emptyHint: 'Opcional: escolha os dias que contarão no cálculo de quanto rodar por dia',
           accentClass,
+          defaultCalendarMonth: modalTargetYM,
         })}
       </>
     );
@@ -8015,7 +8309,11 @@ export default function App() {
                               ? 'border-rose-500/40 text-rose-500 dark:text-rose-400 animate-pulse'
                               : 'border-sky-500/30 text-sky-600 dark:text-sky-400'
                           }`}>
-                            {fuelTelemetry.remainingAutonomyKm <= 35 ? 'Reserva' : `${fuelTelemetry.fuelPercentage}%`}
+                            {fuelTelemetry.remainingAutonomyKm < 0
+                              ? 'Excedido'
+                              : fuelTelemetry.remainingAutonomyKm <= 35
+                              ? 'Reserva'
+                              : `${fuelTelemetry.fuelPercentage}%`}
                           </span>
                         )}
                       </div>
@@ -8028,7 +8326,11 @@ export default function App() {
                       }`}>
                         <AnimatedNumber
                           value={fuelTelemetry.remainingAutonomyKm}
-                          formatter={v => Math.round(v).toLocaleString('pt-BR')}
+                          formatter={v => {
+                            const rounded = Math.round(v);
+                            const normalized = rounded === 0 ? 0 : rounded;
+                            return normalized.toLocaleString('pt-BR');
+                          }}
                         />{' '}
                         <span className="text-[10px] sm:text-xs font-bold">km</span>
                       </div>
@@ -8113,6 +8415,13 @@ export default function App() {
                           <div className={`text-xs sm:text-sm font-black mt-1 tabular-nums ${primaryText}`}>
                             {financialIntelligence.kmPerLiter} km/L
                           </div>
+                          {fuelTelemetry.hasLoggedFuel &&
+                            fuelTelemetry.remainingAutonomyKm < 0 &&
+                            fuelTelemetry.realKmPerLiter !== null && (
+                              <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 tabular-nums">
+                                Real atual: {fuelTelemetry.realKmPerLiter.toLocaleString('pt-BR')} km/L
+                              </div>
+                            )}
                         </div>
 
                         <div className={`p-2.5 sm:p-3 rounded-xl bg-transparent border ${dividerBorder}`}>
@@ -8195,143 +8504,116 @@ export default function App() {
 
               {/* 2. SALDO ATUAL DO MOTOBOY (MINIMALISTA SEM CARD DE FUNDO) */}
               {(() => {
-                const isMonthScope = dashboardSaldoScope === 'month';
-                const isCustomScope = dashboardSaldoScope === 'custom';
+                const currentYM = todayStr().slice(0, 7);
+                const activeSaldoMonth = /^\d{4}-\d{2}$/.test(dashboardSaldoMonth)
+                  ? dashboardSaldoMonth
+                  : currentYM;
+                const [saldoYearNum, saldoMonthNum] = activeSaldoMonth.split('-').map(Number);
+                const saldoMonthName = PT_BR_MONTH_NAMES[(saldoMonthNum || 1) - 1] || '';
+                const saldoMonthFullLabel = `${saldoMonthName} de ${saldoYearNum}`;
+                const isCurrentSaldoMonth = activeSaldoMonth === currentYM;
+
+                const shiftDashboardSaldoMonth = (delta: number) => {
+                  const d = new Date(saldoYearNum, (saldoMonthNum || 1) - 1 + delta, 1);
+                  setDashboardSaldoMonth(
+                    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+                  );
+                };
 
                 let curGross = 0;
                 let curExpenses = 0;
 
-                if (isMonthScope) {
-                  curGross = periodTotals.revMonth;
-                  curExpenses = periodTotals.expMonth;
-                } else if (isCustomScope) {
-                  const start = dashboardCustomStartDate || '1970-01-01';
-                  const end = dashboardCustomEndDate || '2099-12-31';
-                  dbState.entries.forEach(e => {
-                    if (e.date && e.date >= start && e.date <= end) {
-                      curGross += Number(e.revenue || 0);
-                    }
-                  });
-                  dbState.expenses.forEach(ex => {
-                    if (ex.date && ex.date >= start && ex.date <= end) {
-                      curExpenses += Number(ex.amount || 0);
-                    }
-                  });
-                } else {
-                  curGross = totals.totalRevenue;
-                  curExpenses = totals.totalExpense;
-                }
+                dbState.entries.forEach(e => {
+                  if (!e.isCancelled && e.date && e.date.startsWith(activeSaldoMonth)) {
+                    curGross += Number(e.revenue || 0);
+                  }
+                });
+                dbState.expenses.forEach(ex => {
+                  if (!ex.isCancelled && ex.date && ex.date.startsWith(activeSaldoMonth)) {
+                    curExpenses += Number(ex.amount || 0);
+                  }
+                });
 
                 const curBalance = curGross - curExpenses;
                 const isPositive = curBalance >= 0;
-                const monthlyObligations = financialIntelligence.totalMonthlyCostsAndReserves || 0;
-                const reserveProgress = monthlyObligations > 0 ? Math.min(100, Math.max(0, Math.round((curBalance / monthlyObligations) * 100))) : (curBalance > 0 ? 100 : 0);
+                const monthlyObligations = dashboardFinancialIntelligence.totalMonthlyCostsAndReserves || 0;
+                const reserveProgress =
+                  monthlyObligations > 0
+                    ? Math.min(100, Math.max(0, Math.round((curBalance / monthlyObligations) * 100)))
+                    : curBalance > 0
+                    ? 100
+                    : 0;
 
-                const periodSubtitle = isMonthScope
-                  ? `Livre em ${periodTotals.currentMonthName}`
-                  : isCustomScope
-                  ? `Período: ${formatPtBrDate(dashboardCustomStartDate)} até ${formatPtBrDate(dashboardCustomEndDate)}`
-                  : 'Livre acumulado total';
-
-                const periodSaldoLabel = isMonthScope
-                  ? `Saldo Líquido · ${periodTotals.currentMonthName}`
-                  : isCustomScope
-                  ? `Saldo Líquido · Período Personalizado`
-                  : 'Saldo Líquido Total';
-
-                const entriesScopeLabel = isMonthScope
+                const periodSubtitle = `Livre em ${saldoMonthFullLabel}`;
+                const periodSaldoLabel = `Saldo Líquido · ${saldoMonthFullLabel}`;
+                const entriesScopeLabel = isCurrentSaldoMonth
                   ? 'Corridas do mês'
-                  : isCustomScope
-                  ? 'Corridas no período'
-                  : 'Todas as corridas';
+                  : `Corridas de ${saldoMonthName}`;
 
                 return (
                   <div className="lg:col-span-5 flex flex-col justify-between">
                     <div>
-                      {/* Header do Saldo com Toggle de Período (Minimalista) */}
+                      {/* Header do Saldo com Seletor Simples de Mês (Minimalista) */}
                       <div className={`flex items-center justify-between gap-2 flex-wrap pb-3 mb-3 border-b ${dividerBorder}`}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <Wallet className={`w-5 h-5 shrink-0 ${
                             isPositive ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
                           }`} />
-                          <div>
+                          <div className="min-w-0">
                             <span className={`text-xs sm:text-sm font-black tracking-tight flex items-center gap-1.5 ${primaryText}`}>
                               <span>Saldo Atual do Motoboy</span>
                             </span>
-                            <p className={`text-[10px] font-semibold ${mutedText}`}>
+                            <p className={`text-[10px] font-semibold truncate ${mutedText}`}>
                               {periodSubtitle}
                             </p>
                           </div>
                         </div>
 
-                        {/* Toggle Este Mês / Geral / Personalizado (Sem fundo nos botões) */}
-                        <div className={`flex items-center p-0.5 rounded-xl bg-transparent border ${dividerBorder} text-[11px] font-bold`}>
-                          <button
-                            type="button"
-                            onClick={() => setDashboardSaldoScope('month')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer bg-transparent border ${
-                              isMonthScope
-                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
-                                : `border-transparent ${mutedText} hover:${primaryText}`
-                            }`}
-                          >
-                            Este Mês
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDashboardSaldoScope('all')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer bg-transparent border ${
-                              dashboardSaldoScope === 'all'
-                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
-                                : `border-transparent ${mutedText} hover:${primaryText}`
-                            }`}
-                          >
-                            Geral
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDashboardSaldoScope('custom')}
-                            className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 bg-transparent border ${
-                              isCustomScope
-                                ? 'border-[#FF6A1A] text-[#FF6A1A] font-black'
-                                : `border-transparent ${mutedText} hover:${primaryText}`
-                            }`}
-                          >
-                            <Calendar className="w-3 h-3" />
-                            <span>Personalizado</span>
-                          </button>
+                        {/* Modo Simples: apenas o mês selecionado e botões laterais para troca rápida */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <div className={`flex items-center rounded-xl bg-transparent border ${dividerBorder}`}>
+                            <button
+                              type="button"
+                              onClick={() => shiftDashboardSaldoMonth(-1)}
+                              className={`p-1.5 sm:px-2 sm:py-1.5 rounded-l-xl transition-colors cursor-pointer bg-transparent ${mutedText} hover:text-[#FF6A1A] active:scale-95`}
+                              title="Mês anterior"
+                              aria-label="Mês anterior"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                            </button>
+
+                            <div
+                              className={`px-2 sm:px-2.5 py-1 text-[11px] font-black tracking-tight flex items-center gap-1.5 select-none whitespace-nowrap border-x ${dividerBorder} ${primaryText}`}
+                            >
+                              <Calendar className="w-3 h-3 text-[#FF6A1A] shrink-0" />
+                              <span>
+                                {saldoMonthName} {saldoYearNum}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => shiftDashboardSaldoMonth(1)}
+                              className={`p-1.5 sm:px-2 sm:py-1.5 rounded-r-xl transition-colors cursor-pointer bg-transparent ${mutedText} hover:text-[#FF6A1A] active:scale-95`}
+                              title="Próximo mês"
+                              aria-label="Próximo mês"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {!isCurrentSaldoMonth && (
+                            <button
+                              type="button"
+                              onClick={() => setDashboardSaldoMonth(currentYM)}
+                              className="px-2 py-1 rounded-xl text-[10px] font-black bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 hover:border-[#FF6A1A] transition-colors cursor-pointer active:scale-95 whitespace-nowrap"
+                              title="Voltar para o mês atual"
+                            >
+                              Mês atual
+                            </button>
+                          )}
                         </div>
                       </div>
-
-                      {/* Seletor de Datas quando Personalizado está ativo */}
-                      {isCustomScope && (
-                        <div className={`mb-3.5 pb-3 border-b ${dividerBorder} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs`}>
-                          <span className="text-[10px] font-bold text-[#FF6A1A] uppercase tracking-wider flex items-center gap-1 shrink-0">
-                            <Calendar className="w-3.5 h-3.5" />
-                            <span>Filtrar Período:</span>
-                          </span>
-                          <div className="flex items-center gap-2 w-full sm:w-auto">
-                            <div className="flex items-center gap-1 flex-1 sm:flex-initial">
-                              <span className={`text-[10px] font-bold ${mutedText}`}>De:</span>
-                              <input
-                                type="date"
-                                value={dashboardCustomStartDate}
-                                onChange={e => setDashboardCustomStartDate(e.target.value)}
-                                className={`w-full sm:w-auto px-2 py-1 rounded-lg text-xs font-bold outline-none bg-transparent border ${dividerBorder} ${primaryText}`}
-                              />
-                            </div>
-                            <div className="flex items-center gap-1 flex-1 sm:flex-initial">
-                              <span className={`text-[10px] font-bold ${mutedText}`}>Até:</span>
-                              <input
-                                type="date"
-                                value={dashboardCustomEndDate}
-                                onChange={e => setDashboardCustomEndDate(e.target.value)}
-                                className={`w-full sm:w-auto px-2 py-1 rounded-lg text-xs font-bold outline-none bg-transparent border ${dividerBorder} ${primaryText}`}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
 
                       {/* Saldo Principal em Destaque */}
                       <div className="mt-1">
@@ -8414,9 +8696,13 @@ export default function App() {
                           return due.status === 'today';
                         });
 
-                        const rawBikeList: BikeExpenseItem[] = Array.isArray(dbState.bikeExpenses)
-                          ? dbState.bikeExpenses
-                          : DEFAULT_BIKE_EXPENSES;
+                        const rawBikeList: BikeExpenseItem[] = (
+                          Array.isArray(dbState.bikeExpenses)
+                            ? dbState.bikeExpenses
+                            : DEFAULT_BIKE_EXPENSES
+                        )
+                          .filter(b => isBikeExpenseVisibleInMonth(b, curMonthStr))
+                          .map(b => resolveBikeExpenseForMonth(b, curMonthStr));
                         const activeBike = rawBikeList.filter(b => b.isActive !== false);
 
                         const pendingBikeDueToday = activeBike.filter(b => {
@@ -8646,7 +8932,11 @@ export default function App() {
                         <div className="flex items-center justify-between text-[11px] font-bold mb-1.5 flex-wrap gap-1">
                           <span className={`flex items-center gap-1.5 ${primaryText} font-black`}>
                             <Shield className="w-3.5 h-3.5 text-[#FF6A1A]" />
-                            <span>Cobertura das Reservas do Mês</span>
+                            <span>
+                              {isCurrentSaldoMonth
+                                ? 'Cobertura das Reservas do Mês'
+                                : `Cobertura das Reservas (${saldoMonthName})`}
+                            </span>
                           </span>
                           <span className="text-[#FF6A1A] font-black tabular-nums">
                             <AnimatedNumber value={reserveProgress} formatter={v => `${Math.round(v)}% coberto`} />
@@ -8683,10 +8973,10 @@ export default function App() {
                         {showReserveBreakdown && (
                           <div className={`mt-2.5 pt-2.5 border-t ${dividerBorder} text-[10px] space-y-1.5 ${secondaryText}`}>
                             <div className="font-black text-[#FF6A1A] flex items-center justify-between">
-                              <span>Composição da Meta de Blindagem do Mês:</span>
+                              <span>Composição da Meta ({saldoMonthName}/{saldoYearNum}):</span>
                               <span className={`text-[9px] font-normal ${mutedText}`}>3 Caixinhas</span>
                             </div>
-                            {financialIntelligence.hasBikeOperationalExpenses && (
+                            {dashboardFinancialIntelligence.hasBikeOperationalExpenses && (
                               <>
                                 <div className="flex justify-between items-center py-0.5">
                                   <span className="flex items-center gap-1">
@@ -8694,16 +8984,16 @@ export default function App() {
                                     <span>Moto & Operação:</span>
                                   </span>
                                   <span className="font-extrabold text-orange-500 dark:text-orange-400 tabular-nums">
-                                    {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}
+                                    {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyBikeCostsTotal)}
                                   </span>
                                 </div>
                                 <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
-                                  {financialIntelligence.bikeOperationalSummaryLabel}
+                                  {dashboardFinancialIntelligence.bikeOperationalSummaryLabel}
                                 </div>
                               </>
                             )}
 
-                            {financialIntelligence.monthlyHouseholdRemaining > 0 && (
+                            {dashboardFinancialIntelligence.monthlyHouseholdRemaining > 0 && (
                               <>
                                 <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
                                   <span className="flex items-center gap-1">
@@ -8711,39 +9001,42 @@ export default function App() {
                                     <span>Despesas da Casa & Família:</span>
                                   </span>
                                   <span className="font-extrabold text-blue-600 dark:text-blue-400 tabular-nums">
-                                    {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}
+                                    {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyHouseholdRemaining)}
                                   </span>
                                 </div>
                                 <div className={`text-[9px] ${mutedText} pl-4 pb-0.5`}>
-                                  {financialIntelligence.householdPendingAmountCount}{' '}
-                                  {financialIntelligence.householdPendingAmountCount === 1
+                                  {dashboardFinancialIntelligence.householdPendingAmountCount}{' '}
+                                  {dashboardFinancialIntelligence.householdPendingAmountCount === 1
                                     ? 'conta a pagar no mês'
                                     : 'contas a pagar no mês'}
                                 </div>
                               </>
                             )}
 
-                            {financialIntelligence.hasEmergencyExpenses && (
+                            {dashboardFinancialIntelligence.hasEmergencyExpenses && (
                               <div className={`flex justify-between items-center py-0.5 border-t ${dividerBorder}`}>
                                 <span className="flex items-center gap-1">
                                   <span>🛡️</span>
-                                  <span>Reserva de Emergência ({financialIntelligence.emergencyPct}%):</span>
+                                  <span>Reserva de Emergência ({dashboardFinancialIntelligence.emergencyPct}%):</span>
                                 </span>
                                 <span className="font-extrabold text-purple-600 dark:text-purple-400 tabular-nums">
-                                  {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}
+                                  {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyEmergencyReserve)}
                                 </span>
                               </div>
                             )}
 
                             <div className={`pt-1.5 border-t ${dividerBorder} flex justify-between items-center font-black text-xs text-[#FF6A1A]`}>
-                              <span>= Meta Total para o Mês:</span>
+                              <span>= Meta Total ({saldoMonthName}):</span>
                               <span className="tabular-nums">{fmtCurrencyExact(monthlyObligations)}</span>
                             </div>
 
                             <div className="pt-1 text-center">
                               <button
                                 type="button"
-                                onClick={() => setActiveTab('billing')}
+                                onClick={() => {
+                                  setSelectedFinanceMonth(activeSaldoMonth);
+                                  setActiveTab('billing');
+                                }}
                                 className="text-[9px] text-[#FF6A1A] hover:underline font-bold cursor-pointer bg-transparent"
                               >
                                 Personalizar contas na Central de Finanças ➔
@@ -8759,6 +9052,15 @@ export default function App() {
             </div>
 
             {/* RESERVAS FINANCEIRAS OBRIGATÓRIAS (SEÇÃO MINIMALISTA SEM CARD DE FUNDO) */}
+            {(() => {
+              const currentYM = todayStr().slice(0, 7);
+              const activeReservesMonth = dashboardFinancialIntelligence.targetFinanceYM || currentYM;
+              const [reservesYearNum, reservesMonthNum] = activeReservesMonth.split('-').map(Number);
+              const reservesMonthName = PT_BR_MONTH_NAMES[(reservesMonthNum || 1) - 1] || '';
+              const reservesMonthFullLabel = `${reservesMonthName} de ${reservesYearNum}`;
+              const isCurrentReservesMonth = activeReservesMonth === currentYM;
+
+              return (
             <div className={`pb-6 border-b ${dividerBorder}`}>
               <div className={`flex flex-row items-center justify-between gap-2 pb-3 mb-4 border-b ${dividerBorder}`}>
                 <div className="flex items-center gap-2 min-w-0">
@@ -8771,18 +9073,27 @@ export default function App() {
                       <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40">
                         Blindagem
                       </span>
+                      {!isCurrentReservesMonth && (
+                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded bg-transparent border ${dividerBorder} ${primaryText}`}>
+                          {reservesMonthName} {reservesYearNum}
+                        </span>
+                      )}
                     </div>
                     <p className={`text-[10px] truncate ${mutedText}`}>
-                      Valores diários{' '}
-                      {financialIntelligence.remainingDaysInMonth === 1
-                        ? 'para o último dia do mês'
-                        : `para os ${financialIntelligence.remainingDaysInMonth} dias restantes do mês`}
+                      {isCurrentReservesMonth
+                        ? `Valores diários ${
+                            dashboardFinancialIntelligence.remainingDaysInMonth === 1
+                              ? 'para o último dia do mês'
+                              : `para os ${dashboardFinancialIntelligence.remainingDaysInMonth} dias restantes do mês`
+                          }`
+                        : `Valores diários para os ${dashboardFinancialIntelligence.remainingDaysInMonth} dias de ${reservesMonthFullLabel}`}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
+                    setSelectedFinanceMonth(activeReservesMonth);
                     setActiveTab('billing');
                     setBillingSubTab('planejamento');
                   }}
@@ -8810,14 +9121,14 @@ export default function App() {
                   targetSubTab: 'despesas_moto' | 'despesas_casa';
                 }[] = [];
 
-                if (financialIntelligence.hasFuelExpenses) {
+                if (dashboardFinancialIntelligence.hasFuelExpenses) {
                   visibleReserveCards.push({
                     key: 'fuel',
                     icon: '⛽',
                     label: 'Combustível',
-                    pct: financialIntelligence.fuelPctOfGross,
-                    daily: financialIntelligence.dailyFuelCost,
-                    monthly: financialIntelligence.monthlyFuelCost,
+                    pct: dashboardFinancialIntelligence.fuelPctOfGross,
+                    daily: dashboardFinancialIntelligence.dailyFuelCost,
+                    monthly: dashboardFinancialIntelligence.monthlyFuelCost,
                     hoverBorder: 'hover:border-rose-500/50',
                     textColor: 'text-rose-500 dark:text-rose-400',
                     badgeBorder: 'border-rose-500/30',
@@ -8826,14 +9137,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasMaintExpenses) {
+                if (dashboardFinancialIntelligence.hasMaintExpenses) {
                   visibleReserveCards.push({
                     key: 'maint',
                     icon: '🛠️',
                     label: 'Manutenção',
-                    pct: financialIntelligence.maintPctOfGross,
-                    daily: financialIntelligence.dailyMaintReserve,
-                    monthly: financialIntelligence.monthlyMaintReserve,
+                    pct: dashboardFinancialIntelligence.maintPctOfGross,
+                    daily: dashboardFinancialIntelligence.dailyMaintReserve,
+                    monthly: dashboardFinancialIntelligence.monthlyMaintReserve,
                     hoverBorder: 'hover:border-amber-500/50',
                     textColor: 'text-amber-500 dark:text-amber-400',
                     badgeBorder: 'border-amber-500/30',
@@ -8842,14 +9153,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasDocsExpenses) {
+                if (dashboardFinancialIntelligence.hasDocsExpenses) {
                   visibleReserveCards.push({
                     key: 'docs',
                     icon: '📄',
                     label: 'Docs & IPVA',
-                    pct: financialIntelligence.docsPctOfGross,
-                    daily: financialIntelligence.dailyDocsReserve,
-                    monthly: financialIntelligence.monthlyDocsReserve,
+                    pct: dashboardFinancialIntelligence.docsPctOfGross,
+                    daily: dashboardFinancialIntelligence.dailyDocsReserve,
+                    monthly: dashboardFinancialIntelligence.monthlyDocsReserve,
                     hoverBorder: 'hover:border-sky-500/50',
                     textColor: 'text-sky-600 dark:text-sky-400',
                     badgeBorder: 'border-sky-500/30',
@@ -8858,14 +9169,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasFoodExpenses) {
+                if (dashboardFinancialIntelligence.hasFoodExpenses) {
                   visibleReserveCards.push({
                     key: 'food',
                     icon: '🍱',
                     label: 'Alimentação',
-                    pct: financialIntelligence.foodPctOfGross,
-                    daily: financialIntelligence.dailyFoodCost,
-                    monthly: financialIntelligence.monthlyFoodCost,
+                    pct: dashboardFinancialIntelligence.foodPctOfGross,
+                    daily: dashboardFinancialIntelligence.dailyFoodCost,
+                    monthly: dashboardFinancialIntelligence.monthlyFoodCost,
                     hoverBorder: 'hover:border-orange-500/50',
                     textColor: 'text-orange-500 dark:text-orange-400',
                     badgeBorder: 'border-orange-500/30',
@@ -8874,14 +9185,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasOtherBikeExpenses) {
+                if (dashboardFinancialIntelligence.hasOtherBikeExpenses) {
                   visibleReserveCards.push({
                     key: 'other_bike',
                     icon: '✨',
                     label: 'Outros (Moto)',
-                    pct: financialIntelligence.otherBikePctOfGross,
-                    daily: financialIntelligence.dailyOtherBikeReserve,
-                    monthly: financialIntelligence.monthlyOtherBikeReserve,
+                    pct: dashboardFinancialIntelligence.otherBikePctOfGross,
+                    daily: dashboardFinancialIntelligence.dailyOtherBikeReserve,
+                    monthly: dashboardFinancialIntelligence.monthlyOtherBikeReserve,
                     hoverBorder: 'hover:border-[#FF6A1A]/50',
                     textColor: 'text-[#FF6A1A]',
                     badgeBorder: 'border-[#FF6A1A]/30',
@@ -8890,14 +9201,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasStandardHouseExpenses) {
+                if (dashboardFinancialIntelligence.hasStandardHouseExpenses) {
                   visibleReserveCards.push({
                     key: 'house',
                     icon: '🏠',
                     label: 'Contas Casa',
-                    pct: financialIntelligence.standardHousePct,
-                    daily: financialIntelligence.standardHouseholdDaily,
-                    monthly: financialIntelligence.standardHouseholdMonthly,
+                    pct: dashboardFinancialIntelligence.standardHousePct,
+                    daily: dashboardFinancialIntelligence.standardHouseholdDaily,
+                    monthly: dashboardFinancialIntelligence.standardHouseholdMonthly,
                     monthlySuffix: ' ↗',
                     hoverBorder: 'hover:border-blue-500/50',
                     textColor: 'text-blue-600 dark:text-blue-400',
@@ -8907,14 +9218,14 @@ export default function App() {
                   });
                 }
 
-                if (financialIntelligence.hasEmergencyExpenses) {
+                if (dashboardFinancialIntelligence.hasEmergencyExpenses) {
                   visibleReserveCards.push({
                     key: 'emergency',
                     icon: '🛡️',
                     label: 'Emergência',
-                    pct: financialIntelligence.emergencyPct,
-                    daily: financialIntelligence.dailyEmergencyReserve,
-                    monthly: financialIntelligence.monthlyEmergencyReserve,
+                    pct: dashboardFinancialIntelligence.emergencyPct,
+                    daily: dashboardFinancialIntelligence.dailyEmergencyReserve,
+                    monthly: dashboardFinancialIntelligence.monthlyEmergencyReserve,
                     hoverBorder: 'hover:border-purple-500/50',
                     textColor: 'text-purple-600 dark:text-purple-400',
                     badgeBorder: 'border-purple-500/30',
@@ -8923,7 +9234,7 @@ export default function App() {
                   });
                 }
 
-                financialIntelligence.customCategoryReserves.forEach(cat => {
+                dashboardFinancialIntelligence.customCategoryReserves.forEach(cat => {
                   visibleReserveCards.push({
                     key: `custom_${cat.id}`,
                     icon: cat.icon,
@@ -8944,7 +9255,7 @@ export default function App() {
                     <div className={`rounded-xl p-4 bg-transparent border border-dashed ${dividerBorder} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3`}>
                       <div>
                         <div className={`text-xs font-black ${primaryText}`}>
-                          Nenhuma despesa ativa registrada
+                          Nenhuma despesa ativa pendente em {reservesMonthFullLabel}
                         </div>
                         <p className={`text-[11px] mt-0.5 ${mutedText}`}>
                           Cadastre suas despesas da moto ou da casa na aba Finanças para acompanhar as reservas diárias aqui.
@@ -8953,6 +9264,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
+                          setSelectedFinanceMonth(activeReservesMonth);
                           setActiveTab('billing');
                           setBillingSubTab('despesas_moto');
                         }}
@@ -8981,6 +9293,7 @@ export default function App() {
                       <div
                         key={card.key}
                         onClick={() => {
+                          setSelectedFinanceMonth(activeReservesMonth);
                           setActiveTab('billing');
                           setBillingSubTab(card.targetSubTab);
                         }}
@@ -9021,16 +9334,21 @@ export default function App() {
                   <span className={`text-[10px] font-bold ${mutedText}`}>
                     Cálculo para{' '}
                     <strong className={`${primaryText} font-black`}>
-                      {financialIntelligence.remainingDaysInMonth}{' '}
-                      {financialIntelligence.remainingDaysInMonth === 1 ? 'dia restante' : 'dias restantes'} no mês
+                      {isCurrentReservesMonth
+                        ? `${dashboardFinancialIntelligence.remainingDaysInMonth} ${
+                            dashboardFinancialIntelligence.remainingDaysInMonth === 1
+                              ? 'dia restante'
+                              : 'dias restantes'
+                          } no mês`
+                        : `${dashboardFinancialIntelligence.remainingDaysInMonth} dias de ${reservesMonthFullLabel}`}
                     </strong>
                   </span>
                 </div>
 
                 {(() => {
-                  const hasBikeBox = financialIntelligence.hasBikeOperationalExpenses;
-                  const hasHouseBox = financialIntelligence.monthlyHouseholdRemaining > 0;
-                  const hasEmergencyBox = financialIntelligence.hasEmergencyExpenses;
+                  const hasBikeBox = dashboardFinancialIntelligence.hasBikeOperationalExpenses;
+                  const hasHouseBox = dashboardFinancialIntelligence.monthlyHouseholdRemaining > 0;
+                  const hasEmergencyBox = dashboardFinancialIntelligence.hasEmergencyExpenses;
                   const totalBoxes =
                     (hasBikeBox ? 1 : 0) + (hasHouseBox ? 1 : 0) + (hasEmergencyBox ? 1 : 0) + 1;
                   const boxGridClass =
@@ -9052,6 +9370,7 @@ export default function App() {
                       {hasBikeBox && (
                         <div
                           onClick={() => {
+                            setSelectedFinanceMonth(activeReservesMonth);
                             setActiveTab('billing');
                             setBillingSubTab('despesas_moto');
                           }}
@@ -9062,14 +9381,14 @@ export default function App() {
                             <span className="text-[9px] opacity-80">↗</span>
                           </div>
                           <div className="text-sm sm:text-base font-black text-rose-500 dark:text-rose-400 tabular-nums mt-1">
-                            <AnimatedNumber value={financialIntelligence.dailyBikeCostsTotal} formatter={fmtCurrencyExact} />
+                            <AnimatedNumber value={dashboardFinancialIntelligence.dailyBikeCostsTotal} formatter={fmtCurrencyExact} />
                             <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                           </div>
                           <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                            {fmtCurrencyExact(financialIntelligence.monthlyBikeCostsTotal)}/mês
+                            {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyBikeCostsTotal)}/mês
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                            {financialIntelligence.bikeOperationalSummaryLabel}
+                            {dashboardFinancialIntelligence.bikeOperationalSummaryLabel}
                           </div>
                         </div>
                       )}
@@ -9077,6 +9396,7 @@ export default function App() {
                       {hasHouseBox && (
                         <div
                           onClick={() => {
+                            setSelectedFinanceMonth(activeReservesMonth);
                             setActiveTab('billing');
                             setBillingSubTab('despesas_casa');
                           }}
@@ -9087,15 +9407,15 @@ export default function App() {
                             <span className="text-[9px] opacity-80">↗</span>
                           </div>
                           <div className="text-sm sm:text-base font-black text-blue-600 dark:text-blue-400 tabular-nums mt-1">
-                            <AnimatedNumber value={financialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
+                            <AnimatedNumber value={dashboardFinancialIntelligence.dailyHouseholdReserve} formatter={fmtCurrencyExact} />
                             <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                           </div>
                           <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                            {fmtCurrencyExact(financialIntelligence.monthlyHouseholdRemaining)}/mês
+                            {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyHouseholdRemaining)}/mês
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
-                            {financialIntelligence.householdPendingAmountCount}{' '}
-                            {financialIntelligence.householdPendingAmountCount === 1
+                            {dashboardFinancialIntelligence.householdPendingAmountCount}{' '}
+                            {dashboardFinancialIntelligence.householdPendingAmountCount === 1
                               ? 'conta a pagar'
                               : 'contas a pagar'}
                           </div>
@@ -9105,6 +9425,7 @@ export default function App() {
                       {hasEmergencyBox && (
                         <div
                           onClick={() => {
+                            setSelectedFinanceMonth(activeReservesMonth);
                             setActiveTab('billing');
                             setBillingSubTab('despesas_moto');
                           }}
@@ -9112,14 +9433,14 @@ export default function App() {
                         >
                           <div className="flex items-center justify-between gap-1 text-[10px] font-black text-purple-600 dark:text-purple-400">
                             <span className="truncate">🛡️ Emergência</span>
-                            <span className="text-[9px] opacity-80">{financialIntelligence.emergencyPct}%</span>
+                            <span className="text-[9px] opacity-80">{dashboardFinancialIntelligence.emergencyPct}%</span>
                           </div>
                           <div className="text-sm sm:text-base font-black text-purple-600 dark:text-purple-400 tabular-nums mt-1">
-                            <AnimatedNumber value={financialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
+                            <AnimatedNumber value={dashboardFinancialIntelligence.dailyEmergencyReserve} formatter={fmtCurrencyExact} />
                             <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                           </div>
                           <div className={`text-[10px] font-bold tabular-nums mt-0.5 ${mutedText}`}>
-                            {fmtCurrencyExact(financialIntelligence.monthlyEmergencyReserve)}/mês
+                            {fmtCurrencyExact(dashboardFinancialIntelligence.monthlyEmergencyReserve)}/mês
                           </div>
                           <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                             Fundo de imprevistos pessoal
@@ -9132,15 +9453,15 @@ export default function App() {
                         <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
                           <span className="truncate">🔒 Total a Guardar</span>
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-transparent border border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
-                            {financialIntelligence.totalReservesPctOfGross}%
+                            {dashboardFinancialIntelligence.totalReservesPctOfGross}%
                           </span>
                         </div>
                         <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
-                          <AnimatedNumber value={financialIntelligence.totalDailyCostsAndReserves} formatter={fmtCurrencyExact} />
+                          <AnimatedNumber value={dashboardFinancialIntelligence.totalDailyCostsAndReserves} formatter={fmtCurrencyExact} />
                           <span className={`text-[10px] font-semibold ml-0.5 ${mutedText}`}>/dia</span>
                         </div>
                         <div className="text-[10px] font-bold text-emerald-600/90 dark:text-emerald-400/90 tabular-nums mt-0.5">
-                          {fmtCurrencyExact(financialIntelligence.totalMonthlyCostsAndReserves)}/mês
+                          {fmtCurrencyExact(dashboardFinancialIntelligence.totalMonthlyCostsAndReserves)}/mês
                         </div>
                         <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
                           {activeBoxLabels.length > 0
@@ -9159,46 +9480,75 @@ export default function App() {
                       🎯 Piso Mínimo (só Moto + Casa):
                     </span>
                     <strong className="text-amber-500 dark:text-amber-400 font-black tabular-nums">
-                      {fmtCurrencyExact(financialIntelligence.breakEvenDaily)}/dia
+                      {fmtCurrencyExact(dashboardFinancialIntelligence.breakEvenDaily)}/dia
                     </strong>
                     <span className={`${mutedText} hidden sm:inline`}>•</span>
                     <span className={mutedText}>
-                      Sua base atual: <strong className={`tabular-nums ${primaryText} font-black`}>{fmtCurrencyExact(financialIntelligence.dailyGross)}/dia</strong>
+                      Sua base atual: <strong className={`tabular-nums ${primaryText} font-black`}>{fmtCurrencyExact(dashboardFinancialIntelligence.dailyGross)}/dia</strong>
                     </span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {financialIntelligence.dailyNetProfit >= 0 ? (
+                    {dashboardFinancialIntelligence.dailyNetProfit >= 0 ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
-                        💵 Sobra Livre: +{fmtCurrencyExact(financialIntelligence.dailyNetProfit)}/dia ({financialIntelligence.netMarginPct}%)
+                        💵 Sobra Livre: +{fmtCurrencyExact(dashboardFinancialIntelligence.dailyNetProfit)}/dia ({dashboardFinancialIntelligence.netMarginPct}%)
                       </span>
                     ) : (
                       <span className="text-amber-500 dark:text-amber-400 font-bold tabular-nums">
-                        💡 Para cobrir tudo, fature <strong>{fmtCurrencyExact(financialIntelligence.totalDailyCostsAndReserves)}/dia</strong> (+{fmtCurrencyExact(Math.abs(financialIntelligence.dailyNetProfit))}/dia na base)
+                        💡 Para cobrir tudo, fature <strong>{fmtCurrencyExact(dashboardFinancialIntelligence.totalDailyCostsAndReserves)}/dia</strong> (+{fmtCurrencyExact(Math.abs(dashboardFinancialIntelligence.dailyNetProfit))}/dia na base)
                       </span>
                     )}
                   </div>
                 </div>
               </div>
             </div>
+              );
+            })()}
 
             {/* GRID INFERIOR MINIMALISTA (SEM CARDS PRINCIPAIS PESADOS, SEPARADO POR LINHAS SUTIS) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
               {/* Coluna Esquerda: Metas, Produtividade & Gráfico dos Últimos 7 Dias */}
               <div className={`lg:col-span-7 flex flex-col gap-6 pb-6 lg:pb-0 border-b lg:border-b-0 lg:border-r lg:pr-8 ${dividerBorder}`}>
-                {/* Ganhos por Período & Produtividade (Minimalista) */}
+                {/* Ganhos por Período & Produtividade (Cards sem fundo com borda fina) */}
                 <div className={`pb-6 border-b ${dividerBorder}`}>
-                  <div className={`flex items-center justify-between gap-2 pb-3 mb-2 border-b ${dividerBorder}`}>
-                    <h2 className={`text-sm sm:text-base font-extrabold ${primaryText}`}>Ganhos por Período & Produtividade</h2>
-                    <button
-                      onClick={() => setActiveTab('billing')}
-                      className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer shrink-0 bg-transparent"
-                    >
-                      Ver completo
-                    </button>
+                  <div className={`flex flex-row items-center justify-between gap-2 pb-3 mb-4 border-b ${dividerBorder}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-base shrink-0">📈</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h2 className={`text-xs sm:text-sm font-black truncate ${primaryText}`}>
+                            Ganhos por Período & Produtividade
+                          </h2>
+                          <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40">
+                            Metas
+                          </span>
+                        </div>
+                        <p className={`text-[10px] truncate ${mutedText}`}>
+                          Metas diária, semanal e personalizada + rendimento na rua
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('settings')}
+                        title="Ajustar metas nas Configurações"
+                        className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-transparent text-[#FF6A1A] border border-[#FF6A1A]/40 hover:border-[#FF6A1A] transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        <span className="hidden xs:inline">Ajustar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('billing')}
+                        className="text-xs font-bold text-[#FF6A1A] hover:underline cursor-pointer bg-transparent px-1"
+                      >
+                        Ver completo
+                      </button>
+                    </div>
                   </div>
 
-                  {/* 1. Meta Diária de Hoje (Minimalista sem fundo) */}
+                  {/* Grid de Metas por Período (Cards sem fundo, borda fina) */}
                   {(() => {
                     const dailyTarget = Math.max(0, Number(dbState.dailyGoal) || 0);
                     const dailyEarned = progressAnalytics.revToday;
@@ -9207,67 +9557,6 @@ export default function App() {
                     const dailyRemaining = Math.max(0, dailyTarget - dailyEarned);
                     const isDailyGoalReached = dailyTarget > 0 && dailyEarned >= dailyTarget;
 
-                    return (
-                      <div className={`py-3.5 border-b ${dividerBorder}`}>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <Target
-                              className={`w-4 h-4 shrink-0 ${
-                                isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                              }`}
-                            />
-                            <span className={`text-xs sm:text-sm font-extrabold ${primaryText}`}>Meta Diária de Hoje</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-xs sm:text-sm font-black tabular-nums ${
-                                isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                              }`}
-                            >
-                              <AnimatedNumber value={dailyEarned} formatter={fmtMoney} /> / {fmtMoney(dailyTarget)} ({dailyRawPct}%)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('settings')}
-                              title="Ajustar Meta Diária nas Configurações"
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
-                            >
-                              Ajustar
-                            </button>
-                          </div>
-                        </div>
-
-                        <div
-                          className={`mt-2.5 h-2 rounded-full overflow-hidden ${
-                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
-                          }`}
-                        >
-                          <div
-                            className={`h-full rounded-full dashboard-progress-fill ${
-                              isDailyGoalReached
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                                : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
-                            }`}
-                            style={{ width: `${dailyBarPct}%` }}
-                          />
-                        </div>
-
-                        <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
-                          <span className={isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-bold' : mutedText}>
-                            {isDailyGoalReached
-                              ? `🎉 Meta diária batida! (+${fmtMoney(dailyEarned - dailyTarget)} acima da meta)`
-                              : `Faltam ${fmtMoney(dailyRemaining)} para atingir o objetivo de hoje`}
-                          </span>
-                          <span className={isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : mutedText}>
-                            {dailyRawPct}% concluído
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* 2. Meta de Faturamento Semanal (Minimalista sem fundo) */}
-                  {(() => {
                     const weeklyTarget = Math.max(0, Number(dbState.weeklyGoal) || 0);
                     const weeklyEarned = periodTotals.revWeek;
                     const weeklyRawPct = weeklyTarget > 0 ? Math.round((weeklyEarned / weeklyTarget) * 100) : 0;
@@ -9275,260 +9564,285 @@ export default function App() {
                     const weeklyRemaining = Math.max(0, weeklyTarget - weeklyEarned);
                     const isWeeklyGoalReached = weeklyTarget > 0 && weeklyEarned >= weeklyTarget;
 
-                    return (
-                      <div className={`py-3.5 border-b ${dividerBorder}`}>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <Trophy
-                              className={`w-4 h-4 shrink-0 ${
-                                isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                              }`}
-                            />
-                            <span className={`text-xs sm:text-sm font-extrabold ${primaryText}`}>
-                              Meta de Faturamento Semanal
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-xs sm:text-sm font-black tabular-nums ${
-                                isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                              }`}
-                            >
-                              <AnimatedNumber value={weeklyEarned} formatter={fmtMoney} /> / {fmtMoney(weeklyTarget)} ({weeklyRawPct}%)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('settings')}
-                              title="Ajustar Meta Semanal nas Configurações"
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
-                            >
-                              Ajustar
-                            </button>
-                          </div>
-                        </div>
-
-                        <div
-                          className={`mt-2.5 h-2 rounded-full overflow-hidden ${
-                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
-                          }`}
-                        >
-                          <div
-                            className={`h-full rounded-full dashboard-progress-fill ${
-                              isWeeklyGoalReached
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                                : 'bg-gradient-to-r from-[#FF7B31] to-[#FF5000]'
-                            }`}
-                            style={{ width: `${weeklyBarPct}%` }}
-                          />
-                        </div>
-
-                        <div className="mt-2 flex items-center justify-between text-[11px] sm:text-xs font-semibold tabular-nums">
-                          <span className={mutedText}>
-                            {isWeeklyGoalReached
-                              ? `🎉 Meta semanal batida! (+${fmtMoney(weeklyEarned - weeklyTarget)} acima da meta)`
-                              : `Faltam ${fmtMoney(weeklyRemaining)} para atingir a meta da semana`}
-                          </span>
-                          <span className={isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : mutedText}>
-                            {weeklyRawPct}% concluído
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* 3. Meta Personalizada de Ganhos (Minimalista sem fundo) */}
-                  {(() => {
                     const customTarget = Math.max(0, Number(dbState.customGoalTarget) || 0);
                     const targetDate = dbState.customGoalTargetDate || getDefaultFutureDate(dbState.customGoalDays || 20);
                     const countdown = getCustomGoalCountdown('date', dbState.customGoalDays, targetDate);
                     const customDays = Math.max(1, countdown.effectiveDays);
-                    const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada de Saldo';
+                    const customTitle = (dbState.customGoalTitle || '').trim() || 'Meta Personalizada';
                     const currentBalance = periodTotals.saldoMonth;
-                    const currentGross = periodTotals.revMonth;
-                    const currentExpenses = periodTotals.expMonth;
-                    const rawPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
-                    const barPct = Math.min(100, Math.max(0, rawPct));
+                    const rawCustomPct = customTarget > 0 ? Math.round((currentBalance / customTarget) * 100) : 0;
+                    const customBarPct = Math.min(100, Math.max(0, rawCustomPct));
                     const remainingToGoal = Math.max(0, customTarget - currentBalance);
-                    const isGoalReached = customTarget > 0 && currentBalance >= customTarget;
-                    const requiredDailyToReachGoal = isGoalReached ? 0 : remainingToGoal / customDays;
+                    const isCustomGoalReached = customTarget > 0 && currentBalance >= customTarget;
+                    const requiredDailyToReachGoal = isCustomGoalReached ? 0 : remainingToGoal / customDays;
 
                     return (
-                      <div className={`py-3.5 border-b ${dividerBorder}`}>
-                        {/* Header */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                          <div className="flex items-center gap-2">
-                            <Trophy className={`w-4 h-4 shrink-0 ${
-                              isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                            }`} />
-                            <div>
-                              <span className={`text-xs sm:text-sm font-extrabold block leading-tight ${primaryText}`}>
-                                {customTitle}
-                              </span>
-                              <span className={`text-[10px] sm:text-[11px] ${mutedText}`}>
-                                Acompanhando seu Saldo Atual (Lucro Líquido = Ganhos - Gastos)
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-xs sm:text-sm font-black tabular-nums ${
-                                isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : currentBalance < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-[#FF6A1A]'
-                              }`}
-                            >
-                              Saldo: <AnimatedNumber value={currentBalance} formatter={fmtMoney} /> / {fmtMoney(customTarget)} ({rawPct}%)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('settings')}
-                              title="Ajustar Meta e Data Término nas Configurações"
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors bg-transparent border ${dividerBorder} ${secondaryText} hover:border-[#FF6A1A] hover:text-[#FF6A1A]`}
-                            >
-                              Ajustar
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Sub-itens Minimalistas Sem Fundo, Apenas Borda Fina e Suave */}
-                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
-                            <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedText}`}>
-                              Data Término
-                            </span>
-                            <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
-                              <span className={`text-xs sm:text-sm font-black tabular-nums ${primaryText}`}>
-                                {formatPtBrDate(countdown.targetDateStr)}
-                              </span>
-                              <span className="text-[10px] font-black text-[#FF6A1A] bg-transparent px-1.5 py-0.5 rounded-md border border-[#FF6A1A]/30">
-                                ⏳ {countdown.countdownBadgeText}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF6A1A]">
-                              Saldo Diário Necessário
-                            </span>
-                            <div className="mt-1 flex items-baseline justify-between gap-1">
-                              <span
-                                className={`text-sm sm:text-base font-black tabular-nums ${
-                                  isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
-                                }`}
-                              >
-                                {isGoalReached ? (
-                                  'Objetivo Batido!'
-                                ) : (
-                                  <>
-                                    <AnimatedNumber value={requiredDailyToReachGoal} formatter={fmtCurrencyExact} />/dia
-                                  </>
-                                )}
-                              </span>
-                              {!isGoalReached && (
-                                <span className={`text-[10px] font-bold tabular-nums ${mutedText}`}>
-                                  {countdown.isToday ? 'hoje' : `por ${customDays} ${customDays === 1 ? 'dia' : 'dias'}`}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className={`rounded-xl p-2.5 flex flex-col justify-between bg-transparent border ${dividerBorder}`}>
-                            <span
-                              className={`text-[10px] font-extrabold uppercase tracking-wider ${
-                                isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'
-                              }`}
-                            >
-                              Falta de Saldo Líquido
-                            </span>
-                            <div className="mt-1 flex items-baseline justify-between gap-1">
-                              <span
-                                className={`text-sm sm:text-base font-black tabular-nums ${
-                                  isGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                                }`}
-                              >
-                                {isGoalReached ? (
-                                  '100% Batida!'
-                                ) : (
-                                  <AnimatedNumber value={remainingToGoal} formatter={fmtMoney} />
-                                )}
-                              </span>
-                              <span className={`text-[10px] font-bold ${mutedText}`}>
-                                {isGoalReached ? 'Sucesso' : `${Math.max(0, 100 - rawPct)}% restante`}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Progress Bar Animada */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        {/* 1. Meta Diária */}
                         <div
-                          className={`mt-3 h-2 rounded-full overflow-hidden ${
-                            isDark ? 'bg-neutral-800' : 'bg-slate-200/80'
-                          }`}
+                          onClick={() => setActiveTab('settings')}
+                          title="Clique para ajustar sua meta diária"
+                          className={`rounded-xl p-3 bg-transparent border ${dividerBorder} ${
+                            isDailyGoalReached ? 'hover:border-emerald-500/50' : 'hover:border-[#FF6A1A]/50'
+                          } transition-all cursor-pointer flex flex-col justify-between`}
                         >
-                          <div
-                            className={`h-full rounded-full dashboard-progress-fill ${
-                              isGoalReached
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                                : 'bg-gradient-to-r from-[#FF6A1A] to-amber-400'
-                            }`}
-                            style={{ width: `${barPct}%` }}
-                          />
+                          <div>
+                            <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                              <span className={`flex items-center gap-1 font-black min-w-0 ${
+                                isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                              }`}>
+                                <span className="shrink-0">🎯</span>
+                                <span className="truncate">Meta Hoje</span>
+                              </span>
+                              <span className={`text-[9px] font-black px-1.5 py-0.2 rounded bg-transparent border shrink-0 tabular-nums ${
+                                isDailyGoalReached
+                                  ? 'border-emerald-500/35 text-emerald-500 dark:text-emerald-400'
+                                  : 'border-[#FF6A1A]/35 text-[#FF6A1A]'
+                              }`}>
+                                {dailyRawPct}%
+                              </span>
+                            </div>
+
+                            <div className={`text-sm sm:text-base font-black tabular-nums mt-1.5 leading-tight ${
+                              isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-[#FF6A1A]'
+                            }`}>
+                              <AnimatedNumber value={dailyEarned} formatter={fmtMoney} />
+                              <span className={`text-[10px] font-semibold ml-1 ${mutedText}`}>
+                                / {fmtMoney(dailyTarget)}
+                              </span>
+                            </div>
+
+                            <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
+                              <div
+                                className={`h-full rounded-full dashboard-progress-fill ${
+                                  isDailyGoalReached ? 'bg-emerald-500' : 'bg-[#FF6A1A]'
+                                }`}
+                                style={{ width: `${dailyBarPct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-2 space-y-0.5">
+                            <div className={`text-[10px] font-semibold truncate tabular-nums ${
+                              isDailyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-bold' : mutedText
+                            }`}>
+                              {isDailyGoalReached
+                                ? `🎉 Batida (+${fmtMoney(dailyEarned - dailyTarget)})`
+                                : `Faltam ${fmtMoney(dailyRemaining)} hoje`}
+                            </div>
+                            <div className={`text-[9px] truncate ${mutedText}`}>
+                              Faturamento de hoje
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Feedback Visual Direto */}
-                        <div className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold tabular-nums">
-                          <span className={mutedText}>
-                            Saldo no bolso: <span className={currentBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400 font-bold' : 'text-rose-500 dark:text-rose-400 font-bold'}>{fmtMoney(currentBalance)}</span> <span className="opacity-75">(Ganhos: {fmtMoney(currentGross)} · Gastos: {fmtMoney(currentExpenses)})</span>
-                          </span>
-                          <span className={isGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-extrabold' : `${primaryText} font-bold`}>
-                            {isGoalReached ? (
-                              `🎉 Meta atingida (+${fmtMoney(currentBalance - customTarget)} de sobra)`
-                            ) : (
-                              <>
-                                Faltam <strong className="text-rose-500 dark:text-rose-400 font-black">{fmtMoney(remainingToGoal)}</strong> de saldo
-                              </>
-                            )}
-                          </span>
+                        {/* 2. Meta Semanal */}
+                        <div
+                          onClick={() => setActiveTab('settings')}
+                          title="Clique para ajustar sua meta semanal"
+                          className={`rounded-xl p-3 bg-transparent border ${dividerBorder} ${
+                            isWeeklyGoalReached ? 'hover:border-emerald-500/50' : 'hover:border-amber-500/50'
+                          } transition-all cursor-pointer flex flex-col justify-between`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                              <span className={`flex items-center gap-1 font-black min-w-0 ${
+                                isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-amber-500 dark:text-amber-400'
+                              }`}>
+                                <span className="shrink-0">🏆</span>
+                                <span className="truncate">Meta Semana</span>
+                              </span>
+                              <span className={`text-[9px] font-black px-1.5 py-0.2 rounded bg-transparent border shrink-0 tabular-nums ${
+                                isWeeklyGoalReached
+                                  ? 'border-emerald-500/35 text-emerald-500 dark:text-emerald-400'
+                                  : 'border-amber-500/35 text-amber-500 dark:text-amber-400'
+                              }`}>
+                                {weeklyRawPct}%
+                              </span>
+                            </div>
+
+                            <div className={`text-sm sm:text-base font-black tabular-nums mt-1.5 leading-tight ${
+                              isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400' : 'text-amber-500 dark:text-amber-400'
+                            }`}>
+                              <AnimatedNumber value={weeklyEarned} formatter={fmtMoney} />
+                              <span className={`text-[10px] font-semibold ml-1 ${mutedText}`}>
+                                / {fmtMoney(weeklyTarget)}
+                              </span>
+                            </div>
+
+                            <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
+                              <div
+                                className={`h-full rounded-full dashboard-progress-fill ${
+                                  isWeeklyGoalReached ? 'bg-emerald-500' : 'bg-amber-500'
+                                }`}
+                                style={{ width: `${weeklyBarPct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-2 space-y-0.5">
+                            <div className={`text-[10px] font-semibold truncate tabular-nums ${
+                              isWeeklyGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-bold' : mutedText
+                            }`}>
+                              {isWeeklyGoalReached
+                                ? `🎉 Batida (+${fmtMoney(weeklyEarned - weeklyTarget)})`
+                                : `Faltam ${fmtMoney(weeklyRemaining)} na semana`}
+                            </div>
+                            <div className={`text-[9px] truncate ${mutedText}`}>
+                              Acumulado de seg a dom
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 3. Meta Personalizada de Saldo */}
+                        <div
+                          onClick={() => setActiveTab('settings')}
+                          title="Clique para ajustar sua meta personalizada e data término"
+                          className={`rounded-xl p-3 bg-transparent border ${dividerBorder} ${
+                            isCustomGoalReached ? 'hover:border-emerald-500/50' : 'hover:border-sky-500/50'
+                          } transition-all cursor-pointer flex flex-col justify-between`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+                              <span className={`flex items-center gap-1 font-black min-w-0 ${
+                                isCustomGoalReached
+                                  ? 'text-emerald-500 dark:text-emerald-400'
+                                  : currentBalance < 0
+                                  ? 'text-rose-500 dark:text-rose-400'
+                                  : 'text-sky-600 dark:text-sky-400'
+                              }`}>
+                                <span className="shrink-0">🚀</span>
+                                <span className="truncate">{customTitle}</span>
+                              </span>
+                              <span className={`text-[9px] font-black px-1.5 py-0.2 rounded bg-transparent border shrink-0 tabular-nums ${
+                                isCustomGoalReached
+                                  ? 'border-emerald-500/35 text-emerald-500 dark:text-emerald-400'
+                                  : currentBalance < 0
+                                  ? 'border-rose-500/35 text-rose-500 dark:text-rose-400'
+                                  : 'border-sky-500/35 text-sky-600 dark:text-sky-400'
+                              }`}>
+                                {rawCustomPct}%
+                              </span>
+                            </div>
+
+                            <div className={`text-sm sm:text-base font-black tabular-nums mt-1.5 leading-tight ${
+                              isCustomGoalReached
+                                ? 'text-emerald-500 dark:text-emerald-400'
+                                : currentBalance < 0
+                                ? 'text-rose-500 dark:text-rose-400'
+                                : 'text-sky-600 dark:text-sky-400'
+                            }`}>
+                              <AnimatedNumber value={currentBalance} formatter={fmtMoney} />
+                              <span className={`text-[10px] font-semibold ml-1 ${mutedText}`}>
+                                / {fmtMoney(customTarget)}
+                              </span>
+                            </div>
+
+                            <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-neutral-800' : 'bg-slate-200/80'}`}>
+                              <div
+                                className={`h-full rounded-full dashboard-progress-fill ${
+                                  isCustomGoalReached ? 'bg-emerald-500' : 'bg-sky-500'
+                                }`}
+                                style={{ width: `${customBarPct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-2 space-y-0.5">
+                            <div className={`text-[10px] font-semibold truncate tabular-nums ${
+                              isCustomGoalReached ? 'text-emerald-500 dark:text-emerald-400 font-bold' : mutedText
+                            }`}>
+                              {isCustomGoalReached
+                                ? `🎉 Batida (+${fmtMoney(currentBalance - customTarget)})`
+                                : `Faltam ${fmtMoney(remainingToGoal)} · ${fmtCurrencyExact(requiredDailyToReachGoal)}/dia`}
+                            </div>
+                            <div className={`text-[9px] truncate ${mutedText}`}>
+                              Até {formatPtBrDate(countdown.targetDateStr)} ({countdown.countdownBadgeText})
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
                   })()}
 
-                  {/* 4 Métricas de Produtividade (Sem fundo, apenas borda fina e suave) */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
-                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
-                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / Hora</div>
-                      <div className={`text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate ${primaryText}`}>
-                        <AnimatedNumber
-                          value={totals.totalHours > 0 ? totals.totalRevenue / totals.totalHours : 0}
-                          formatter={v => `${fmtCurrencyExact(v)}/h`}
-                        />
+                  {/* Sub-seção de Produtividade (Mesmo estilo do Resumo da Divisão por Caixinha) */}
+                  <div className={`mt-4 pt-4 border-t ${dividerBorder}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs">⚡</span>
+                        <span className="text-[11px] sm:text-xs font-black uppercase tracking-wide text-[#FF6A1A]">
+                          Produtividade & Rendimento
+                        </span>
                       </div>
+                      <span className={`text-[10px] font-bold ${mutedText}`}>
+                        Total de{' '}
+                        <strong className={`${primaryText} font-black tabular-nums`}>
+                          {totals.ridesKm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km
+                        </strong>{' '}
+                        em {progressAnalytics.uniqueWorkDays}{' '}
+                        {progressAnalytics.uniqueWorkDays === 1 ? 'dia' : 'dias'}
+                      </span>
                     </div>
-                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
-                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Lucro / Hora</div>
-                      <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-emerald-500 dark:text-emerald-400 truncate">
-                        <AnimatedNumber
-                          value={totals.totalHours > 0 ? totals.lucro / totals.totalHours : 0}
-                          formatter={v => `${fmtCurrencyExact(v)}/h`}
-                        />
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      <div className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-slate-500/40 transition-colors`}>
+                        <div className={`flex items-center justify-between gap-1 text-[10px] font-black ${primaryText}`}>
+                          <span className="truncate">⏱️ Ganhos / Hora</span>
+                        </div>
+                        <div className={`text-sm sm:text-base font-black tabular-nums mt-1 truncate ${primaryText}`}>
+                          <AnimatedNumber
+                            value={totals.totalHours > 0 ? totals.totalRevenue / totals.totalHours : 0}
+                            formatter={v => `${fmtCurrencyExact(v)}/h`}
+                          />
+                        </div>
+                        <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                          Bruto por hora
+                        </div>
                       </div>
-                    </div>
-                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
-                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Ganhos / KM</div>
-                      <div className="text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums text-[#FF6A1A] truncate">
-                        <AnimatedNumber
-                          value={totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : 0}
-                          formatter={v => `${fmtCurrencyExact(v)}/km`}
-                        />
+
+                      <div className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-emerald-500/50 transition-colors`}>
+                        <div className="flex items-center justify-between gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
+                          <span className="truncate">💵 Lucro / Hora</span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-1 truncate">
+                          <AnimatedNumber
+                            value={totals.totalHours > 0 ? totals.lucro / totals.totalHours : 0}
+                            formatter={v => `${fmtCurrencyExact(v)}/h`}
+                          />
+                        </div>
+                        <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                          Líquido no bolso
+                        </div>
                       </div>
-                    </div>
-                    <div className={`rounded-xl p-2.5 sm:p-3.5 bg-transparent border ${dividerBorder}`}>
-                      <div className={`text-[10px] sm:text-xs font-medium truncate ${mutedText}`}>Horas Rodadas</div>
-                      <div className={`text-xs sm:text-base font-black mt-0.5 sm:mt-1 tabular-nums truncate ${primaryText}`}>
-                        <AnimatedNumber
-                          value={totals.totalHours}
-                          formatter={v => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`}
-                        />
+
+                      <div className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-[#FF6A1A]/50 transition-colors`}>
+                        <div className="flex items-center justify-between gap-1 text-[10px] font-black text-[#FF6A1A]">
+                          <span className="truncate">🛣️ Ganhos / KM</span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-[#FF6A1A] tabular-nums mt-1 truncate">
+                          <AnimatedNumber
+                            value={totals.ridesKm > 0 ? totals.totalRevenue / totals.ridesKm : 0}
+                            formatter={v => `${fmtCurrencyExact(v)}/km`}
+                          />
+                        </div>
+                        <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                          Média por km rodado
+                        </div>
+                      </div>
+
+                      <div className={`p-3 rounded-xl bg-transparent border ${dividerBorder} hover:border-sky-500/50 transition-colors`}>
+                        <div className="flex items-center justify-between gap-1 text-[10px] font-black text-sky-600 dark:text-sky-400">
+                          <span className="truncate">🕒 Horas Rodadas</span>
+                        </div>
+                        <div className="text-sm sm:text-base font-black text-sky-600 dark:text-sky-400 tabular-nums mt-1 truncate">
+                          <AnimatedNumber
+                            value={totals.totalHours}
+                            formatter={v => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`}
+                          />
+                        </div>
+                        <div className={`text-[9px] mt-0.5 truncate ${mutedText}`}>
+                          Tempo em atividade
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -12304,7 +12618,7 @@ export default function App() {
                                   {/* Toggle Ativar / Desativar */}
                                   <button
                                     type="button"
-                                    onClick={() => toggleBikeExpense(item.id)}
+                                    onClick={() => toggleBikeExpense(item.id, selectedFinanceMonth)}
                                     className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors bg-transparent border ${
                                       item.isActive
                                         ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
@@ -18491,21 +18805,64 @@ export default function App() {
                 />
               </div>
 
-              {renderExpenseAmountAndCalendar({
-                accentClass: 'orange',
-                valueLabel: 'Valor Mensal / Despesa (R$)',
-                calcTitle: 'Valor da Despesa da Moto (R$)',
-                step: '5',
-                amount: bikeDraft.monthlyAmount,
-                dueDay: bikeDraft.dueDay ?? 15,
-                dates: bikeDraft.selectedDates || [],
-                target: 'bike',
-                calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
-                onChangeAmount: val =>
-                  setBikeDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
-                onChangeDueDay: day =>
-                  setBikeDraft(prev => ({ ...prev, dueDay: day })),
-              })}
+              {(() => {
+                const activeScopeYM =
+                  bikeDraft.isSingleMonth !== false
+                    ? bikeDraft.dueMonth || bikeModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7)
+                    : bikeModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7);
+                const [sy, sm] = activeScopeYM.split('-').map(Number);
+                const sMonthName = PT_BR_MONTH_NAMES[sm - 1] || String(sm);
+                const isSingle = bikeDraft.isSingleMonth !== false;
+                return (
+                  <>
+                    <div className={`px-3 py-2 rounded-xl border flex items-center justify-between gap-2 text-[11px] bg-transparent ${dividerBorder}`}>
+                      <span className={`font-bold ${mutedText}`}>
+                        {isSingle
+                          ? `📅 Exclusiva de ${sMonthName} de ${sy} (não se repete no ano)`
+                          : `🗓️ Editando somente o mês ${sMonthName} de ${sy} (independente)`}
+                      </span>
+                      {editingBikeItem && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBikeDraft(prev => ({
+                              ...prev,
+                              isSingleMonth: !isSingle,
+                              dueMonth:
+                                !isSingle
+                                  ? prev.dueMonth || bikeModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7)
+                                  : prev.dueMonth,
+                            }))
+                          }
+                          className="text-[10px] font-black text-[#FF6A1A] hover:underline shrink-0 cursor-pointer"
+                        >
+                          {isSingle ? 'Repetir todo mês' : 'Restringir a este mês'}
+                        </button>
+                      )}
+                    </div>
+
+                    {renderExpenseAmountAndCalendar({
+                      accentClass: 'orange',
+                      valueLabel: 'Valor da Despesa no Mês (R$)',
+                      calcTitle: 'Valor da Despesa da Moto (R$)',
+                      step: '5',
+                      amount: bikeDraft.monthlyAmount,
+                      dueDay: bikeDraft.dueDay ?? 15,
+                      dueMonth: isSingle ? activeScopeYM : undefined,
+                      dates: bikeDraft.selectedDates || [],
+                      target: 'bike',
+                      calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
+                      onChangeAmount: val =>
+                        setBikeDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+                      onChangeDueDay: day =>
+                        setBikeDraft(prev => ({ ...prev, dueDay: day })),
+                      onChangeDueMonth: isSingle
+                        ? month => setBikeDraft(prev => ({ ...prev, dueMonth: month }))
+                        : undefined,
+                    })}
+                  </>
+                );
+              })()}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {renderCustomCategoryPanel({

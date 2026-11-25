@@ -302,6 +302,17 @@ export type BikeExpenseCategory =
 
 export type ExpenseRecurrenceType = 'monthly' | 'interval_days' | 'specific_date' | 'calendar_dates';
 
+export interface BikeExpenseMonthlyOverride {
+  monthlyAmount?: number;
+  totalCost?: number;
+  dueDay?: number;
+  selectedDates?: string[];
+  isActive?: boolean;
+  name?: string;
+  category?: BikeExpenseCategory;
+  icon?: string;
+}
+
 export interface BikeExpenseItem {
   id: string;
   name: string;
@@ -309,6 +320,9 @@ export interface BikeExpenseItem {
   monthlyAmount: number;
   recurrenceType?: ExpenseRecurrenceType;
   dueDay?: number;
+  dueMonth?: string;
+  isSingleMonth?: boolean;
+  monthlyOverrides?: Record<string, BikeExpenseMonthlyOverride>;
   intervalDays?: number;
   totalCost?: number;
   lastPaidDate?: string;
@@ -616,13 +630,32 @@ export function getSupabaseClient(): SupabaseClient | null {
  * ou se é apenas a lista padrão (valores zerados) criada automaticamente em um aparelho novo.
  */
 function isExpenseConfigCustomized(
-  list: Array<{ id: string; monthlyAmount: number; totalCost?: number; isCustomEdited?: boolean }> | undefined | null,
+  list:
+    | Array<{
+        id: string;
+        monthlyAmount: number;
+        totalCost?: number;
+        isCustomEdited?: boolean;
+        isSingleMonth?: boolean;
+        monthlyOverrides?: Record<string, unknown>;
+      }>
+    | undefined
+    | null,
   defaults: Array<{ id: string }>,
   deletedIds?: string[] | null
 ): boolean {
   if (Array.isArray(deletedIds) && deletedIds.length > 0) return true;
   if (!Array.isArray(list) || list.length === 0) return false;
-  if (list.some(i => Number(i.monthlyAmount) > 0 || Number(i.totalCost) > 0 || i.isCustomEdited)) {
+  if (
+    list.some(
+      i =>
+        Number(i.monthlyAmount) > 0 ||
+        Number(i.totalCost) > 0 ||
+        i.isCustomEdited ||
+        i.isSingleMonth ||
+        (i.monthlyOverrides && Object.keys(i.monthlyOverrides).length > 0)
+    )
+  ) {
     return true;
   }
   const defaultIds = new Set(defaults.map(d => d.id));
