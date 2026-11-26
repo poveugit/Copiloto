@@ -686,6 +686,9 @@ function addDaysToDateStr(dateStr: string, daysToAdd: number): string {
 }
 
 export function matchesHouseholdExpense(expense: ExpenseEntry, item: HouseholdExpenseItem): boolean {
+  if (expense.isEverydayHousehold) {
+    return false;
+  }
   if (expense.householdExpenseId) {
     return expense.householdExpenseId === item.id;
   }
@@ -859,6 +862,49 @@ export function resolveBikeExpenseForMonth(
   item: BikeExpenseItem,
   targetYM: string
 ): BikeExpenseItem {
+  if (!targetYM || !/^\d{4}-\d{2}$/.test(targetYM)) return item;
+  const ov = item.monthlyOverrides?.[targetYM];
+  if (!ov) return item;
+  return {
+    ...item,
+    name: ov.name !== undefined ? ov.name : item.name,
+    category: ov.category !== undefined ? ov.category : item.category,
+    icon: ov.icon !== undefined ? ov.icon : item.icon,
+    monthlyAmount: ov.monthlyAmount !== undefined ? ov.monthlyAmount : item.monthlyAmount,
+    totalCost:
+      ov.totalCost !== undefined
+        ? ov.totalCost
+        : ov.monthlyAmount !== undefined
+        ? ov.monthlyAmount
+        : item.totalCost,
+    dueDay: ov.dueDay !== undefined ? ov.dueDay : item.dueDay,
+    selectedDates: ov.selectedDates !== undefined ? ov.selectedDates : item.selectedDates,
+    isActive: ov.isActive !== undefined ? ov.isActive : item.isActive,
+    isCustomEdited: true,
+  };
+}
+
+export function isHouseholdExpenseVisibleInMonth(
+  item: Pick<HouseholdExpenseItem, 'isSingleMonth' | 'dueMonth' | 'nextDueDate'>,
+  targetYM: string
+): boolean {
+  if (!targetYM || !/^\d{4}-\d{2}$/.test(targetYM)) return true;
+  if (item.isSingleMonth) {
+    const scopeMonth =
+      item.dueMonth && /^\d{4}-\d{2}$/.test(item.dueMonth)
+        ? item.dueMonth
+        : item.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
+        ? item.nextDueDate.slice(0, 7)
+        : '';
+    return scopeMonth ? scopeMonth === targetYM : true;
+  }
+  return true;
+}
+
+export function resolveHouseholdExpenseForMonth(
+  item: HouseholdExpenseItem,
+  targetYM: string
+): HouseholdExpenseItem {
   if (!targetYM || !/^\d{4}-\d{2}$/.test(targetYM)) return item;
   const ov = item.monthlyOverrides?.[targetYM];
   if (!ov) return item;
@@ -1400,7 +1446,15 @@ export default function App() {
   const [householdCategoryFilter, setHouseholdCategoryFilter] = useState<string>('all');
   const [householdStatusFilter, setHouseholdStatusFilter] = useState<'all' | 'pending' | 'paid' | 'overdue'>('all');
   const [showHouseholdModal, setShowHouseholdModal] = useState<boolean>(false);
+  const [householdModalMode, setHouseholdModalMode] = useState<'cotidiana' | 'mensal'>('cotidiana');
+  const [everydayHouseName, setEverydayHouseName] = useState<string>('');
+  const [everydayHouseIcon, setEverydayHouseIcon] = useState<string>('🛒');
+  const [everydayHouseDate, setEverydayHouseDate] = useState<string>(() => todayStr());
+  const [everydayHouseAmount, setEverydayHouseAmount] = useState<number>(0);
+  const [everydayHouseDesc, setEverydayHouseDesc] = useState<string>('');
+  const [everydayHouseError, setEverydayHouseError] = useState<string | null>(null);
   const [editingHouseholdItem, setEditingHouseholdItem] = useState<HouseholdExpenseItem | null>(null);
+  const [householdModalTargetMonth, setHouseholdModalTargetMonth] = useState<string>(() => todayStr().slice(0, 7));
   const [deletingHouseholdId, setDeletingHouseholdId] = useState<string | null>(null);
   const [householdDraft, setHouseholdDraft] = useState<HouseholdExpenseItem>({
     id: '',
@@ -1408,6 +1462,8 @@ export default function App() {
     category: 'moradia',
     monthlyAmount: 0,
     dueDay: 10,
+    dueMonth: todayStr().slice(0, 7),
+    isSingleMonth: true,
     icon: '🏠',
     isActive: true,
   });
@@ -3298,15 +3354,21 @@ export default function App() {
   };
 
   const duplicateHouseholdExpense = (item: HouseholdExpenseItem) => {
+    const targetYM = selectedFinanceMonth || todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.householdExpenses)
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
+    const rawSource = currentList.find(h => h.id === item.id) || item;
+    const resolved = resolveHouseholdExpenseForMonth(rawSource, targetYM);
 
     const newId = 'house_' + Date.now();
     const duplicatedItem: HouseholdExpenseItem = {
-      ...item,
+      ...resolved,
       id: newId,
-      name: `${item.name} (Cópia)`,
+      name: `${resolved.name} (Cópia)`,
+      dueMonth: targetYM,
+      isSingleMonth: true,
+      monthlyOverrides: undefined,
       isCustomEdited: true,
       lastPaidDate: undefined,
       paidMonths: [], // A cópia nasce pendente!
@@ -3390,6 +3452,7 @@ export default function App() {
 
   const toggleHouseholdExpensePaidStatus = (itemId: string, targetYM?: string) => {
     const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
+    const curYM = todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.householdExpenses)
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
@@ -3399,8 +3462,9 @@ export default function App() {
       const currentPaidMonths = Array.isArray(h.paidMonths) ? [...h.paidMonths] : [];
       const currentUnpaidMonths = Array.isArray(h.unpaidMonths) ? [...h.unpaidMonths] : [];
 
-      const { totalPaid } = getHouseholdExpenseMonthPayments(h, ym);
-      const currentDueInfo = getExpenseDueInfo(h, totalPaid, ym);
+      const resolvedH = resolveHouseholdExpenseForMonth(h, ym);
+      const { totalPaid } = getHouseholdExpenseMonthPayments(resolvedH, ym);
+      const currentDueInfo = getExpenseDueInfo(resolvedH, totalPaid, ym);
       const isCurrentlyPaid = currentDueInfo.status === 'paid';
 
       if (isCurrentlyPaid) {
@@ -3421,7 +3485,7 @@ export default function App() {
           ...h,
           paidMonths: nextPaidMonths,
           unpaidMonths: nextUnpaidMonths,
-          lastPaidDate: todayStr(),
+          lastPaidDate: ym === curYM ? todayStr() : h.lastPaidDate,
         };
       }
     });
@@ -3462,8 +3526,15 @@ export default function App() {
   // ================= HOUSEHOLD / CUSTO DE VIDA DA CASA HANDLERS =================
   const handleAddHouseholdCategory = () => saveCustomCategoryForTarget('household');
 
-  const openNewHouseholdExpenseModal = () => {
+  const openNewHouseholdExpenseModal = (defaultMode: 'cotidiana' | 'mensal' = 'cotidiana') => {
     setEditingHouseholdItem(null);
+    setHouseholdModalMode(defaultMode);
+    setEverydayHouseName('');
+    setEverydayHouseIcon('🛒');
+    setEverydayHouseDate(todayStr());
+    setEverydayHouseAmount(0);
+    setEverydayHouseDesc('');
+    setEverydayHouseError(null);
     setShowNewHouseholdCatInput(false);
     setEditingHouseholdCatId(null);
     setNewHouseholdCatName('');
@@ -3471,6 +3542,11 @@ export default function App() {
     setShowHouseCustomIconInput(false);
     setHouseCustomIconDraft('');
     setCalendarPickerTarget(null);
+    const defaultDueMonth =
+      selectedFinanceMonth && /^\d{4}-\d{2}$/.test(selectedFinanceMonth)
+        ? selectedFinanceMonth
+        : todayStr().slice(0, 7);
+    setHouseholdModalTargetMonth(defaultDueMonth);
     setHouseholdDraft({
       id: 'house_' + Date.now(),
       name: '',
@@ -3481,16 +3557,44 @@ export default function App() {
       totalCost: 0,
       selectedDates: [],
       lastPaidDate: undefined,
-      nextDueDate: '',
+      nextDueDate: `${defaultDueMonth}-10`,
       dueDay: 10,
+      dueMonth: defaultDueMonth,
+      isSingleMonth: true,
       icon: '🏠',
       isActive: true,
     });
     setShowHouseholdModal(true);
   };
 
+  const saveEverydayHouseholdFromModal = () => {
+    const amountVal = Math.max(0, Number(everydayHouseAmount) || 0);
+    if (amountVal <= 0) {
+      setEverydayHouseError('Informe o valor (R$) da despesa cotidiana para salvar.');
+      return;
+    }
+    const cleanName = everydayHouseName.trim() || 'Despesa Cotidiana';
+    const newExp: ExpenseEntry = {
+      id: Date.now(),
+      date: everydayHouseDate || todayStr(),
+      category: cleanName,
+      amount: amountVal,
+      expenseType: 'casa',
+      isEverydayHousehold: true,
+      description: everydayHouseDesc.trim() || undefined,
+    };
+    persistAndEnqueueWorkManager({
+      ...dbState,
+      expenses: [...(dbState.expenses || []), newExp],
+    });
+    setEverydayHouseError(null);
+    setShowHouseholdModal(false);
+    setEditingHouseholdItem(null);
+  };
+
   const openEditHouseholdExpenseModal = (item: HouseholdExpenseItem) => {
-    setEditingHouseholdItem(item);
+    setHouseholdModalMode('mensal');
+    setEverydayHouseError(null);
     setShowNewHouseholdCatInput(false);
     setEditingHouseholdCatId(null);
     setNewHouseholdCatName('');
@@ -3498,14 +3602,28 @@ export default function App() {
     setShowHouseCustomIconInput(false);
     setHouseCustomIconDraft('');
     setCalendarPickerTarget(null);
-    const rawMonthly = Math.max(0, Number(item.monthlyAmount) || 0);
-    const rawTotal = Math.max(0, Number(item.totalCost) || 0);
+
+    const rawList =
+      Array.isArray(dbState.householdExpenses)
+        ? dbState.householdExpenses
+        : DEFAULT_HOUSEHOLD_EXPENSES;
+    const rawItem = rawList.find(h => h.id === item.id) || item;
+    const editYM =
+      selectedFinanceMonth && /^\d{4}-\d{2}$/.test(selectedFinanceMonth)
+        ? selectedFinanceMonth
+        : todayStr().slice(0, 7);
+    setHouseholdModalTargetMonth(editYM);
+    const resolvedItem = resolveHouseholdExpenseForMonth(rawItem, editYM);
+
+    setEditingHouseholdItem(rawItem);
+    const rawMonthly = Math.max(0, Number(resolvedItem.monthlyAmount) || 0);
+    const rawTotal = Math.max(0, Number(resolvedItem.totalCost) || 0);
     const initialAmount = rawMonthly > 0 ? rawMonthly : rawTotal;
-    const seededDates = deriveSeedCalendarDatesForExpense(item);
-    const parsedExistingDueDay = Number(item.dueDay);
+    const seededDates = deriveSeedCalendarDatesForExpense(resolvedItem);
+    const parsedExistingDueDay = Number(resolvedItem.dueDay);
     const fallbackNextDueDay =
-      item.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(item.nextDueDate)
-        ? Number(item.nextDueDate.slice(8, 10))
+      resolvedItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(resolvedItem.nextDueDate)
+        ? Number(resolvedItem.nextDueDate.slice(8, 10))
         : 10;
     const resolvedDueDay = Math.max(
       1,
@@ -3516,14 +3634,25 @@ export default function App() {
           : fallbackNextDueDay
       )
     );
+    const isSingle = Boolean(rawItem.isSingleMonth);
+    const resolvedDueMonth = isSingle
+      ? rawItem.dueMonth && /^\d{4}-\d{2}$/.test(rawItem.dueMonth)
+        ? rawItem.dueMonth
+        : rawItem.nextDueDate && /^\d{4}-\d{2}-\d{2}$/.test(rawItem.nextDueDate)
+        ? rawItem.nextDueDate.slice(0, 7)
+        : editYM
+      : editYM;
 
     setHouseholdDraft({
-      ...item,
+      ...resolvedItem,
       monthlyAmount: initialAmount,
       totalCost: initialAmount,
       recurrenceType: 'monthly',
       selectedDates: seededDates,
       dueDay: resolvedDueDay,
+      dueMonth: resolvedDueMonth,
+      isSingleMonth: isSingle,
+      isCustomEdited: true,
     });
     setShowHouseholdModal(true);
   };
@@ -3534,30 +3663,63 @@ export default function App() {
       : DEFAULT_HOUSEHOLD_EXPENSES.map(h => ({ ...h }));
 
     const amountVal = Math.max(0, Number(householdDraft.monthlyAmount) || 0);
+    const editYM =
+      householdModalTargetMonth && /^\d{4}-\d{2}$/.test(householdModalTargetMonth)
+        ? householdModalTargetMonth
+        : selectedFinanceMonth || todayStr().slice(0, 7);
+    const targetSingleMonth = Boolean(householdDraft.isSingleMonth);
     const normalizedDates = normalizeCalendarExpenseDates(
       householdDraft.selectedDates,
       householdDraft.dueDay,
-      10
+      10,
+      targetSingleMonth ? householdDraft.dueMonth || editYM : editYM
     );
 
-    const sanitized: HouseholdExpenseItem = {
-      id: householdDraft.id || 'house_' + Date.now(),
-      name: householdDraft.name.trim() || 'Despesa Doméstica',
-      category: householdDraft.category || 'outros',
-      monthlyAmount: amountVal,
-      recurrenceType: normalizedDates.recurrenceType,
-      dueDay: normalizedDates.dueDay,
-      intervalDays: householdDraft.intervalDays || 30,
-      totalCost: amountVal,
-      lastPaidDate: householdDraft.lastPaidDate,
-      nextDueDate: normalizedDates.nextDueDate,
-      selectedDates: normalizedDates.sortedDates,
-      paidMonths: editingHouseholdItem?.paidMonths ?? householdDraft.paidMonths,
-      unpaidMonths: editingHouseholdItem?.unpaidMonths ?? householdDraft.unpaidMonths,
-      icon: householdDraft.icon?.trim() || '🏠',
-      isActive: householdDraft.isActive !== false,
-      isCustomEdited: true,
-    };
+    let sanitized: HouseholdExpenseItem;
+    if (!editingHouseholdItem || targetSingleMonth) {
+      sanitized = {
+        id: householdDraft.id || 'house_' + Date.now(),
+        name: householdDraft.name.trim() || 'Despesa Doméstica',
+        category: householdDraft.category || 'outros',
+        monthlyAmount: amountVal,
+        recurrenceType: normalizedDates.recurrenceType,
+        dueDay: normalizedDates.dueDay,
+        dueMonth: targetSingleMonth ? normalizedDates.dueMonth : undefined,
+        isSingleMonth: targetSingleMonth,
+        monthlyOverrides: undefined,
+        intervalDays: householdDraft.intervalDays || 30,
+        totalCost: amountVal,
+        lastPaidDate: householdDraft.lastPaidDate,
+        nextDueDate: normalizedDates.nextDueDate,
+        selectedDates: normalizedDates.sortedDates,
+        paidMonths: editingHouseholdItem?.paidMonths ?? householdDraft.paidMonths,
+        unpaidMonths: editingHouseholdItem?.unpaidMonths ?? householdDraft.unpaidMonths,
+        icon: householdDraft.icon?.trim() || '🏠',
+        isActive: householdDraft.isActive !== false,
+        isCustomEdited: true,
+      };
+    } else {
+      // Edição independente somente para o mês selecionado (preserva os valores de todos os outros meses)
+      const nextOverrides: Record<string, import('./services/supabaseSync').HouseholdExpenseMonthlyOverride> = {
+        ...(editingHouseholdItem.monthlyOverrides || {}),
+        [editYM]: {
+          monthlyAmount: amountVal,
+          totalCost: amountVal,
+          dueDay: normalizedDates.dueDay,
+          selectedDates: normalizedDates.sortedDates,
+          isActive: householdDraft.isActive !== false,
+          name: householdDraft.name.trim() || 'Despesa Doméstica',
+          category: householdDraft.category || 'outros',
+          icon: householdDraft.icon?.trim() || '🏠',
+        },
+      };
+      sanitized = {
+        ...editingHouseholdItem,
+        isSingleMonth: false,
+        dueMonth: undefined,
+        monthlyOverrides: nextOverrides,
+      };
+    }
 
     const existingIndex = list.findIndex(h => h.id === sanitized.id);
     if (existingIndex >= 0) {
@@ -3573,6 +3735,9 @@ export default function App() {
         id => id !== sanitized.id
       ),
     });
+    if (sanitized.isSingleMonth && sanitized.dueMonth && sanitized.dueMonth !== selectedFinanceMonth) {
+      setSelectedFinanceMonth(sanitized.dueMonth);
+    }
     setShowHouseholdModal(false);
     setEditingHouseholdItem(null);
   };
@@ -3592,13 +3757,29 @@ export default function App() {
     });
   };
 
-  const toggleHouseholdExpense = (id: string) => {
+  const toggleHouseholdExpense = (id: string, targetYM?: string) => {
+    const ym = targetYM || selectedFinanceMonth || todayStr().slice(0, 7);
     const currentList = Array.isArray(dbState.householdExpenses)
       ? dbState.householdExpenses
       : DEFAULT_HOUSEHOLD_EXPENSES;
-    const list = currentList.map(h =>
-      h.id === id ? { ...h, isActive: !h.isActive } : h
-    );
+    const list = currentList.map(h => {
+      if (h.id !== id) return h;
+      if (h.isSingleMonth) {
+        return { ...h, isActive: !h.isActive };
+      }
+      const resolved = resolveHouseholdExpenseForMonth(h, ym);
+      const nextActive = resolved.isActive === false;
+      return {
+        ...h,
+        monthlyOverrides: {
+          ...(h.monthlyOverrides || {}),
+          [ym]: {
+            ...(h.monthlyOverrides?.[ym] || {}),
+            isActive: nextActive,
+          },
+        },
+      };
+    });
     persistAndEnqueueWorkManager({
       ...dbState,
       householdExpenses: list,
@@ -3818,12 +3999,16 @@ export default function App() {
   const [fuelLiters, setFuelLiters] = useState<string>('');
   const [fuelPricePerLiter, setFuelPricePerLiter] = useState<string>('');
   const [expenseType, setExpenseType] = useState<'moto' | 'casa'>('moto');
+  const [householdEntryMode, setHouseholdEntryMode] = useState<'cotidiana' | 'mensal'>('cotidiana');
+  const [everydayHouseholdCategory, setEverydayHouseholdCategory] = useState<string>('');
   const [expenseDescription, setExpenseDescription] = useState<string>('');
   const [selectedHouseholdExpenseId, setSelectedHouseholdExpenseId] = useState<string>('');
   const [selectedBikeExpenseId, setSelectedBikeExpenseId] = useState<string>('');
   const [showNewHouseholdInModal, setShowNewHouseholdInModal] = useState<boolean>(false);
   const [newHouseholdNameInModal, setNewHouseholdNameInModal] = useState<string>('');
   const [newHouseholdCatInModal, setNewHouseholdCatInModal] = useState<HouseholdCategory>('outros');
+  const [newHouseholdDueDayInModal, setNewHouseholdDueDayInModal] = useState<number>(10);
+  const [newHouseholdDueMonthInModal, setNewHouseholdDueMonthInModal] = useState<string>(() => todayStr().slice(0, 7));
   const [entryModalFeedback, setEntryModalFeedback] = useState<string | null>(null);
 
   // App / Local Add & Edit States
@@ -4265,10 +4450,14 @@ export default function App() {
     setFuelLiters('');
     setFuelPricePerLiter(String(dbState.fuelConfig.fuelPrice || 5.8));
     setExpenseType('moto');
+    setHouseholdEntryMode('cotidiana');
+    setEverydayHouseholdCategory('');
     setExpenseDescription('');
     setSelectedHouseholdExpenseId('');
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
+    setNewHouseholdDueDayInModal(10);
+    setNewHouseholdDueMonthInModal(selectedFinanceMonth || todayStr().slice(0, 7));
     setEntryModalFeedback(null);
     setShowNewAppInput(false);
     setNewCustomAppName('');
@@ -4295,10 +4484,14 @@ export default function App() {
     setEntryMode('gasto');
     setIsEntryModeDedicated(true);
     setExpenseType('moto');
+    setHouseholdEntryMode('cotidiana');
+    setEverydayHouseholdCategory('');
     setExpenseDescription('');
     setSelectedHouseholdExpenseId('');
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
+    setNewHouseholdDueDayInModal(10);
+    setNewHouseholdDueMonthInModal(selectedFinanceMonth || todayStr().slice(0, 7));
     setSelectedCategory('combustivel');
     setEntryDate(todayStr());
     setExpenseAmount('');
@@ -4315,6 +4508,8 @@ export default function App() {
     setEntryMode('gasto');
     setIsEntryModeDedicated(true);
     setExpenseType('casa');
+    setHouseholdEntryMode('mensal');
+    setEverydayHouseholdCategory('');
     setSelectedHouseholdExpenseId(item.id);
     setSelectedBikeExpenseId('');
     setSelectedCategory(item.name);
@@ -4333,6 +4528,8 @@ export default function App() {
     setExpenseDescription(`Pagamento: ${item.name}`);
     setShowNewHouseholdInModal(false);
     setNewHouseholdNameInModal('');
+    setNewHouseholdDueDayInModal(10);
+    setNewHouseholdDueMonthInModal(targetYM);
     setEntryModalFeedback(null);
     setShowEntryModal(true);
   };
@@ -4390,9 +4587,13 @@ export default function App() {
             h.id === item.householdExpenseId ||
             h.name.toLowerCase() === (item.category || '').toLowerCase()
         );
-      setExpenseType(item.expenseType || (isHousehold ? 'casa' : 'moto'));
+      const resolvedType = item.expenseType || (isHousehold ? 'casa' : 'moto');
+      setExpenseType(resolvedType);
+      const isEverydayEdit = Boolean(item.isEverydayHousehold) || (resolvedType === 'casa' && !item.householdExpenseId);
+      setHouseholdEntryMode(isEverydayEdit ? 'cotidiana' : 'mensal');
+      setEverydayHouseholdCategory(isEverydayEdit ? item.category || '' : '');
       setExpenseDescription(item.description || '');
-      setSelectedHouseholdExpenseId(item.householdExpenseId || '');
+      setSelectedHouseholdExpenseId(isEverydayEdit ? '' : item.householdExpenseId || '');
     }
     setShowEntryModal(true);
   };
@@ -4696,8 +4897,13 @@ export default function App() {
 
       persistAndEnqueueWorkManager({ ...nextDb, entries: updatedEntries });
     } else {
-      // Auto-save pending new custom household account if user typed it in modal
-      if (expenseType === 'casa' && showNewHouseholdInModal && newHouseholdNameInModal.trim()) {
+      const isEverydayHouse = expenseType === 'casa' && householdEntryMode === 'cotidiana';
+      if (isEverydayHouse) {
+        finalCategoryId = everydayHouseholdCategory.trim() || 'Despesa Cotidiana';
+      }
+
+      // Auto-save pending new custom household account if user typed it in modal (only in monthly account mode)
+      if (expenseType === 'casa' && !isEverydayHouse && showNewHouseholdInModal && newHouseholdNameInModal.trim()) {
         const trimmedHName = newHouseholdNameInModal.trim();
         const existingH = (nextDb.householdExpenses || []).find(
           h => h.name.toLowerCase() === trimmedHName.toLowerCase()
@@ -4715,13 +4921,29 @@ export default function App() {
             saude: '💊',
             outros: '📋',
           };
+          const targetInlineDueMonth =
+            newHouseholdDueMonthInModal && /^\d{4}-\d{2}$/.test(newHouseholdDueMonthInModal)
+              ? newHouseholdDueMonthInModal
+              : (entryDate || todayStr()).slice(0, 7);
+          const inlineDueNorm = normalizeCalendarExpenseDates(
+            [],
+            newHouseholdDueDayInModal,
+            10,
+            targetInlineDueMonth
+          );
           const newHItem: HouseholdExpenseItem = {
             id: newHId,
             name: trimmedHName,
             category: newHouseholdCatInModal,
             monthlyAmount: Number(expenseAmount) || 0,
-            dueDay: 10,
+            totalCost: Number(expenseAmount) || 0,
+            recurrenceType: inlineDueNorm.recurrenceType,
+            dueDay: inlineDueNorm.dueDay,
+            dueMonth: inlineDueNorm.dueMonth,
+            isSingleMonth: true,
+            nextDueDate: inlineDueNorm.nextDueDate,
             isActive: true,
+            isCustomEdited: true,
             icon: iconMap[newHouseholdCatInModal] || '🏠',
           };
           nextDb.householdExpenses = [...(nextDb.householdExpenses || []), newHItem];
@@ -4770,9 +4992,10 @@ export default function App() {
                     expenseType: expenseType,
                     description: expenseDescription.trim() || undefined,
                     householdExpenseId:
-                      expenseType === 'casa'
+                      expenseType === 'casa' && !isEverydayHouse
                         ? selectedHouseholdExpenseId || undefined
                         : undefined,
+                    isEverydayHousehold: isEverydayHouse ? true : undefined,
                     bikeExpenseId:
                       expenseType === 'moto'
                         ? selectedBikeExpenseId || undefined
@@ -4800,9 +5023,10 @@ export default function App() {
                 expenseType: expenseType,
                 description: expenseDescription.trim() || undefined,
                 householdExpenseId:
-                  expenseType === 'casa'
+                  expenseType === 'casa' && !isEverydayHouse
                     ? selectedHouseholdExpenseId || undefined
                     : undefined,
+                isEverydayHousehold: isEverydayHouse ? true : undefined,
                 bikeExpenseId:
                   expenseType === 'moto'
                     ? selectedBikeExpenseId || undefined
@@ -4825,7 +5049,7 @@ export default function App() {
         };
       }
 
-      if (expenseType === 'casa') {
+      if (expenseType === 'casa' && !isEverydayHouse) {
         const targetHId = selectedHouseholdExpenseId;
         const entryYM = entryDate.slice(0, 7);
         nextDb.householdExpenses = (nextDb.householdExpenses || []).map(h => {
@@ -5957,10 +6181,13 @@ export default function App() {
     const bikeExpensesPctOfGross = unifiedBikePctOfGross;
 
     // 5. Despesas da Casa & Família (Fora da Moto: Aluguel, Luz, Água, Mercado, Internet, etc.)
-    const rawHouseholdExpenses: HouseholdExpenseItem[] =
+    const allHouseholdExpenses: HouseholdExpenseItem[] =
       Array.isArray(dbState.householdExpenses)
         ? dbState.householdExpenses
         : DEFAULT_HOUSEHOLD_EXPENSES;
+    const rawHouseholdExpenses: HouseholdExpenseItem[] = allHouseholdExpenses
+      .filter(h => isHouseholdExpenseVisibleInMonth(h, targetFinanceYM))
+      .map(h => resolveHouseholdExpenseForMonth(h, targetFinanceYM));
     const activeHouseholdExpenses = rawHouseholdExpenses.filter(h => h.isActive !== false);
 
     // Enriquecimento único por conta da casa: orçamento, pago no mês, saldo restante e rateio diário restante
@@ -8685,9 +8912,13 @@ export default function App() {
                         const curDay = new Date().getDate();
                         const curMonthStr = today.slice(0, 7);
 
-                        const rawHouseList: HouseholdExpenseItem[] = Array.isArray(dbState.householdExpenses)
-                          ? dbState.householdExpenses
-                          : DEFAULT_HOUSEHOLD_EXPENSES;
+                        const rawHouseList: HouseholdExpenseItem[] = (
+                          Array.isArray(dbState.householdExpenses)
+                            ? dbState.householdExpenses
+                            : DEFAULT_HOUSEHOLD_EXPENSES
+                        )
+                          .filter(h => isHouseholdExpenseVisibleInMonth(h, curMonthStr))
+                          .map(h => resolveHouseholdExpenseForMonth(h, curMonthStr));
                         const activeHouse = rawHouseList.filter(h => h.isActive !== false);
 
                         const pendingHouseDueToday = activeHouse.filter(h => {
@@ -12853,7 +13084,7 @@ export default function App() {
                     <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
                       <button
                         type="button"
-                        onClick={openNewHouseholdExpenseModal}
+                        onClick={() => openNewHouseholdExpenseModal('mensal')}
                         className="px-3.5 py-2 rounded-xl text-xs font-black bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-blue-600/25"
                       >
                         <Plus className="w-4 h-4" />
@@ -13132,7 +13363,7 @@ export default function App() {
                           </p>
                           <button
                             type="button"
-                            onClick={openNewHouseholdExpenseModal}
+                            onClick={() => openNewHouseholdExpenseModal('mensal')}
                             className="px-4 py-2 rounded-xl text-xs font-black bg-blue-600 text-white cursor-pointer"
                           >
                             + Cadastrar Nova Conta
@@ -13235,7 +13466,7 @@ export default function App() {
                                   {/* Toggle Ativar / Desativar */}
                                   <button
                                     type="button"
-                                    onClick={() => toggleHouseholdExpense(item.id)}
+                                    onClick={() => toggleHouseholdExpense(item.id, selectedFinanceMonth)}
                                     className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer transition-colors bg-transparent border ${
                                       item.isActive
                                         ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
@@ -14942,12 +15173,14 @@ export default function App() {
                             h.id === item.householdExpenseId ||
                             h.name.toLowerCase() === (item.category || '').toLowerCase()
                         );
-                      const householdItem = (dbState.householdExpenses || []).find(
-                        (h: HouseholdExpenseItem) =>
-                          h.id === item.householdExpenseId ||
-                          h.name.toLowerCase() === (item.category || '').toLowerCase() ||
-                          (item.category && item.category.toLowerCase().includes(h.id.toLowerCase()))
-                      );
+                      const householdItem = item.isEverydayHousehold
+                        ? undefined
+                        : (dbState.householdExpenses || []).find(
+                            (h: HouseholdExpenseItem) =>
+                              h.id === item.householdExpenseId ||
+                              h.name.toLowerCase() === (item.category || '').toLowerCase() ||
+                              (item.category && item.category.toLowerCase().includes(h.id.toLowerCase()))
+                          );
 
                       const getExpenseIcon = () => {
                         if (isHousehold) {
@@ -16399,14 +16632,14 @@ export default function App() {
                   {
                     id: 'despesa_casa',
                     title: 'Despesa da Casa',
-                    subtitle: 'Conta fixa e família',
+                    subtitle: 'Cotidiana ou conta mensal',
                     icon: Home,
                     badgeClass: 'bg-blue-500/15 border-blue-500/35 text-blue-400',
                     hoverBorder: 'hover:border-blue-500/60',
                     spanFull: false,
                     onSelect: () => {
                       closeQuickRegisterCockpit(true);
-                      openNewHouseholdExpenseModal();
+                      openNewHouseholdExpenseModal('cotidiana');
                     },
                   },
                   {
@@ -17157,18 +17390,38 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setExpenseType('casa');
-                      const householdList = dbState.householdExpenses || [];
-                      if (householdList.length > 0) {
-                        const found =
-                          householdList.find(h => h.id === selectedHouseholdExpenseId) ||
-                          householdList[0];
-                        setSelectedHouseholdExpenseId(found.id);
-                        setSelectedCategory(found.name);
-                        if (!expenseAmount && found.monthlyAmount > 0) {
-                          setExpenseAmount(String(found.monthlyAmount));
+                      if (householdEntryMode === 'mensal') {
+                        const entryYM =
+                          (entryDate && /^\d{4}-\d{2}/.test(entryDate) ? entryDate.slice(0, 7) : '') ||
+                          selectedFinanceMonth ||
+                          todayStr().slice(0, 7);
+                        const householdList = (dbState.householdExpenses || [])
+                          .filter(
+                            h =>
+                              h.id === selectedHouseholdExpenseId ||
+                              isHouseholdExpenseVisibleInMonth(h, entryYM) ||
+                              isHouseholdExpenseVisibleInMonth(h, selectedFinanceMonth)
+                          )
+                          .map(h =>
+                            resolveHouseholdExpenseForMonth(
+                              h,
+                              h.id === selectedHouseholdExpenseId ? selectedFinanceMonth : entryYM
+                            )
+                          );
+                        if (householdList.length > 0) {
+                          const found =
+                            householdList.find(h => h.id === selectedHouseholdExpenseId) ||
+                            householdList[0];
+                          setSelectedHouseholdExpenseId(found.id);
+                          setSelectedCategory(found.name);
+                          if (!expenseAmount && found.monthlyAmount > 0) {
+                            setExpenseAmount(String(found.monthlyAmount));
+                          }
+                        } else {
+                          setSelectedCategory('Casa & Família');
                         }
                       } else {
-                        setSelectedCategory('Casa & Família');
+                        setSelectedHouseholdExpenseId('');
                       }
                     }}
                     className={`flex-1 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
@@ -17570,159 +17823,399 @@ export default function App() {
                 ) : (
                   /* DESPESAS DA CASA / FAMÍLIA */
                   <div className="flex flex-col gap-3.5">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className={`block text-xs font-bold ${mutedText}`}>
-                          Selecione a Conta da Casa
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setShowNewHouseholdInModal(prev => !prev)}
-                          className="text-[11px] font-bold text-amber-400 hover:underline cursor-pointer"
-                        >
-                          {showNewHouseholdInModal ? 'Cancelar' : '+ Nova Conta da Casa'}
-                        </button>
-                      </div>
-
-                      {/* Chips rápidos das contas da casa */}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {(dbState.householdExpenses || []).map(item => {
-                          const isSelected =
-                            selectedHouseholdExpenseId === item.id ||
-                            selectedCategory.toLowerCase() === item.name.toLowerCase();
-                          return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedHouseholdExpenseId(item.id);
-                                setSelectedCategory(item.name);
-                                if (!expenseAmount || selectedHouseholdExpenseId !== item.id) {
-                                  setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
-                                }
-                              }}
-                              className={`p-2.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col gap-1 ${
-                                isSelected
-                                  ? isDark
-                                     ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-white shadow-xs'
-                                     : 'bg-[#FF6A1A]/10 border-[#FF6A1A] text-slate-900 shadow-xs'
-                                  : `${surfaceSubtle} border-slate-700/50 hover:border-slate-500`
-                              }`}
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-base shrink-0">{item.icon || '🏠'}</span>
-                                <span className="text-xs font-bold truncate leading-tight">
-                                  {item.name}
-                                </span>
-                              </div>
-                              <span className={`text-[10px] tabular-nums font-semibold ${isSelected ? (isDark ? 'text-[#FFB27A]' : 'text-[#C2410C]') : mutedText}`}>
-                                {item.monthlyAmount > 0 ? fmtMoney(item.monthlyAmount) : 'Variável'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Formulário inline para criar nova conta da casa se o motoboy quiser */}
-                      {showNewHouseholdInModal && (
-                        <div className={`mt-3 p-3 rounded-2xl border ${isDark ? 'bg-amber-950/20 border-amber-800/40' : 'bg-amber-50 border-amber-200'} flex flex-col gap-2.5`}>
-                          <div className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                            <span>🏠</span>
-                            <span>Cadastrar Nova Conta Doméstica</span>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <input
-                              type="text"
-                              value={newHouseholdNameInModal}
-                              onChange={e => setNewHouseholdNameInModal(e.target.value)}
-                              placeholder="Nome (Ex: Gás, Farmácia, Feira...)"
-                              className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                            />
-                            <select
-                              value={newHouseholdCatInModal}
-                              onChange={e => setNewHouseholdCatInModal(e.target.value as HouseholdCategory)}
-                              className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
-                            >
-                              <option value="moradia">🏠 Moradia (Aluguel, IPTU)</option>
-                              <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
-                              <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
-                              <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
-                              <option value="saude">💊 Saúde (Farmácia, Convênio)</option>
-                              <option value="outros">📋 Outros Domésticos</option>
-                            </select>
-                          </div>
-                        </div>
-                      )}
+                    {/* Seletor: Despesa Cotidiana (sem rateio) vs Conta Mensal */}
+                    <div className={`p-1 rounded-xl flex gap-1.5 border ${dividerBorder} bg-transparent`}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHouseholdEntryMode('cotidiana');
+                          setSelectedHouseholdExpenseId('');
+                          setShowNewHouseholdInModal(false);
+                        }}
+                        className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          householdEntryMode === 'cotidiana'
+                            ? 'bg-amber-400 text-black shadow-xs'
+                            : `${mutedText} hover:text-current`
+                        }`}
+                      >
+                        <span>🛒</span>
+                        <span>Despesa Cotidiana</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHouseholdEntryMode('mensal');
+                          const entryYM =
+                            (entryDate && /^\d{4}-\d{2}/.test(entryDate) ? entryDate.slice(0, 7) : '') ||
+                            selectedFinanceMonth ||
+                            todayStr().slice(0, 7);
+                          const householdList = (dbState.householdExpenses || [])
+                            .filter(
+                              h =>
+                                h.id === selectedHouseholdExpenseId ||
+                                isHouseholdExpenseVisibleInMonth(h, entryYM) ||
+                                isHouseholdExpenseVisibleInMonth(h, selectedFinanceMonth)
+                            )
+                            .map(h =>
+                              resolveHouseholdExpenseForMonth(
+                                h,
+                                h.id === selectedHouseholdExpenseId ? selectedFinanceMonth : entryYM
+                              )
+                            );
+                          if (householdList.length > 0 && !selectedHouseholdExpenseId) {
+                            const found = householdList[0];
+                            setSelectedHouseholdExpenseId(found.id);
+                            setSelectedCategory(found.name);
+                          }
+                        }}
+                        className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          householdEntryMode === 'mensal'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : `${mutedText} hover:text-current`
+                        }`}
+                      >
+                        <span>📅</span>
+                        <span>Conta Mensal (Rateio)</span>
+                      </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Pagamento</label>
-                        <input
-                          type="date"
-                          value={entryDate}
-                          onChange={e => setEntryDate(e.target.value)}
-                          className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                        />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className={`text-xs font-bold ${mutedText}`}>
-                            Valor Pago (R$) <span className="text-amber-400">*</span>
+                    {householdEntryMode === 'cotidiana' ? (
+                      <>
+                        <div>
+                          <label className={`block text-xs font-bold mb-2 ${mutedText}`}>
+                            Tipo / Nome da Despesa Cotidiana
                           </label>
-                          <button
-                            type="button"
-                            onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
-                            className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
-                            title="Abrir calculadora"
-                          >
-                            <Calculator className="w-3 h-3" />
-                            <span>Calc</span>
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap gap-1.5 mb-2.5">
+                            {[
+                              { label: 'Mercado / Feira', icon: '🛒' },
+                              { label: 'Padaria / Café', icon: '🥖' },
+                              { label: 'Farmácia / Saúde', icon: '💊' },
+                              { label: 'Lanche / Restaurante', icon: '🍽️' },
+                              { label: 'Limpeza / Casa', icon: '🧺' },
+                              { label: 'Transporte', icon: '🚕' },
+                              { label: 'Outros', icon: '📋' },
+                            ].map(chip => {
+                              const isActive =
+                                everydayHouseholdCategory.toLowerCase() === chip.label.toLowerCase();
+                              return (
+                                <button
+                                  key={chip.label}
+                                  type="button"
+                                  onClick={() => setEverydayHouseholdCategory(chip.label)}
+                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors border ${
+                                    isActive
+                                      ? 'bg-amber-400/20 border-amber-400 text-amber-300 font-black'
+                                      : `${surfaceSubtle} border-slate-700/50 hover:border-amber-400/50`
+                                  }`}
+                                >
+                                  {chip.icon} {chip.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                           <input
-                            type="number"
-                            step="0.01"
-                            placeholder="Ex: 150.00"
-                            value={expenseAmount}
-                            onChange={e => setExpenseAmount(e.target.value)}
-                            className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                            type="text"
+                            value={everydayHouseholdCategory}
+                            onChange={e => setEverydayHouseholdCategory(e.target.value)}
+                            placeholder="Ou digite: Ex: Açougue, Hortifruti, Uber, Presente..."
+                            className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
                           />
-                          <button
-                            type="button"
-                            onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
-                            className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
-                            title="Calcular Valor Pago"
-                            aria-label="Calcular Valor Pago"
-                          >
-                            <Calculator className="w-4 h-4" />
-                          </button>
                         </div>
-                      </div>
-                    </div>
 
-                    <div>
-                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
-                        Descrição / Detalhe (opcional)
-                      </label>
-                      <input
-                        type="text"
-                        value={expenseDescription}
-                        onChange={e => setExpenseDescription(e.target.value)}
-                        placeholder="Ex: Compra quinzenal no Atacadão, Conta de luz ref. mês 10..."
-                        className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
-                      />
-                    </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Gasto</label>
+                            <input
+                              type="date"
+                              value={entryDate}
+                              onChange={e => setEntryDate(e.target.value)}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>
+                                Valor (R$) <span className="text-amber-400">*</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor da Despesa Cotidiana (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 45.00"
+                                value={expenseAmount}
+                                onChange={e => setExpenseAmount(e.target.value)}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor da Despesa Cotidiana (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Valor"
+                                aria-label="Calcular Valor"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
 
-                    <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 ${
-                      isDark ? 'bg-amber-950/30 border-amber-800/40 text-amber-200' : 'bg-amber-50 border-amber-300 text-amber-900'
-                    }`}>
-                      <span className="text-lg shrink-0">🏠</span>
-                      <p className="leading-snug">
-                        <strong>Despesa Doméstica vinculada:</strong> será abatida no seu fechamento mensal e no saldo real livre para garantir que o sustento da sua família esteja sempre no controle.
-                      </p>
-                    </div>
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Descrição / Detalhe (opcional)
+                          </label>
+                          <input
+                            type="text"
+                            value={expenseDescription}
+                            onChange={e => setExpenseDescription(e.target.value)}
+                            placeholder="Ex: Pão e leite, Remédio, Compras do dia..."
+                            className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 bg-transparent ${dividerBorder}`}>
+                          <span className="text-lg shrink-0">🛒</span>
+                          <p className={`leading-snug ${mutedText}`}>
+                            <strong className={primaryText}>Despesa Cotidiana:</strong> abate do seu saldo atual e entra no histórico sem ir para a tela de contas mensais nem gerar rateio diário.
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className={`block text-xs font-bold ${mutedText}`}>
+                              Selecione a Conta da Casa
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setShowNewHouseholdInModal(prev => !prev)}
+                              className="text-[11px] font-bold text-amber-400 hover:underline cursor-pointer"
+                            >
+                              {showNewHouseholdInModal ? 'Cancelar' : '+ Nova Conta da Casa'}
+                            </button>
+                          </div>
+
+                          {/* Chips rápidos das contas da casa */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {(() => {
+                              const entryYM =
+                                (entryDate && /^\d{4}-\d{2}/.test(entryDate) ? entryDate.slice(0, 7) : '') ||
+                                selectedFinanceMonth ||
+                                todayStr().slice(0, 7);
+                              return (dbState.householdExpenses || [])
+                                .filter(
+                                  item =>
+                                    item.id === selectedHouseholdExpenseId ||
+                                    isHouseholdExpenseVisibleInMonth(item, entryYM) ||
+                                    isHouseholdExpenseVisibleInMonth(item, selectedFinanceMonth)
+                                )
+                                .map(rawItem =>
+                                  resolveHouseholdExpenseForMonth(
+                                    rawItem,
+                                    rawItem.id === selectedHouseholdExpenseId ? selectedFinanceMonth : entryYM
+                                  )
+                                );
+                            })().map(item => {
+                              const isSelected =
+                                selectedHouseholdExpenseId === item.id ||
+                                selectedCategory.toLowerCase() === item.name.toLowerCase();
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedHouseholdExpenseId(item.id);
+                                    setSelectedCategory(item.name);
+                                    if (!expenseAmount || selectedHouseholdExpenseId !== item.id) {
+                                      setExpenseAmount(item.monthlyAmount > 0 ? String(item.monthlyAmount) : '');
+                                    }
+                                  }}
+                                  className={`p-2.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col gap-1 ${
+                                    isSelected
+                                      ? isDark
+                                         ? 'bg-[#FF6A1A]/15 border-[#FF6A1A] text-white shadow-xs'
+                                         : 'bg-[#FF6A1A]/10 border-[#FF6A1A] text-slate-900 shadow-xs'
+                                      : `${surfaceSubtle} border-slate-700/50 hover:border-slate-500`
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-base shrink-0">{item.icon || '🏠'}</span>
+                                    <span className="text-xs font-bold truncate leading-tight">
+                                      {item.name}
+                                    </span>
+                                  </div>
+                                  <span className={`text-[10px] tabular-nums font-semibold ${isSelected ? (isDark ? 'text-[#FFB27A]' : 'text-[#C2410C]') : mutedText}`}>
+                                    {item.monthlyAmount > 0 ? fmtMoney(item.monthlyAmount) : 'Variável'}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Formulário inline para criar nova conta da casa se o motoboy quiser */}
+                          {showNewHouseholdInModal && (
+                            <div className={`mt-3 p-3 rounded-2xl border ${isDark ? 'bg-amber-950/20 border-amber-800/40' : 'bg-amber-50 border-amber-200'} flex flex-col gap-2.5`}>
+                              <div className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                                <span>🏠</span>
+                                <span>Cadastrar Nova Conta Doméstica</span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input
+                                  type="text"
+                                  value={newHouseholdNameInModal}
+                                  onChange={e => setNewHouseholdNameInModal(e.target.value)}
+                                  placeholder="Nome (Ex: Gás, Farmácia, Feira...)"
+                                  className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                                />
+                                <select
+                                  value={newHouseholdCatInModal}
+                                  onChange={e => setNewHouseholdCatInModal(e.target.value as HouseholdCategory)}
+                                  className={`px-3 py-2 rounded-xl text-xs font-bold outline-none ${inputSurface}`}
+                                >
+                                  <option value="moradia">🏠 Moradia (Aluguel, IPTU)</option>
+                                  <option value="utilidades">⚡ Utilidades (Luz, Água, Gás)</option>
+                                  <option value="alimentacao">🛒 Alimentação (Mercado, Feira)</option>
+                                  <option value="conectividade">📶 Conectividade (Internet, Celular)</option>
+                                  <option value="saude">💊 Saúde (Farmácia, Convênio)</option>
+                                  <option value="outros">📋 Outros Domésticos</option>
+                                </select>
+                              </div>
+                              <div className="grid grid-cols-[110px_1fr] gap-2">
+                                <div>
+                                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                                    Dia Venc.
+                                  </label>
+                                  <FreeNumberInput
+                                    min={1}
+                                    max={31}
+                                    step="1"
+                                    value={newHouseholdDueDayInModal}
+                                    onValueChange={(val, raw) => {
+                                      if (raw.trim() === '') return;
+                                      setNewHouseholdDueDayInModal(Math.max(1, Math.min(31, Math.trunc(val) || 1)));
+                                    }}
+                                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold tabular-nums outline-none ${inputSurface}`}
+                                  />
+                                </div>
+                                <div>
+                                  <label className={`block text-[10px] font-bold mb-1 ${mutedText}`}>
+                                    Mês de Vencimento
+                                  </label>
+                                  <select
+                                    value={newHouseholdDueMonthInModal}
+                                    onChange={e => setNewHouseholdDueMonthInModal(e.target.value)}
+                                    aria-label="Mês de Vencimento"
+                                    className={`w-full px-3 py-2 rounded-xl text-xs font-bold outline-none cursor-pointer ${inputSurface}`}
+                                  >
+                                    {(() => {
+                                      const curYM = todayStr().slice(0, 7);
+                                      const [cy, cm] = curYM.split('-').map(Number);
+                                      const opts: string[] = [];
+                                      for (let offset = -3; offset <= 18; offset++) {
+                                        const d = new Date(cy, cm - 1 + offset, 1);
+                                        opts.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                                      }
+                                      if (newHouseholdDueMonthInModal && !opts.includes(newHouseholdDueMonthInModal)) {
+                                        opts.push(newHouseholdDueMonthInModal);
+                                        opts.sort();
+                                      }
+                                      return opts.map(ym => {
+                                        const [oy, om] = ym.split('-').map(Number);
+                                        const mLabel = PT_BR_MONTH_NAMES[om - 1] || String(om);
+                                        return (
+                                          <option key={ym} value={ym}>
+                                            {mLabel} de {oy}
+                                          </option>
+                                        );
+                                      });
+                                    })()}
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={`block text-xs font-bold mb-1 ${mutedText}`}>Data do Pagamento</label>
+                            <input
+                              type="date"
+                              value={entryDate}
+                              onChange={e => setEntryDate(e.target.value)}
+                              className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className={`text-xs font-bold ${mutedText}`}>
+                                Valor Pago (R$) <span className="text-amber-400">*</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                                title="Abrir calculadora"
+                              >
+                                <Calculator className="w-3 h-3" />
+                                <span>Calc</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Ex: 150.00"
+                                value={expenseAmount}
+                                onChange={e => setExpenseAmount(e.target.value)}
+                                className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => openQuickCalculator('Valor Pago da Conta da Casa (R$)', expenseAmount, val => setExpenseAmount(val))}
+                                className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                                title="Calcular Valor Pago"
+                                aria-label="Calcular Valor Pago"
+                              >
+                                <Calculator className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                            Descrição / Detalhe (opcional)
+                          </label>
+                          <input
+                            type="text"
+                            value={expenseDescription}
+                            onChange={e => setExpenseDescription(e.target.value)}
+                            placeholder="Ex: Compra quinzenal no Atacadão, Conta de luz ref. mês 10..."
+                            className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                          />
+                        </div>
+
+                        <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 ${
+                          isDark ? 'bg-amber-950/30 border-amber-800/40 text-amber-200' : 'bg-amber-50 border-amber-300 text-amber-900'
+                        }`}>
+                          <span className="text-lg shrink-0">🏠</span>
+                          <p className="leading-snug">
+                            <strong>Despesa Doméstica vinculada:</strong> será abatida no seu fechamento mensal e no saldo real livre para garantir que o sustento da sua família esteja sempre no controle.
+                          </p>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -19013,15 +19506,31 @@ export default function App() {
           >
             <div className={`flex items-start justify-between gap-3 pb-4 border-b ${dividerBorder}`}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-blue-500/15 border border-blue-500/40 flex items-center justify-center text-blue-400 text-xl shrink-0">
-                  {householdDraft.icon || '🏠'}
+                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center text-xl shrink-0 border ${
+                  !editingHouseholdItem && householdModalMode === 'cotidiana'
+                    ? 'bg-amber-400/15 border-amber-400/40 text-amber-400'
+                    : 'bg-blue-500/15 border-blue-500/40 text-blue-400'
+                }`}>
+                  {!editingHouseholdItem && householdModalMode === 'cotidiana'
+                    ? everydayHouseIcon || '🛒'
+                    : householdDraft.icon || '🏠'}
                 </div>
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-400">
-                    Custo de Vida & Família
+                  <span className={`text-[10px] font-black uppercase tracking-wider ${
+                    !editingHouseholdItem && householdModalMode === 'cotidiana'
+                      ? 'text-amber-400'
+                      : 'text-blue-400'
+                  }`}>
+                    {!editingHouseholdItem && householdModalMode === 'cotidiana'
+                      ? 'Gasto do Dia a Dia · Sem Rateio'
+                      : 'Custo de Vida & Família'}
                   </span>
                   <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
-                    {editingHouseholdItem ? 'Editar Despesa da Casa' : 'Nova Despesa da Casa'}
+                    {editingHouseholdItem
+                      ? 'Editar Despesa da Casa'
+                      : householdModalMode === 'cotidiana'
+                      ? 'Nova Despesa Cotidiana da Casa'
+                      : 'Nova Conta Mensal da Casa'}
                   </h3>
                 </div>
               </div>
@@ -19036,6 +19545,190 @@ export default function App() {
             </div>
 
             <div className="mt-4 flex flex-col gap-4">
+              {!editingHouseholdItem && (
+                <div className={`p-1 rounded-xl flex gap-1.5 border ${dividerBorder} bg-transparent`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHouseholdModalMode('cotidiana');
+                      setEverydayHouseError(null);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      householdModalMode === 'cotidiana'
+                        ? 'bg-amber-400 text-black shadow-xs'
+                        : `${mutedText} hover:text-current`
+                    }`}
+                  >
+                    <span>🛒</span>
+                    <span>Despesa Cotidiana</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHouseholdModalMode('mensal');
+                      setEverydayHouseError(null);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      householdModalMode === 'mensal'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : `${mutedText} hover:text-current`
+                    }`}
+                  >
+                    <span>📅</span>
+                    <span>Conta Mensal (Rateio)</span>
+                  </button>
+                </div>
+              )}
+
+              {!editingHouseholdItem && householdModalMode === 'cotidiana' ? (
+                <>
+                  <div>
+                    <label className={`block text-xs font-bold mb-2 ${mutedText}`}>
+                      Qual foi a despesa do cotidiano?
+                    </label>
+                    <div className="flex flex-wrap gap-1.5 mb-2.5">
+                      {[
+                        { label: 'Mercado / Feira', icon: '🛒' },
+                        { label: 'Padaria / Café', icon: '🥖' },
+                        { label: 'Farmácia / Saúde', icon: '💊' },
+                        { label: 'Lanche / Marmita', icon: '🍽️' },
+                        { label: 'Limpeza / Casa', icon: '🧺' },
+                        { label: 'Transporte', icon: '🚕' },
+                        { label: 'Outros', icon: '📋' },
+                      ].map(chip => {
+                        const isActive =
+                          everydayHouseName.toLowerCase() === chip.label.toLowerCase();
+                        return (
+                          <button
+                            key={chip.label}
+                            type="button"
+                            onClick={() => {
+                              setEverydayHouseName(chip.label);
+                              setEverydayHouseIcon(chip.icon);
+                            }}
+                            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors border ${
+                              isActive
+                                ? 'bg-amber-400/20 border-amber-400 text-amber-300 font-black'
+                                : `${surfaceSubtle} border-slate-700/50 hover:border-amber-400/50`
+                            }`}
+                          >
+                            {chip.icon} {chip.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      type="text"
+                      value={everydayHouseName}
+                      onChange={e => setEverydayHouseName(e.target.value)}
+                      placeholder="Ex: Padaria, Mercado hoje, Farmácia, Açougue..."
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                        Data do Gasto
+                      </label>
+                      <input
+                        type="date"
+                        value={everydayHouseDate}
+                        onChange={e => setEverydayHouseDate(e.target.value)}
+                        className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className={`block text-xs font-bold ${mutedText}`}>
+                          Valor (R$)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            openQuickCalculator('Valor da Despesa Cotidiana (R$)', everydayHouseAmount, valStr => {
+                              setEverydayHouseAmount(Math.max(0, parseFloat(valStr) || 0));
+                              setEverydayHouseError(null);
+                            });
+                          }}
+                          className="text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Calculator className="w-3 h-3" />
+                          <span>Calc</span>
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <FreeNumberInput
+                          step="1"
+                          value={everydayHouseAmount}
+                          onValueChange={val => {
+                            setEverydayHouseAmount(Math.max(0, val));
+                            setEverydayHouseError(null);
+                          }}
+                          className={`flex-1 min-w-0 px-3.5 py-2.5 rounded-xl text-sm font-bold tabular-nums outline-none ${inputSurface}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            openQuickCalculator('Valor da Despesa Cotidiana (R$)', everydayHouseAmount, valStr => {
+                              setEverydayHouseAmount(Math.max(0, parseFloat(valStr) || 0));
+                              setEverydayHouseError(null);
+                            });
+                          }}
+                          className={`p-2.5 rounded-xl border border-slate-700/60 hover:border-amber-400 hover:bg-amber-400/10 text-amber-400 cursor-pointer transition-colors shrink-0 ${surfaceSubtle}`}
+                          title="Calcular Valor"
+                        >
+                          <Calculator className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
+                      Descrição / Detalhe (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={everydayHouseDesc}
+                      onChange={e => setEverydayHouseDesc(e.target.value)}
+                      placeholder="Ex: Compra rápida, remédio, pão e café..."
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold outline-none ${inputSurface}`}
+                    />
+                  </div>
+
+                  <div className={`p-3 rounded-2xl border text-xs bg-transparent ${dividerBorder}`}>
+                    <p className={`leading-snug ${mutedText}`}>
+                      🛒 <strong className={primaryText}>Modo Cotidiano:</strong> registra apenas como gasto do dia e abate do seu saldo, sem ir para a tela de Despesas da Casa nem gerar rateio diário.
+                    </p>
+                  </div>
+
+                  {everydayHouseError && (
+                    <div className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-500/15 border border-rose-500/40 text-rose-400">
+                      {everydayHouseError}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2.5 pt-3 pb-1 border-t border-slate-800/40">
+                    <button
+                      type="button"
+                      onClick={() => setShowHouseholdModal(false)}
+                      className={`flex-1 py-3 rounded-xl text-xs font-bold cursor-pointer transition-colors ${surfaceSubtle}`}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveEverydayHouseholdFromModal}
+                      className="flex-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-amber-400 text-black hover:bg-amber-300 transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-400/20"
+                    >
+                      <Check className="w-4 h-4 stroke-[2.5]" />
+                      <span>Registrar Despesa Cotidiana</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
               <div>
                 <label className={`block text-xs font-bold mb-1 ${mutedText}`}>
                   Nome da Conta / Despesa
@@ -19049,21 +19742,62 @@ export default function App() {
                 />
               </div>
 
-              {renderExpenseAmountAndCalendar({
-                accentClass: 'blue',
-                valueLabel: 'Valor Mensal / Conta (R$)',
-                calcTitle: 'Valor da Conta da Casa (R$)',
-                step: '10',
-                amount: householdDraft.monthlyAmount,
-                dueDay: householdDraft.dueDay ?? 10,
-                dates: householdDraft.selectedDates || [],
-                target: 'household',
-                calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
-                onChangeAmount: val =>
-                  setHouseholdDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
-                onChangeDueDay: day =>
-                  setHouseholdDraft(prev => ({ ...prev, dueDay: day })),
-              })}
+              {(() => {
+                const activeScopeYM =
+                  householdDraft.isSingleMonth !== false
+                    ? householdDraft.dueMonth || householdModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7)
+                    : householdModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7);
+                const [sy, sm] = activeScopeYM.split('-').map(Number);
+                const sMonthName = PT_BR_MONTH_NAMES[sm - 1] || String(sm);
+                const isSingle = householdDraft.isSingleMonth !== false;
+                return (
+                  <>
+                    <div className={`px-3 py-2 rounded-xl border flex items-center justify-between gap-2 text-[11px] bg-transparent ${dividerBorder}`}>
+                      <span className={`font-bold ${mutedText}`}>
+                        {isSingle
+                          ? `📅 Exclusiva de ${sMonthName} de ${sy} (não se repete no ano)`
+                          : `🗓️ Editando somente o mês ${sMonthName} de ${sy} (independente)`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHouseholdDraft(prev => ({
+                            ...prev,
+                            isSingleMonth: !isSingle,
+                            dueMonth:
+                              !isSingle
+                                ? prev.dueMonth || householdModalTargetMonth || selectedFinanceMonth || todayStr().slice(0, 7)
+                                : prev.dueMonth,
+                          }))
+                        }
+                        className="text-[10px] font-black text-blue-400 hover:underline shrink-0 cursor-pointer"
+                      >
+                        {isSingle ? 'Repetir todo mês' : 'Restringir a este mês'}
+                      </button>
+                    </div>
+
+                    {renderExpenseAmountAndCalendar({
+                      accentClass: 'blue',
+                      valueLabel: 'Valor Mensal / Conta (R$)',
+                      calcTitle: 'Valor da Conta da Casa (R$)',
+                      step: '10',
+                      amount: householdDraft.monthlyAmount,
+                      dueDay: householdDraft.dueDay ?? 10,
+                      dueMonth: isSingle ? activeScopeYM : undefined,
+                      dates: householdDraft.selectedDates || [],
+                      target: 'household',
+                      calendarLabel: 'Dias no calendário para cálculo do rateio diário:',
+                      onChangeAmount: val =>
+                        setHouseholdDraft(prev => ({ ...prev, monthlyAmount: val, totalCost: val })),
+                      onChangeDueDay: day =>
+                        setHouseholdDraft(prev => ({ ...prev, dueDay: day })),
+                      onChangeDueMonth: isSingle
+                        ? month => setHouseholdDraft(prev => ({ ...prev, dueMonth: month }))
+                        : undefined,
+                    })}
+                  </>
+                );
+              })()}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {renderCustomCategoryPanel({
@@ -19185,6 +19919,8 @@ export default function App() {
                   <span>Salvar Conta da Casa</span>
                 </button>
               </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -19969,13 +20705,17 @@ export default function App() {
                   </div>
                 ) : (
                   sortedExpenses.map(exp => {
-                    const householdItem = (dbState.householdExpenses || []).find(
-                      h =>
-                        (exp.householdExpenseId && h.id === exp.householdExpenseId) ||
-                        h.id === exp.category ||
-                        h.name.toLowerCase() === (exp.category || '').toLowerCase()
+                    const householdItem = exp.isEverydayHousehold
+                      ? undefined
+                      : (dbState.householdExpenses || []).find(
+                          h =>
+                            (exp.householdExpenseId && h.id === exp.householdExpenseId) ||
+                            h.id === exp.category ||
+                            h.name.toLowerCase() === (exp.category || '').toLowerCase()
+                        );
+                    const isHousehold = Boolean(
+                      exp.expenseType === 'casa' || exp.isEverydayHousehold || exp.householdExpenseId || householdItem
                     );
-                    const isHousehold = Boolean(exp.householdExpenseId || householdItem);
                     const cat = allCategories.find(c => c.id === exp.category) || { name: exp.category };
                     const displayTitle = householdItem?.name || cat.name || exp.category || 'Despesa';
                     const expIcon = isHousehold

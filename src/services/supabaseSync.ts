@@ -28,6 +28,7 @@ export interface ExpenseEntry {
   description?: string;
   expenseType?: 'moto' | 'casa';
   householdExpenseId?: string;
+  isEverydayHousehold?: boolean;
   bikeExpenseId?: string;
   isCancelled?: boolean;
 }
@@ -458,6 +459,17 @@ export const DEFAULT_BIKE_EXPENSES: BikeExpenseItem[] = [
 
 export type HouseholdCategory = 'moradia' | 'utilidades' | 'alimentacao' | 'conectividade' | 'saude' | 'outros';
 
+export interface HouseholdExpenseMonthlyOverride {
+  monthlyAmount?: number;
+  totalCost?: number;
+  dueDay?: number;
+  selectedDates?: string[];
+  isActive?: boolean;
+  name?: string;
+  category?: HouseholdCategory;
+  icon?: string;
+}
+
 export interface HouseholdExpenseItem {
   id: string;
   name: string;
@@ -465,6 +477,9 @@ export interface HouseholdExpenseItem {
   monthlyAmount: number;
   recurrenceType?: ExpenseRecurrenceType;
   dueDay?: number;
+  dueMonth?: string;
+  isSingleMonth?: boolean;
+  monthlyOverrides?: Record<string, HouseholdExpenseMonthlyOverride>;
   intervalDays?: number;
   totalCost?: number;
   lastPaidDate?: string;
@@ -1737,7 +1752,9 @@ export async function fetchRemoteCloudData(
                 ...existing,
                 ...ex,
                 expenseType: ex.expenseType || existing?.expenseType || 'moto',
-                householdExpenseId: ex.householdExpenseId || existing?.householdExpenseId,
+                householdExpenseId: ex.isEverydayHousehold
+                  ? undefined
+                  : ex.householdExpenseId || existing?.householdExpenseId,
               });
             }
           }
